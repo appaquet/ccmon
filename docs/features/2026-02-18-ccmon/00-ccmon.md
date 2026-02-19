@@ -10,16 +10,18 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Starting project. Requirements defined. Next: plan phases with `/ctx-plan`.
+Phase 01 (Session Detection) implementation is complete. All 7 steps implemented via TDD: project setup (package.json, tsconfig.json, CLAUDE.md), `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, CLI `dump` command, and `watchForChanges()`. 24 tests passing across `tests/sessions.test.ts` (21) and `tests/watcher.test.ts` (3). `bun run dump` outputs valid JSON with real project data.
+
+Awaiting user validation of `bun run dump` output (Step 6 user validation task in phase doc). Next: user confirms Phase 01 acceptance, then proceed to Phase 02 (Backend — Bun HTTP/WebSocket server + hook extension).
 
 ## Requirements
 
 ### Session Detection
 
-* R1: ⬜ Enumerate all Claude Code projects by scanning `~/.claude/projects/` (Phase: Session Detection)
+* R1: 🔄 Enumerate all Claude Code projects by scanning `~/.claude/projects/` (Phase: Session Detection)
   * R1.1: Working directory read from `cwd` field in first line of most recent JSONL session file (directory name encoding is lossy)
   * R1.2: Project name derived from last path segment of working directory (e.g. `ccmon`)
-* R2: ⬜ Determine current state of each project via layered detection (Phase: Session Detection)
+* R2: 🔄 Determine current state of each project via layered detection (Phase: Session Detection)
   * R2.1: Primary: read `status.local.json` (written by hooks). If absent or stale (>5min, state !== `stopped`) → treat as `stopped`
   * R2.2: Fallback: `pgrep -a claude` + `/proc/{pid}/cwd` (NixOS: `.claude-wrapped`) to detect live processes. If no process and status not `stopped` → override to `stopped`
 
@@ -54,12 +56,12 @@ Starting project. Requirements defined. Next: plan phases with `/ctx-plan`.
 
 ### CLI
 
-* R11: ⬜ `ccmon dump` CLI command outputs full state of all projects as JSON to stdout (Phase: Session Detection)
+* R11: 🔄 `ccmon dump` CLI command outputs full state of all projects as JSON to stdout (Phase: Session Detection)
   * R11.1: Serves as integration test and external introspection tool
 
 ### Developer Experience
 
-* R12: ⬜ `CLAUDE.md` at project root with build/run/test instructions, improved across all phases (Phase: Session Detection)
+* R12: 🔄 `CLAUDE.md` at project root with build/run/test instructions, improved across all phases (Phase: Session Detection)
 
 #### Out of Scope
 
@@ -77,10 +79,10 @@ Starting project. Requirements defined. Next: plan phases with `/ctx-plan`.
 
 ## Phases
 
-### ⬜ 01 Phase: Session Detection
+### 🔄 01 Phase: Session Detection
 [01-session-detection](01-session-detection.md)
 
-Logic to scan `~/.claude/projects/` and map directories to project metadata. Determines which projects exist and their working directories.
+Logic to scan `~/.claude/projects/` and map directories to project metadata. Determines which projects exist and their working directories. All 7 implementation steps complete, 24 tests passing. Awaiting user validation.
 
 ### ⬜ 02 Phase: Backend
 [02-backend](02-backend.md)
@@ -95,8 +97,16 @@ Single-page vanilla JS UI. Connects via WebSocket, renders project list, updates
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
-- **CLAUDE.md**: Development instructions, maintained across all phases
+- **CLAUDE.md**: Development instructions, maintained across all phases (Phase: Session Detection)
 - **README.md**: Project overview
 - **flake.nix**: Nix devShell with Bun (Phase: Session Detection)
 - **.envrc**: direnv config — `use flake` (Phase: Session Detection)
 - **.gitignore**: Excludes `.direnv/` and `*.local.log` (Phase: Session Detection)
+- **package.json**: Bun project config — `"type": "module"`, `@types/bun`, `dump` script (Phase: Session Detection)
+- **tsconfig.json**: IDE TypeScript support — ESNext, moduleResolution bundler (Phase: Session Detection)
+- **bun.lock**: Bun lockfile (Phase: Session Detection)
+- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()` (Phase: Session Detection)
+- **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection (Phase: Session Detection)
+- **src/cli.ts**: CLI entry point — `dump` subcommand outputs JSON state to stdout (Phase: Session Detection)
+- **tests/sessions.test.ts**: 21 unit tests for sessions.ts (Phase: Session Detection)
+- **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)

@@ -14,13 +14,13 @@ Implementation order is designed for TDD — each step writes a test, then imple
 
 ### Step 1: Project setup
 
-* [ ] Initialize `package.json` with Bun (`bun init`), `"type": "module"`, add `@types/bun` devDependency
-* [ ] Add `tsconfig.json` for IDE support (target ESNext, moduleResolution bundler)
-* [ ] Create `CLAUDE.md` at project root with build/run/test instructions
+* [x] Initialize `package.json` with Bun (`bun init`), `"type": "module"`, add `@types/bun` devDependency
+* [x] Add `tsconfig.json` for IDE support (target ESNext, moduleResolution bundler)
+* [x] Create `CLAUDE.md` at project root with build/run/test instructions
   * Include: `bun install`, `bun test`, `bun run dump`
   * Note: this file should be improved/maintained across all phases
-* [ ] Add `"dump"` script in `package.json`: `"bun run src/cli.ts dump"`
-* [ ] Verify: `bun test` runs (even if no tests yet)
+* [x] Add `"dump"` script in `package.json`: `"bun run src/cli.ts dump"`
+* [x] Verify: `bun test` runs (even if no tests yet)
 
 ### Step 2: scanProjects() — TDD
 
@@ -71,26 +71,26 @@ Implementation order is designed for TDD — each step writes a test, then imple
 
 ### Step 6: CLI dump command
 
-* [ ] Implement `src/cli.ts` with `dump` subcommand (R1, R2)
+* [x] Implement `src/cli.ts` with `dump` subcommand (R1, R2)
   * Calls `getProjectState()` for all projects
   * Prints JSON to stdout (`JSON.stringify(state, null, 2)`)
   * Exit code 0 on success
-* [ ] Verify: `bun run dump` outputs valid JSON with real project data
+* [x] Verify: `bun run dump` outputs valid JSON with real project data
 * [ ] User validation: run `bun run dump` and confirm output looks correct
 
 ### Step 7: watchForChanges() — TDD
 
-* [ ] Write test for `watchForChanges()` (R1, R2)
+* [x] Write test for `watchForChanges()` (R1, R2)
   * Test: file change triggers onUpdate callback
   * Test: new project dir triggers scan + watch
   * Test: debounce works (multiple rapid changes → single callback)
-* [ ] Implement `watchForChanges()` in `src/watcher.ts`
+* [x] Implement `watchForChanges()` in `src/watcher.ts`
   * Watch `~/.claude/projects/` for new subdirectories (fs.watch, non-recursive)
   * Watch each `status.local.json` for modifications
   * Watch parent dir if `status.local.json` doesn't exist yet, switch to file watch when created
   * Debounce 100ms
   * Call `onUpdate(projectDir)` on change
-* [ ] Verify: `bun test` passes for watchForChanges
+* [x] Verify: `bun test` passes for watchForChanges
 
 ## Files
 
@@ -100,4 +100,6 @@ Implementation order is designed for TDD — each step writes a test, then imple
 - **src/sessions.ts**: Core module — scanProjects(), readStatus(), checkLiveness(), getProjectState()
 - **src/watcher.ts**: watchForChanges() — fs.watch logic, debouncing, new-project detection
 - **src/cli.ts**: CLI entry point — `dump` subcommand outputs JSON state to stdout
-- **tests/sessions.test.ts**: Unit tests using bun:test
+- **tests/sessions.test.ts**: Unit tests for sessions.ts using bun:test (21 tests)
+- **tests/watcher.test.ts**: Unit tests for watcher.ts — stop(), callback trigger, debounce (3 tests)
+- **bun.lock**: Generated lockfile
