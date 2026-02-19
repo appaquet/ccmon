@@ -87,3 +87,6 @@ Single-page vanilla JS UI. Connects via WebSocket, renders project list, updates
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
 - **README.md**: Project overview
+- **flake.nix**: Nix devShell with Bun (Phase: Session Detection)
+- **.envrc**: direnv config — `use flake` (Phase: Session Detection)
+- **.gitignore**: Excludes `.direnv/` and `*.local.log` (Phase: Session Detection)
