@@ -52,6 +52,15 @@ Starting project. Requirements defined. Next: plan phases with `/ctx-plan`.
   * R9.1: States: `stopped` (grey), `running` (green), `waiting_for_answer` (yellow), `waiting_for_permission` (red/orange)
 * R10: ⬜ UI updates in real-time via WebSocket without page reload (Phase: Web UI)
 
+### CLI
+
+* R11: ⬜ `ccmon dump` CLI command outputs full state of all projects as JSON to stdout (Phase: Session Detection)
+  * R11.1: Serves as integration test and external introspection tool
+
+### Developer Experience
+
+* R12: ⬜ `CLAUDE.md` at project root with build/run/test instructions, improved across all phases (Phase: Session Detection)
+
 #### Out of Scope
 
 * Authentication / multi-user support
@@ -86,6 +95,7 @@ Single-page vanilla JS UI. Connects via WebSocket, renders project list, updates
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
+- **CLAUDE.md**: Development instructions, maintained across all phases
 - **README.md**: Project overview
 - **flake.nix**: Nix devShell with Bun (Phase: Session Detection)
 - **.envrc**: direnv config — `use flake` (Phase: Session Detection)
