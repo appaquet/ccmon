@@ -1,6 +1,6 @@
 # ccmon
 
-Claude Code Monitor - a simple Node.js web app that shows the status of currently running Claude Code instances.
+Claude Code Monitor - a Bun + TypeScript web app that shows the status of currently running Claude Code instances.
 
 ## Context
 
@@ -38,7 +38,7 @@ Starting project. Requirements defined. Next: plan phases with `/ctx-plan`.
 
 ### Web Server
 
-* R5: ⬜ Node.js HTTP server serves the dashboard at `/` (Phase: Backend)
+* R5: ⬜ Bun HTTP server serves the dashboard at `/` (Phase: Backend)
 * R6: ⬜ WebSocket endpoint pushes real-time state updates to connected clients (Phase: Backend)
   * R6.1: Server watches all known `status.local.json` files for changes and broadcasts updates
   * R6.2: On new client connect, send current state of all projects immediately
@@ -63,7 +63,7 @@ Starting project. Requirements defined. Next: plan phases with `/ctx-plan`.
 
 * Q1: ✅ Status file location → per-project in working directory as `status.local.json` (same as `tmux.local.log`)
 * Q2: ✅ Permission hook event → `PermissionRequest` (confirmed from existing settings.json)
-* Q3: ✅ Package manager → npm
+* Q3: ✅ Runtime/package manager → Bun (native TypeScript, ESM, built-in test runner `bun:test`). No tsconfig required but will add for IDE support. Types via `@types/bun`.
 * Q4: ✅ How does ccmon discover the working directory? → Read `cwd` from the first line of the most recent JSONL session file. Directory name encoding is lossy (hyphens ambiguous), so dir name decoding is not reliable.
 
 ## Phases
@@ -76,7 +76,7 @@ Logic to scan `~/.claude/projects/` and map directories to project metadata. Det
 ### ⬜ 02 Phase: Backend
 [02-backend](02-backend.md)
 
-Node.js HTTP + WebSocket server. Extends `claude-tmux-indicator` to write `status.local.json`. Server watches for changes and broadcasts to clients.
+Bun HTTP + WebSocket server. Extends `claude-tmux-indicator` to write `status.local.json`. Server watches for changes and broadcasts to clients.
 
 ### ⬜ 03 Phase: Web UI
 [03-web-ui](03-web-ui.md)

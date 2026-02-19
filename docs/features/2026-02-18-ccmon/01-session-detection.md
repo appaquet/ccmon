@@ -8,6 +8,11 @@ Key finding: directory name encoding is lossy (hyphens ambiguous), so `cwd` is r
 
 ## Tasks
 
+### Setup
+
+* [ ] Initialize `package.json` with Bun (`bun init`), `"type": "module"`, add `@types/bun` devDependency
+* [ ] Add `tsconfig.json` for IDE support (target ESNext, moduleResolution bundler)
+
 ### scanProjects()
 
 * [ ] Scan `~/.claude/projects/` for subdirectories (R1)
@@ -25,9 +30,9 @@ Key finding: directory name encoding is lossy (hyphens ambiguous), so `cwd` is r
 
 ### checkLiveness()
 
-* [ ] Run `pgrep -a claude` to find running Claude processes (R2)
+* [ ] Run `pgrep -a claude` via `Bun.spawnSync` to find running Claude processes (R2)
 * [ ] For NixOS compatibility, also check `/proc/*/exe` symlinks for `.claude-wrapped` binary (R2)
-* [ ] For each found process, read `/proc/{pid}/cwd` to get its working directory (R2)
+* [ ] For each found process, read `/proc/{pid}/cwd` symlink to get its working directory (R2)
 * [ ] Cross-reference process cwds with project cwds: if process found → session is live (R2)
 * [ ] If no matching process and status timestamp > 5min stale and state !== `stopped` → override to `stopped` (R2.1)
 
@@ -47,13 +52,15 @@ Key finding: directory name encoding is lossy (hyphens ambiguous), so `cwd` is r
 
 ### Tests
 
-* [ ] Unit test `scanProjects()` with temp dir mimicking `~/.claude/projects/` structure (mock JSONL files with valid first lines) (R1)
+* [ ] Unit test `scanProjects()` with temp dir mimicking `~/.claude/projects/` structure (mock JSONL files with valid first lines) using `bun:test` (R1)
 * [ ] Unit test `readStatus()` with mock `status.local.json` files (valid, missing, corrupt) (R2)
-* [ ] Unit test `checkLiveness()` with mocked process list (R2)
-* [ ] Manual integration test: run ccmon, trigger hook events, verify state updates in terminal output (R1, R2)
+* [ ] Unit test `checkLiveness()` with mocked `Bun.spawnSync` and `/proc` reads (R2)
+* [ ] Manual integration test: run `bun run src/sessions.ts`, verify projects listed with correct state (R1, R2)
 
 ## Files
 
-- **src/sessions.js**: Core module — scanProjects(), readStatus(), checkLiveness(), getProjectState()
-- **src/watcher.js**: watchForChanges() — fs.watch logic, debouncing, new-project detection
-- **tests/sessions.test.js**: Unit tests for session scanning, status reading, liveness checks
+- **package.json**: Bun project config, `"type": "module"`, `@types/bun` devDep
+- **tsconfig.json**: IDE TypeScript support (ESNext, moduleResolution bundler)
+- **src/sessions.ts**: Core module — scanProjects(), readStatus(), checkLiveness(), getProjectState()
+- **src/watcher.ts**: watchForChanges() — fs.watch logic, debouncing, new-project detection
+- **tests/sessions.test.ts**: Unit tests using bun:test
