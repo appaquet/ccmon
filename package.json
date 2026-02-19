@@ -1,0 +1,10 @@
+{
+  "name": "ccmon",
+  "type": "module",
+  "scripts": {
+    "dump": "bun run src/cli.ts dump"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
