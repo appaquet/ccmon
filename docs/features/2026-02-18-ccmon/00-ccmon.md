@@ -10,24 +10,24 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 01 (Session Detection) implementation is complete. All 7 steps implemented via TDD: project setup (package.json, tsconfig.json, CLAUDE.md), `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, CLI `dump` command, and `watchForChanges()`. 24 tests passing across `tests/sessions.test.ts` (21) and `tests/watcher.test.ts` (3). `bun run dump` outputs valid JSON with real project data.
+Phase 01 (Session Detection) complete and accepted ✅. Phase 02 (Backend) fully planned with 6 steps covering: `ccmon status` sub-command (reads hook stdin, writes `status.local.json`), `dump --watch` for console monitoring, Bun HTTP + WebSocket server, and hook configuration.
 
-Awaiting user validation of `bun run dump` output (Step 6 user validation task in phase doc). Next: user confirms Phase 01 acceptance, then proceed to Phase 02 (Backend — Bun HTTP/WebSocket server + hook extension).
+Key design decisions: `ccmon status` reads hook JSON from stdin (not args), Bun startup ~17ms (fast enough for hooks), `claude-tmux-indicator` stays independent with ccmon hooked alongside it. Next: `/implement` Phase 02.
 
 ## Requirements
 
 ### Session Detection
 
-* R1: 🔄 Enumerate all Claude Code projects by scanning `~/.claude/projects/` (Phase: Session Detection)
+* R1: ✅ Enumerate all Claude Code projects by scanning `~/.claude/projects/` (Phase: Session Detection)
   * R1.1: Working directory read from `cwd` field in first line of most recent JSONL session file (directory name encoding is lossy)
   * R1.2: Project name derived from last path segment of working directory (e.g. `ccmon`)
-* R2: 🔄 Determine current state of each project via layered detection (Phase: Session Detection)
+* R2: ✅ Determine current state of each project via layered detection (Phase: Session Detection)
   * R2.1: Primary: read `status.local.json` (written by hooks). If absent or stale (>5min, state !== `stopped`) → treat as `stopped`
   * R2.2: Fallback: `pgrep -a claude` + `/proc/{pid}/cwd` (NixOS: `.claude-wrapped`) to detect live processes. If no process and status not `stopped` → override to `stopped`
 
 ### State Reporting via Hooks
 
-* R3: ⬜ Extend `claude-tmux-indicator` to also write `status.local.json` in project working directory (Phase: Backend)
+* R3: ⬜ `ccmon status` sub-command writes `status.local.json` from hook stdin (Phase: Backend)
   * R3.1: Hook events → states:
     * `UserPromptSubmit` → `running` (Claude processing user input)
     * `PostToolUse` → `running` (Claude continuing after tool)
@@ -36,7 +36,11 @@ Awaiting user validation of `bun run dump` output (Step 6 user validation task i
     * `SessionEnd` → `stopped`
   * R3.2: `status.local.json` contains: `state`, `timestamp`, `session_id`, `working_dir`
   * R3.3: File written to `~/.claude/projects/{encoded}/status.local.json` (same project dir that contains JSONL session files)
-* R4: ⬜ Hook changes go in `~/dotfiles/home-manager/modules/claude/settings.json` and the `claude-tmux-indicator` script (Phase: Backend)
+  * R3.4: Reads hook JSON from stdin (cwd, session_id, hook_event_name), maps event to state, encodes cwd to find project dir
+  * R3.5: `encodeCwd()` maps `/home/user/project` → `-home-user-project` to match `~/.claude/projects/` directory encoding
+* R4: ⬜ Hook config adds `ccmon status` alongside existing `claude-tmux-indicator` in `~/dotfiles/home-manager/modules/claude/settings.json` (Phase: Backend)
+  * R4.1: Both hooks run in same matcher group (parallel stdin copies)
+  * R4.2: `claude-tmux-indicator` remains independent — ccmon hooks alongside it, does not extend it
 
 ### Web Server
 
@@ -56,12 +60,16 @@ Awaiting user validation of `bun run dump` output (Step 6 user validation task i
 
 ### CLI
 
-* R11: 🔄 `ccmon dump` CLI command outputs full state of all projects as JSON to stdout (Phase: Session Detection)
+* R11: ✅ `ccmon dump` CLI command outputs full state of all projects as JSON to stdout (Phase: Session Detection)
   * R11.1: Serves as integration test and external introspection tool
+* R13: ⬜ `ccmon dump --watch` prints state on change with separator + timestamp (Phase: Backend)
+  * R13.1: Initial dump printed immediately, then watches for changes via `watchForChanges()`
+  * R13.2: On each change: re-runs `getProjectState()`, prints separator line with ISO timestamp, then full JSON
+  * R13.3: Exits cleanly on SIGINT (calls `watcher.stop()`)
 
 ### Developer Experience
 
-* R12: 🔄 `CLAUDE.md` at project root with build/run/test instructions, improved across all phases (Phase: Session Detection)
+* R12: ✅ `CLAUDE.md` at project root with build/run/test instructions, improved across all phases (Phase: Session Detection)
 
 #### Out of Scope
 
@@ -76,18 +84,19 @@ Awaiting user validation of `bun run dump` output (Step 6 user validation task i
 * Q2: ✅ Permission hook event → `PermissionRequest` (confirmed from existing settings.json)
 * Q3: ✅ Runtime/package manager → Bun (native TypeScript, ESM, built-in test runner `bun:test`). No tsconfig required but will add for IDE support. Types via `@types/bun`.
 * Q4: ✅ How does ccmon discover the working directory? → Read `cwd` from the first line of the most recent JSONL session file. Directory name encoding is lossy (hyphens ambiguous), so dir name decoding is not reliable.
+* Q5: ⬜ Is `encodeCwd()` (`/` → `-`) the exact algorithm Claude Code uses for `~/.claude/projects/` directory names? Verify by comparing existing dirs against known cwds.
 
 ## Phases
 
-### 🔄 01 Phase: Session Detection
+### ✅ 01 Phase: Session Detection
 [01-session-detection](01-session-detection.md)
 
-Logic to scan `~/.claude/projects/` and map directories to project metadata. Determines which projects exist and their working directories. All 7 implementation steps complete, 24 tests passing. Awaiting user validation.
+Logic to scan `~/.claude/projects/` and map directories to project metadata. All 8 steps complete, 24 tests passing. `lastUpdated` falls back to JSONL file mtime.
 
 ### ⬜ 02 Phase: Backend
 [02-backend](02-backend.md)
 
-Bun HTTP + WebSocket server. Extends `claude-tmux-indicator` to write `status.local.json`. Server watches for changes and broadcasts to clients.
+`ccmon status` sub-command (reads hook stdin, writes `status.local.json`), `dump --watch` for console monitoring, Bun HTTP + WebSocket server, and hook configuration alongside `claude-tmux-indicator`.
 
 ### ⬜ 03 Phase: Web UI
 [03-web-ui](03-web-ui.md)

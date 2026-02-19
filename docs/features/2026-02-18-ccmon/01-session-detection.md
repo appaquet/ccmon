@@ -76,7 +76,7 @@ Implementation order is designed for TDD — each step writes a test, then imple
   * Prints JSON to stdout (`JSON.stringify(state, null, 2)`)
   * Exit code 0 on success
 * [x] Verify: `bun run dump` outputs valid JSON with real project data
-* [ ] User validation: run `bun run dump` and confirm output looks correct
+* [x] User validation: run `bun run dump` and confirm output looks correct
 
 ### Step 7: watchForChanges() — TDD
 
