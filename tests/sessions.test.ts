@@ -245,14 +245,17 @@ describe('getProjectState', () => {
     expect(results[0].lastUpdated).toBe(payload.timestamp);
   });
 
-  test('status absent: state = stopped', async () => {
+  test('status absent: state = stopped, lastUpdated falls back to JSONL mtime', async () => {
     await makeProject('-home-user-nostatus', '/home/user/nostatus', 'sid2');
 
+    const before = Date.now();
     const results = await getProjectState(tmpDir);
 
     expect(results).toHaveLength(1);
     expect(results[0].state).toBe('stopped');
-    expect(results[0].lastUpdated).toBeNull();
+    expect(results[0].lastUpdated).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(new Date(results[0].lastUpdated!).getTime()).toBeGreaterThanOrEqual(before - 5000);
+    expect(new Date(results[0].lastUpdated!).getTime()).toBeLessThanOrEqual(Date.now() + 1000);
   });
 
   test('status stale (> 5min) and state != stopped: overridden to stopped', async () => {

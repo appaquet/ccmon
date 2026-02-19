@@ -143,15 +143,24 @@ export async function getProjectState(claudeDir: string = DEFAULT_CLAUDE_DIR): P
     checkLiveness(projects.map((p) => p.cwd)),
   ]);
 
-  return projects.map((project, i) => {
-    const status = statuses[i];
-    const state = resolveState(project.cwd, status, liveCwds);
-    return {
-      ...project,
-      state,
-      lastUpdated: status?.timestamp ?? null,
-    };
-  });
+  return Promise.all(
+    projects.map(async (project, i) => {
+      const status = statuses[i];
+      const state = resolveState(project.cwd, status, liveCwds);
+
+      let lastUpdated: string | null = status?.timestamp ?? null;
+      if (lastUpdated === null) {
+        try {
+          const mtimeStat = await stat(project.latestJSONL);
+          lastUpdated = new Date(mtimeStat.mtimeMs).toISOString();
+        } catch {
+          // leave as null if stat fails
+        }
+      }
+
+      return { ...project, state, lastUpdated };
+    }),
+  );
 }
 
 // ─── Exported Test Helpers ───────────────────────────────────────────────────

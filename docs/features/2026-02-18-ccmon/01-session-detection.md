@@ -92,6 +92,15 @@ Implementation order is designed for TDD — each step writes a test, then imple
   * Call `onUpdate(projectDir)` on change
 * [x] Verify: `bun test` passes for watchForChanges
 
+### Step 8: Use JSONL mtime as lastUpdated fallback
+
+* [x] Update `getProjectState()` in `src/sessions.ts`: when `readStatus()` returns null, use `stat(latestJSONL).mtime` as ISO string for `lastUpdated` instead of `null`
+  * `stat` already imported from `node:fs/promises`
+  * Only adds one cheap `stat()` call per project (no file parsing)
+* [x] Update test "status absent" in `tests/sessions.test.ts`: verify `lastUpdated` is a valid ISO date string (not null) when no status file exists
+* [x] Run `bun test` — all 24 tests pass
+* [x] Run `bun run dump` — `lastUpdated` shows ISO timestamps (e.g. `"2026-02-18T20:12:59.185Z"`)
+
 ## Files
 
 - **CLAUDE.md**: Project development instructions (maintained across all phases)
