@@ -2,7 +2,8 @@
   "name": "ccmon",
   "type": "module",
   "scripts": {
-    "dump": "bun run src/cli.ts dump"
+    "dump": "bun run src/cli.ts dump",
+    "serve": "bun run src/cli.ts serve"
   },
   "devDependencies": {
     "@types/bun": "latest"

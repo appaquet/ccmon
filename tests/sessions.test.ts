@@ -1,7 +1,15 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdir, writeFile, rm, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
-import { scanProjects, readStatus, checkLiveness, getProjectState } from '../src/sessions';
+import {
+  scanProjects,
+  readStatus,
+  readSessionsIndex,
+  checkLiveness,
+  getProjectState,
+  mapHookEventToState,
+  writeStatus,
+} from '../src/sessions';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -108,6 +116,138 @@ describe('scanProjects', () => {
 
     const results = await scanProjects(tmpDir);
     expect(results).toHaveLength(2);
+  });
+
+  test('sessions-index.json present: returns enriched fields, uses projectPath as cwd', async () => {
+    const projDir = join(tmpDir, '-home-user-indexed');
+    await mkdir(projDir, { recursive: true });
+
+    const entry = {
+      sessionId: 'idx-sess',
+      fullPath: join(projDir, 'idx-sess.jsonl'),
+      fileMtime: 1_700_000_000_000,
+      firstPrompt: 'Work on feature X',
+      summary: 'Feature X implementation',
+      messageCount: 42,
+      created: '2026-02-01T00:00:00.000Z',
+      modified: '2026-02-01T02:00:00.000Z',
+      gitBranch: 'main',
+      projectPath: '/home/user/indexed',
+      isSidechain: false,
+    };
+    await writeFile(join(projDir, 'sessions-index.json'), JSON.stringify({ version: 1, entries: [entry] }));
+    // JSONL file must exist since latestJSONL points to it (stat used in getProjectState)
+    await writeFile(entry.fullPath, makeFirstLine('/home/user/indexed', 'idx-sess') + '\n');
+
+    const results = await scanProjects(tmpDir);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].cwd).toBe('/home/user/indexed');
+    expect(results[0].projectName).toBe('indexed');
+    expect(results[0].sessionId).toBe('idx-sess');
+    expect(results[0].latestJSONL).toBe(entry.fullPath);
+    expect(results[0].summary).toBe('Feature X implementation');
+    expect(results[0].firstPrompt).toBe('Work on feature X');
+    expect(results[0].messageCount).toBe(42);
+    expect(results[0].sessionModified).toBe('2026-02-01T02:00:00.000Z');
+  });
+});
+
+// ─── readSessionsIndex ───────────────────────────────────────────────────────
+
+describe('readSessionsIndex', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-index');
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeIndexEntry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      sessionId: 'sess-1',
+      fullPath: '/some/path/sess-1.jsonl',
+      fileMtime: 1_700_000_000_000,
+      firstPrompt: 'Hello world',
+      summary: 'A session summary',
+      messageCount: 10,
+      created: '2026-02-01T00:00:00.000Z',
+      modified: '2026-02-01T01:00:00.000Z',
+      gitBranch: 'main',
+      projectPath: '/home/user/project',
+      isSidechain: false,
+      ...overrides,
+    };
+  }
+
+  test('valid sessions-index.json: returns projectPath and entries', async () => {
+    const entry = makeIndexEntry();
+    const index = { version: 1, entries: [entry] };
+    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify(index));
+
+    const result = await readSessionsIndex(tmpDir);
+
+    expect(result).not.toBeNull();
+    expect(result!.projectPath).toBe('/home/user/project');
+    expect(result!.entries).toHaveLength(1);
+    expect(result!.entries[0].sessionId).toBe('sess-1');
+    expect(result!.entries[0].fullPath).toBe('/some/path/sess-1.jsonl');
+    expect(result!.entries[0].fileMtime).toBe(1_700_000_000_000);
+    expect(result!.entries[0].summary).toBe('A session summary');
+    expect(result!.entries[0].firstPrompt).toBe('Hello world');
+    expect(result!.entries[0].messageCount).toBe(10);
+    expect(result!.entries[0].modified).toBe('2026-02-01T01:00:00.000Z');
+  });
+
+  test('missing sessions-index.json: returns null', async () => {
+    const result = await readSessionsIndex(tmpDir);
+    expect(result).toBeNull();
+  });
+
+  test('corrupt JSON: returns null', async () => {
+    await writeFile(join(tmpDir, 'sessions-index.json'), 'not valid json {{');
+    const result = await readSessionsIndex(tmpDir);
+    expect(result).toBeNull();
+  });
+
+  test('picks entry with highest fileMtime as latest session', async () => {
+    const older = makeIndexEntry({ sessionId: 'old', fullPath: '/p/old.jsonl', fileMtime: 1_000 });
+    const newer = makeIndexEntry({ sessionId: 'new', fullPath: '/p/new.jsonl', fileMtime: 2_000 });
+    const index = { version: 1, entries: [older, newer] };
+    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify(index));
+
+    const result = await readSessionsIndex(tmpDir);
+
+    expect(result).not.toBeNull();
+    // entries returned in original order; caller picks max
+    expect(result!.entries).toHaveLength(2);
+    const maxEntry = result!.entries.reduce((a, b) => (a.fileMtime > b.fileMtime ? a : b));
+    expect(maxEntry.sessionId).toBe('new');
+  });
+
+  test('filters out isSidechain: true entries', async () => {
+    const mainEntry = makeIndexEntry({ sessionId: 'main', isSidechain: false });
+    const sideEntry = makeIndexEntry({ sessionId: 'side', isSidechain: true });
+    const index = { version: 1, entries: [mainEntry, sideEntry] };
+    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify(index));
+
+    const result = await readSessionsIndex(tmpDir);
+
+    expect(result).not.toBeNull();
+    expect(result!.entries).toHaveLength(1);
+    expect(result!.entries[0].sessionId).toBe('main');
+  });
+
+  test('all entries are sidechains: returns null (no usable entries)', async () => {
+    const sideEntry = makeIndexEntry({ sessionId: 'side', isSidechain: true });
+    const index = { version: 1, entries: [sideEntry] };
+    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify(index));
+
+    const result = await readSessionsIndex(tmpDir);
+    expect(result).toBeNull();
   });
 });
 
@@ -298,5 +438,83 @@ describe('getProjectState', () => {
 
     const results = await getProjectState(tmpDir);
     expect(results).toHaveLength(2);
+  });
+});
+
+// ─── mapHookEventToState ──────────────────────────────────────────────────────
+
+describe('mapHookEventToState', () => {
+  test('UserPromptSubmit → running', () => {
+    expect(mapHookEventToState('UserPromptSubmit')).toBe('running');
+  });
+
+  test('PostToolUse → running', () => {
+    expect(mapHookEventToState('PostToolUse')).toBe('running');
+  });
+
+  test('PermissionRequest → waiting_for_permission', () => {
+    expect(mapHookEventToState('PermissionRequest')).toBe('waiting_for_permission');
+  });
+
+  test('Stop → waiting_for_answer', () => {
+    expect(mapHookEventToState('Stop')).toBe('waiting_for_answer');
+  });
+
+  test('SessionEnd → stopped', () => {
+    expect(mapHookEventToState('SessionEnd')).toBe('stopped');
+  });
+
+  test('unknown event → null', () => {
+    expect(mapHookEventToState('SomeUnknownEvent')).toBeNull();
+    expect(mapHookEventToState('')).toBeNull();
+  });
+});
+
+// ─── writeStatus ─────────────────────────────────────────────────────────────
+
+describe('writeStatus', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-write-status');
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('writes status.local.json with correct content', async () => {
+    const status = {
+      state: 'running' as const,
+      timestamp: '2026-02-20T12:00:00.000Z',
+      session_id: 'test-session-id',
+      working_dir: '/home/user/project',
+    };
+
+    await writeStatus(tmpDir, status);
+
+    const raw = await Bun.file(join(tmpDir, 'status.local.json')).text();
+    const parsed = JSON.parse(raw);
+    expect(parsed.state).toBe('running');
+    expect(parsed.timestamp).toBe('2026-02-20T12:00:00.000Z');
+    expect(parsed.session_id).toBe('test-session-id');
+    expect(parsed.working_dir).toBe('/home/user/project');
+  });
+
+  test('round-trip: writeStatus output is parseable by readStatus', async () => {
+    const status = {
+      state: 'waiting_for_permission' as const,
+      timestamp: new Date().toISOString(),
+      session_id: 'round-trip-id',
+      working_dir: '/home/user/rt',
+    };
+
+    await writeStatus(tmpDir, status);
+    const result = await readStatus(tmpDir);
+
+    expect(result).not.toBeNull();
+    expect(result!.state).toBe('waiting_for_permission');
+    expect(result!.session_id).toBe('round-trip-id');
+    expect(result!.working_dir).toBe('/home/user/rt');
   });
 });

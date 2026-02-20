@@ -23,12 +23,34 @@ const VALID_STATES: ReadonlySet<string> = new Set([
 
 export type SessionState = 'running' | 'waiting_for_answer' | 'waiting_for_permission' | 'stopped';
 
+export interface SessionsIndexEntry {
+  sessionId: string;
+  fullPath: string;
+  fileMtime: number;    // epoch ms
+  firstPrompt?: string;
+  summary?: string;
+  messageCount?: number;
+  modified?: string;    // ISO 8601
+  projectPath: string;
+  isSidechain: boolean;
+}
+
+export interface SessionsIndex {
+  projectPath: string;
+  entries: SessionsIndexEntry[];
+}
+
 export interface ProjectInfo {
-  projectDir: string;   // directory name under ~/.claude/projects/
-  cwd: string;          // working directory from JSONL first line
-  projectName: string;  // last segment of cwd
-  sessionId: string;    // from JSONL first line
-  latestJSONL: string;  // absolute path to most recent .jsonl file
+  projectDir: string;     // directory name under ~/.claude/projects/
+  cwd: string;            // working directory (from index projectPath or JSONL first line)
+  projectName: string;    // last segment of cwd
+  sessionId: string;      // from index or JSONL first line
+  latestJSONL: string;    // absolute path to most recent .jsonl file
+  // Enriched fields from sessions-index.json (absent when falling back to JSONL scan)
+  summary?: string;
+  firstPrompt?: string;
+  messageCount?: number;
+  sessionModified?: string; // ISO 8601 from index entry
 }
 
 export interface StatusFile {
@@ -44,6 +66,71 @@ export interface ProjectState extends ProjectInfo {
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
+
+/**
+ * Reads and validates sessions-index.json from projectDirPath.
+ * Filters out sidechain entries and returns null if the file is missing,
+ * unparseable, or has no usable (non-sidechain) entries.
+ */
+export async function readSessionsIndex(projectDirPath: string): Promise<SessionsIndex | null> {
+  const indexPath = join(projectDirPath, 'sessions-index.json');
+  let raw: string;
+  try {
+    raw = await Bun.file(indexPath).text();
+  } catch {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (!isSessionsIndexRaw(parsed)) return null;
+
+  const entries = parsed.entries
+    .filter((e) => !e.isSidechain)
+    .map((e): SessionsIndexEntry => ({
+      sessionId: e.sessionId,
+      fullPath: e.fullPath,
+      fileMtime: e.fileMtime,
+      firstPrompt: typeof e.firstPrompt === 'string' ? e.firstPrompt : undefined,
+      summary: typeof e.summary === 'string' ? e.summary : undefined,
+      messageCount: typeof e.messageCount === 'number' ? e.messageCount : undefined,
+      modified: typeof e.modified === 'string' ? e.modified : undefined,
+      projectPath: e.projectPath,
+      isSidechain: e.isSidechain,
+    }));
+
+  if (entries.length === 0) return null;
+
+  return { projectPath: entries[0].projectPath, entries };
+}
+
+/**
+ * Maps a Claude hook event name to the corresponding SessionState.
+ * Returns null for unrecognized events.
+ */
+export function mapHookEventToState(hookEvent: string): SessionState | null {
+  switch (hookEvent) {
+    case 'UserPromptSubmit': return 'running';
+    case 'PostToolUse':      return 'running';
+    case 'PermissionRequest': return 'waiting_for_permission';
+    case 'Stop':             return 'waiting_for_answer';
+    case 'SessionEnd':       return 'stopped';
+    default:                 return null;
+  }
+}
+
+/**
+ * Writes a StatusFile as JSON to {projectDirPath}/status.local.json.
+ */
+export async function writeStatus(projectDirPath: string, status: StatusFile): Promise<void> {
+  const statusPath = join(projectDirPath, 'status.local.json');
+  await Bun.write(statusPath, JSON.stringify(status));
+}
 
 /**
  * Scans claudeDir for Claude Code project subdirectories and returns metadata
@@ -194,6 +281,23 @@ async function readProjectInfo(fullPath: string, dirName: string): Promise<Proje
   }
   if (!isDir) return null;
 
+  // Prefer sessions-index.json for richer metadata; fall back to JSONL first-line parse
+  const index = await readSessionsIndex(fullPath);
+  if (index !== null) {
+    const latest = index.entries.reduce((a, b) => (a.fileMtime > b.fileMtime ? a : b));
+    return {
+      projectDir: dirName,
+      cwd: index.projectPath,
+      projectName: basename(index.projectPath),
+      sessionId: latest.sessionId,
+      latestJSONL: latest.fullPath,
+      summary: latest.summary,
+      firstPrompt: latest.firstPrompt,
+      messageCount: latest.messageCount,
+      sessionModified: latest.modified,
+    };
+  }
+
   const latestJSONL = await findLatestJSONL(fullPath);
   if (latestJSONL === null) return null;
 
@@ -339,4 +443,32 @@ function isFirstLineRecord(v: unknown): v is { cwd: string; sessionId: string } 
   if (typeof v !== 'object' || v === null) return false;
   const obj = v as Record<string, unknown>;
   return typeof obj.cwd === 'string' && typeof obj.sessionId === 'string';
+}
+
+type RawIndexEntry = {
+  sessionId: string;
+  fullPath: string;
+  fileMtime: number;
+  firstPrompt?: unknown;
+  summary?: unknown;
+  messageCount?: unknown;
+  modified?: unknown;
+  projectPath: string;
+  isSidechain: boolean;
+};
+
+function isSessionsIndexRaw(v: unknown): v is { entries: RawIndexEntry[] } {
+  if (typeof v !== 'object' || v === null) return false;
+  const obj = v as Record<string, unknown>;
+  if (!Array.isArray(obj.entries)) return false;
+  return obj.entries.every(
+    (e) =>
+      typeof e === 'object' &&
+      e !== null &&
+      typeof (e as Record<string, unknown>).sessionId === 'string' &&
+      typeof (e as Record<string, unknown>).fullPath === 'string' &&
+      typeof (e as Record<string, unknown>).fileMtime === 'number' &&
+      typeof (e as Record<string, unknown>).projectPath === 'string' &&
+      typeof (e as Record<string, unknown>).isSidechain === 'boolean',
+  );
 }
