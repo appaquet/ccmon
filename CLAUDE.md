@@ -30,6 +30,14 @@ bun run serve                  # HTTP + WebSocket server, auto-port
 bun run serve --port <N>       # Custom port
 ```
 
+### ws
+```bash
+bun run ws                     # Connect to running server, stream state as NDJSON
+bun run ws --port <N>          # Connect to custom port (default: 3000)
+```
+
+WebSocket client that connects to a running `ccmon serve` and prints each state update as a JSON line to stdout. Exits on SIGINT or server disconnect. Run in background and tail output to check latest messages.
+
 ### test
 ```bash
 bun test                       # Run tests

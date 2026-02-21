@@ -3,7 +3,8 @@
   "type": "module",
   "scripts": {
     "dump": "bun run src/cli.ts dump",
-    "serve": "bun run src/cli.ts serve"
+    "serve": "bun run src/cli.ts serve",
+    "ws": "bun run src/cli.ts ws"
   },
   "devDependencies": {
     "@types/bun": "latest"

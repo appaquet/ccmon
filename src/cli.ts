@@ -21,6 +21,8 @@ if (subcommand === 'dump') {
   }
 } else if (subcommand === 'status') {
   await runStatus();
+} else if (subcommand === 'ws') {
+  await runWs();
 } else if (subcommand === 'serve') {
   const portArg = process.argv.indexOf('--port');
   const port = portArg !== -1 ? parseInt(process.argv[portArg + 1], 10) : undefined;
@@ -43,7 +45,7 @@ if (subcommand === 'dump') {
   });
 } else {
   process.stderr.write(
-    'Usage: ccmon <subcommand>\n\nSubcommands:\n  dump           Print current Claude Code project state as JSON\n  dump --watch   Watch for changes and print updates\n  status         Read hook event from stdin and write status file\n  serve          Start HTTP + WebSocket server\n',
+    'Usage: ccmon <subcommand>\n\nSubcommands:\n  dump           Print current Claude Code project state as JSON\n  dump --watch   Watch for changes and print updates\n  status         Read hook event from stdin and write status file\n  serve          Start HTTP + WebSocket server\n  ws             Connect to running server, stream state as NDJSON\n',
   );
   process.exit(1);
 }
@@ -186,6 +188,31 @@ async function resolveProjectDir(cwd: string, dir: string): Promise<string> {
   const fallbackDir = join(dir, encoded);
   await mkdir(fallbackDir, { recursive: true });
   return fallbackDir;
+}
+
+async function runWs(): Promise<void> {
+  const portArg = process.argv.indexOf('--port');
+  const port = portArg !== -1 ? parseInt(process.argv[portArg + 1], 10) : 3000;
+
+  const ws = new WebSocket(`ws://localhost:${port}/ws`);
+
+  ws.onmessage = (event) => {
+    process.stdout.write(event.data + '\n');
+  };
+
+  ws.onerror = () => {
+    process.stderr.write('ccmon ws: connection error\n');
+    process.exit(1);
+  };
+
+  ws.onclose = () => {
+    process.exit(0);
+  };
+
+  process.on('SIGINT', () => {
+    ws.close();
+    process.exit(0);
+  });
 }
 
 async function readStdin(): Promise<string> {

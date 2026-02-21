@@ -88,6 +88,58 @@ describe('WebSocket server', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
+  test('WebSocket client receives broadcast when status file changes', async () => {
+    const projDir = join(tmpDir, '-home-user-broadcastproj');
+    await mkdir(projDir, { recursive: true });
+    const firstLine = JSON.stringify({
+      sessionId: 'broadcast-test',
+      cwd: '/home/user/broadcastproj',
+      gitBranch: 'main',
+      timestamp: new Date().toISOString(),
+    });
+    await writeFile(join(projDir, 'session.jsonl'), firstLine + '\n');
+
+    const srv = startServer({ port: 0, claudeDir: tmpDir });
+    stop = srv.stop;
+
+    const messages: string[] = [];
+
+    const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
+    ws.onmessage = (event) => {
+      messages.push(event.data as string);
+    };
+
+    // Wait for initial state
+    await Bun.sleep(300);
+
+    await writeFile(
+      join(projDir, 'status.local.json'),
+      JSON.stringify({
+        state: 'running',
+        timestamp: new Date().toISOString(),
+        session_id: 'broadcast-test',
+        working_dir: '/home/user/broadcastproj',
+      }),
+    );
+
+    // Wait for debounced watcher to fire and broadcast
+    await Bun.sleep(400);
+
+    ws.close();
+
+    expect(messages.length).toBeGreaterThanOrEqual(2);
+
+    const first = JSON.parse(messages[0]) as unknown[];
+    expect(Array.isArray(first)).toBe(true);
+    const firstEntry = first.find((e) => (e as Record<string, unknown>).projectName === 'broadcastproj');
+    expect(firstEntry).toBeDefined();
+
+    const second = JSON.parse(messages[1]) as unknown[];
+    expect(Array.isArray(second)).toBe(true);
+    const secondEntry = second.find((e) => (e as Record<string, unknown>).projectName === 'broadcastproj');
+    expect(secondEntry).toBeDefined();
+  });
+
   test('WebSocket connect receives initial state as JSON array', async () => {
     const projDir = join(tmpDir, '-home-user-wsproj');
     await mkdir(projDir, { recursive: true });
