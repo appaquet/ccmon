@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Step 9 complete: `ccmon ws` WebSocket client subcommand implemented, broadcast-on-change test added (R17). 57 tests passing. Phase 02 implementation complete. Next: Phase 03 (Web UI).
+Step 9 complete (sub subcommand, broadcast test, 57 tests). Step 10 planned: config system + stale filter (R18). Plan written to 02-backend.md, awaiting `/implement`.
 
 ## Requirements
 
@@ -85,6 +85,11 @@ Step 9 complete: `ccmon ws` WebSocket client subcommand implemented, broadcast-o
   * R16.2: Covers: flake input, adding to packages, hook configuration, available commands
 
 * R17: ✅ `ccmon sub` CLI subcommand connects to running server via WebSocket, streams state updates as NDJSON (Phase: Backend)
+* R18: ⬜ Config file system with stale project filter (Phase: Backend)
+  * R18.1: `filterStaleProjects()` excludes projects with `lastUpdated` null or older than `maxInactivityHours` (default 3h)
+  * R18.2: `dump` and `dump --watch` apply filter; `--max-age <hours>` and `--no-filter` CLI flags override config
+  * R18.3: `serve` reads config and applies filter to all outputs (no CLI override for serve)
+  * R18.4: Config at `$XDG_CONFIG_HOME/ccmon/config.json`; `CCMON_CONFIG` env var overrides path; silent defaults if missing
   * R17.1: `--port N` flag (default 3000), exits on SIGINT or server disconnect
   * R17.2: Used for smoke-testing server stack and background monitoring
 
@@ -136,7 +141,8 @@ Expose ccmon as a Nix flake package via `writeShellScriptBin` wrapper with pinne
 - **package.json**: Bun project config — `"type": "module"`, `@types/bun`, `dump` script (Phase: Session Detection)
 - **tsconfig.json**: IDE TypeScript support — ESNext, moduleResolution bundler (Phase: Session Detection)
 - **bun.lock**: Bun lockfile (Phase: Session Detection)
-- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()` (Phase: Session Detection, Backend)
+- **src/config.ts**: Config loading, validation, defaults, CLI override merge (Phase: Backend)
+- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()` (Phase: Session Detection, Backend)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection (Phase: Session Detection)
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands (Phase: Session Detection, Backend)
 - **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints (Phase: Backend)

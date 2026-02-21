@@ -142,6 +142,34 @@ Phase 01 (Session Detection) is complete: `scanProjects()`, `readStatus()`, `che
 * [x] Update `CLAUDE.md` with `ws` subcommand docs
 * [x] Verify: `bun test` passes — 57 pass, 0 fail
 
+### Step 10: Config system + stale project filter — TDD
+
+Design decisions: config at `$XDG_CONFIG_HOME/ccmon/config.json` (default `~/.config/ccmon/config.json`); no auto-create; `CCMON_CONFIG` env var overrides path; serve uses config only (no `--max-age` CLI flag); null `lastUpdated` projects filtered out.
+
+* [ ] Create `src/config.ts` + `tests/config.test.ts` (R18)
+  * `CcmonConfig` interface: `{ maxInactivityHours: number }`
+  * `DEFAULT_CONFIG = { maxInactivityHours: 3 }`
+  * `loadConfig(configPath?: string): CcmonConfig` — reads `CCMON_CONFIG` env or XDG path, validates, merges with defaults
+  * `mergeCliOverrides(config, overrides): CcmonConfig`
+  * Tests: missing file → defaults, valid file → overrides, invalid JSON → defaults, partial config → merged, CLI overrides win
+* [ ] Add `filterStaleProjects()` to `src/sessions.ts` + tests (R18.1)
+  * `filterStaleProjects(projects: ProjectState[], maxInactivityHours: number): ProjectState[]`
+  * Filters out: `lastUpdated` null, or older than `now - maxInactivityHours * 3600 * 1000`
+  * `maxInactivityHours <= 0` or `Infinity` → no filter (return all)
+  * Tests: within threshold kept, beyond threshold removed, null removed, 0 disables filter, Infinity disables filter
+* [ ] Wire config into `src/cli.ts` (R18.2)
+  * Parse `--max-age <hours>` and `--no-filter` flags
+  * Call `loadConfig()` once, `mergeCliOverrides()` with parsed CLI flags
+  * Apply `filterStaleProjects()` in `runDump()` and `runDumpWatch()` before output
+  * Tests: spawn with `--max-age 0` shows all, spawn with very small max-age hides stale projects
+* [ ] Wire config into `src/server.ts` (R18.3)
+  * Add `maxInactivityHours?: number` to `ServerOptions`
+  * Apply `filterStaleProjects()` in `broadcastState()`, `/api/state`, and WebSocket `open`
+  * `cli.ts` passes `config.maxInactivityHours` to `startServer()`
+  * Tests: server with `maxInactivityHours` filters stale from API + WebSocket
+* [ ] Update `CLAUDE.md` with config file docs and updated dump command flags
+* [ ] Verify: `bun test` passes (all existing 57 + new tests)
+
 ## Files
 
 - **src/sessions.ts**: Added `readSessionsIndex()`, `writeStatus()`, `mapHookEventToState()`. `Stop`→`stopped`, removed `waiting_for_answer`
