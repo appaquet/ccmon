@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Steps 9+10 complete: `sub` subcommand, broadcast test, config system, stale filter (R17, R18). 71 tests passing. Phase 02 complete. Phase 03 (Web UI) planning in progress.
+Phase 02 complete (71 tests). Phase 03 (Web UI) plan written: vanilla JS grid, WebSocket, color-coded cards, exponential reconnect. Phase 03 session enrichment planning in progress (parallel).
 
 ## Requirements
 
@@ -57,7 +57,7 @@ Steps 9+10 complete: `sub` subcommand, broadcast test, config system, stale filt
 * R8: ⬜ Lists all detected projects, one entry per project directory in `~/.claude/projects/` (Phase: Web UI)
   * R8.1: Project name = last segment of working directory path
 * R9: ⬜ Each project shows: name, state with color/icon indicator (Phase: Web UI)
-  * R9.1: States: `stopped` (grey), `running` (green), `waiting_for_permission` (red/orange)
+  * R9.1: States: `stopped` (orange), `running` (green), `waiting_for_permission` (red)
 * R10: ⬜ UI updates in real-time via WebSocket without page reload (Phase: Web UI)
 
 ### CLI
