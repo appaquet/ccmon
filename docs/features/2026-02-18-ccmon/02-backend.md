@@ -100,9 +100,9 @@ Phase 01 (Session Detection) is complete: `scanProjects()`, `readStatus()`, `che
 
 * [x] Add `ccmon status` hook commands in `~/dotfiles/home-manager/modules/claude/settings.json` (R4)
   * Added alongside existing `claude-tmux-indicator` in same matcher groups
-  * Events: `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd` (no `PermissionRequest` — not a standard hook event)
-* [ ] Manual test: start a Claude Code session, verify `status.local.json` appears
-* [ ] Update CLAUDE.md with new commands (`bun run dump --watch`, `bun run serve`)
+  * Events: `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, `PermissionRequest`
+* [x] Manual test: hooks confirmed live — `status.local.json` written correctly on UserPromptSubmit
+* [x] Update CLAUDE.md with new commands and architecture notes
 
 ### Step 8: `--project` filter + drop separator — TDD
 
@@ -119,12 +119,18 @@ Phase 01 (Session Detection) is complete: `scanProjects()`, `readStatus()`, `che
 * [x] Verify: `bun test` passes (57 pass, 0 fail)
 * [ ] Update README.md with `--project` flag documentation
 
+### Bug fix: `Stop` → `stopped`, remove `waiting_for_answer`
+
+* [x] Remap `Stop` hook → `stopped` in `mapHookEventToState()` (was `waiting_for_answer` — semantic mismatch with tmux)
+* [x] Remove `waiting_for_answer` from `SessionState` type and `VALID_STATES`
+* [x] Update all tests — 56 pass, 0 fail
+
 ## Files
 
-- **src/sessions.ts**: Add `readSessionsIndex()`, `writeStatus()`, `mapHookEventToState()`. Refactor `scanProjects()` to prefer sessions-index.json. Extend `ProjectInfo` with `summary`, `firstPrompt`, `messageCount`, `sessionModified`
-- **src/cli.ts**: Add `status` sub-command and `--watch` flag
+- **src/sessions.ts**: Added `readSessionsIndex()`, `writeStatus()`, `mapHookEventToState()`. `Stop`→`stopped`, removed `waiting_for_answer`
+- **src/cli.ts**: Added `status`, `dump --watch`, `dump --project`, `serve` subcommands; NDJSON watch output
 - **src/server.ts**: Bun HTTP + WebSocket server
-- **tests/sessions.test.ts**: Tests for new/refactored session functions
-- **tests/cli.test.ts**: Tests for `status` sub-command and `dump --watch`
+- **tests/sessions.test.ts**: Tests for all new session functions
+- **tests/cli.test.ts**: Tests for status, dump --watch, --project filter (14 tests)
 - **tests/server.test.ts**: Tests for HTTP + WebSocket server
 - **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands

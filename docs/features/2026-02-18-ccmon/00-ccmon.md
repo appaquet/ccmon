@@ -10,9 +10,9 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 04 (Packaging) complete. `flake.nix` now exposes `packages.${system}.default` (ccmon) and `apps.${system}.default` via `writeShellScriptBin` with pinned bun from nixpkgs. `nix build .#ccmon` validated. README.md written with install/hook instructions. 53 tests still passing.
+Phase 02 (Backend) + Phase 04 (Packaging) implementation complete. Recent additions: `dump --project <name>` filter (outputs single JSON object), NDJSON watch output (no separator, pipeable to jq), `Stop` hook remapped to `stopped` (was `waiting_for_answer` — aligns with tmux behavior), `waiting_for_answer` state removed entirely. 56 tests passing across 4 test files.
 
-Phase 02 (Backend) code complete, manual testing remaining. Next: Phase 03 (Web UI) or user acceptance of Phases 02+04.
+Hooks live and confirmed working via `status.local.json`. Next logical step: Phase 03 (Web UI). Phase 02 + 04 manual testing optional before proceeding.
 
 ## Requirements
 
@@ -32,7 +32,7 @@ Phase 02 (Backend) code complete, manual testing remaining. Next: Phase 03 (Web 
     * `UserPromptSubmit` → `running` (Claude processing user input)
     * `PostToolUse` → `running` (Claude continuing after tool)
     * `PermissionRequest` → `waiting_for_permission`
-    * `Stop` → `waiting_for_answer` (Claude idle, awaiting user)
+    * `Stop` → `stopped` (Claude idle, matches tmux indicator behavior)
     * `SessionEnd` → `stopped`
   * R3.2: `status.local.json` contains: `state`, `timestamp`, `session_id`, `working_dir`
   * R3.3: File written to `~/.claude/projects/{dir}/status.local.json` (project dir found via `sessions-index.json` lookup or path encoding fallback)
@@ -59,7 +59,7 @@ Phase 02 (Backend) code complete, manual testing remaining. Next: Phase 03 (Web 
 * R8: ⬜ Lists all detected projects, one entry per project directory in `~/.claude/projects/` (Phase: Web UI)
   * R8.1: Project name = last segment of working directory path
 * R9: ⬜ Each project shows: name, state with color/icon indicator (Phase: Web UI)
-  * R9.1: States: `stopped` (grey), `running` (green), `waiting_for_answer` (yellow), `waiting_for_permission` (red/orange)
+  * R9.1: States: `stopped` (grey), `running` (green), `waiting_for_permission` (red/orange)
 * R10: ⬜ UI updates in real-time via WebSocket without page reload (Phase: Web UI)
 
 ### CLI
@@ -111,7 +111,7 @@ Logic to scan `~/.claude/projects/` and map directories to project metadata. All
 ### 🔄 02 Phase: Backend
 [02-backend](02-backend.md)
 
-Refactor `scanProjects()` to use `sessions-index.json` (richer data, fewer I/O ops, JSONL fallback). `ccmon status` sub-command, `dump --watch`, Bun HTTP + WebSocket server, hook configuration alongside `claude-tmux-indicator`. All code + tests done (53 pass). Manual testing remaining.
+Refactor `scanProjects()` to use `sessions-index.json`, `ccmon status` sub-command, `dump --watch` (NDJSON, `--project` filter), Bun HTTP + WebSocket server, hook config. Fixed: `Stop`→`stopped`, removed `waiting_for_answer`. 56 tests passing. Hooks confirmed live.
 
 ### ⬜ 03 Phase: Web UI
 [03-web-ui](03-web-ui.md)
@@ -136,10 +136,10 @@ Expose ccmon as a Nix flake package via `writeShellScriptBin` wrapper with pinne
 - **bun.lock**: Bun lockfile (Phase: Session Detection)
 - **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()` (Phase: Session Detection, Backend)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection (Phase: Session Detection)
-- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `status`, `serve` subcommands (Phase: Session Detection, Backend)
+- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands (Phase: Session Detection, Backend)
 - **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints (Phase: Backend)
-- **tests/sessions.test.ts**: 39 unit tests for sessions.ts (Phase: Session Detection, Backend)
+- **tests/sessions.test.ts**: 38 unit tests for sessions.ts (Phase: Session Detection, Backend)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
-- **tests/cli.test.ts**: 10 tests for cli.ts — status sub-command, dump --watch (Phase: Backend)
+- **tests/cli.test.ts**: 14 tests for cli.ts — status, dump --watch, --project filter (Phase: Backend)
 - **tests/server.test.ts**: 4 tests for server.ts — HTTP endpoints, WebSocket (Phase: Backend)
 - **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)
