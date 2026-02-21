@@ -186,6 +186,31 @@ Fields to add to `ProjectState`: `latestUserMessage`, `subagentCount` (active, m
   * 12 new tests in sessions.test.ts (40 → 52)
 * [x] Verify: `bun test` passes — 86 tests total
 
+### Step 13: Efficiency + sub-agent count fix — TDD
+
+Audit findings: `getProjectState()` runs full I/O on every watcher event (debounced 100ms). Key hotspots:
+
+**Sub-agent count fix (priority 1):**
+* [ ] Reduce active threshold: 5min → 45s in `countActiveSubagents()` (R20.1)
+  * Sub-agents write continuously while running; 45s covers any lag without counting finished ones
+
+**Caching (priority 2-4):**
+* [ ] Cache `pgrep`/`/proc` liveness scan results with 2-3s TTL (R20.2)
+  * Currently: subprocess + hundreds of readlink calls on every event
+  * Fix: module-level cache `{ result, ts }`, skip if `Date.now() - ts < 2500`
+* [ ] Cache `sessions-index.json` parse by path + mtime (R20.3)
+  * Currently: re-read + re-parse on every `getProjectState()` call
+  * Fix: `Map<path, { mtime, data }>`, stat before parse, return cached if mtime unchanged
+* [ ] Cache `readSessionTail()` by JSONL file mtime (R20.4)
+  * Currently: 64KB read + parse on every call for non-stopped sessions
+  * Fix: same mtime-keyed cache pattern
+
+**Targeted refresh (priority 5):**
+* [ ] Pass changed `projectDir` from watcher callback through to `getProjectState()` (R20.5)
+  * Currently: watcher knows which dir changed but full rescan of all projects happens
+  * Fix: `getProjectState(claudeDir, changedDir?)` — if `changedDir` provided, only rescan that project, merge into cached full state
+* [ ] Tests for caching behavior (verify cache hits on second call with same mtime)
+
 ## Files
 
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge (new file)

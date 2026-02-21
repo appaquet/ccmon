@@ -10,7 +10,9 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 02 complete + Phase 03 complete. 86 tests. Session enrichment (R19): latestUserMessage, subagentCount, model, lastToolUse, gitBranch from JSONL tail. Web UI: dark-theme grid, WebSocket, color cards, exponential reconnect, enrichment fields shown. Next: review, packaging, or manual testing.
+Phase 02 + Phase 03 implementation complete (86 tests). Session enrichment live: latestUserMessage, subagentCount (active, mtime<5min), model, lastToolUse, gitBranch. Web UI: dark-theme CSS grid, WebSocket with exponential reconnect, color-coded cards, enrichment fields shown when present. Config system: host/port/maxInactivityHours via config.json + CLI flags.
+
+Opus code review identified two issues in Step 13 (R20): (1) sub-agent count overcounts — completed agents' files stay "active" for 5min after finishing; fix is reduce threshold to 45s. (2) `getProjectState()` re-scans all I/O on every watcher tick — pgrep/proc scan, sessions-index.json re-parse, readSessionTail 64KB read all need mtime-keyed caching. Step 13 plan written to 02-backend.md. Next: `/implement` Step 13.
 
 ## Requirements
 
@@ -86,6 +88,12 @@ Phase 02 complete + Phase 03 complete. 86 tests. Session enrichment (R19): lates
 
 * R17: ✅ `ccmon sub` CLI subcommand connects to running server via WebSocket, streams state updates as NDJSON (Phase: Backend)
 * R19: ✅ Session enrichment — richer `ProjectState` fields from JSONL tail parse (Phase: Backend)
+* R20: ⬜ `getProjectState()` efficiency — caching and targeted refresh to reduce I/O on frequent calls (Phase: Backend)
+  * R20.1: Sub-agent active threshold reduced 5min → 45s (avoids counting recently-finished agents)
+  * R20.2: Liveness scan (`pgrep`/`/proc`) cached with 2-3s TTL
+  * R20.3: `sessions-index.json` parse cached by file mtime
+  * R20.4: `readSessionTail()` cached by JSONL file mtime
+  * R20.5: Watcher passes changed `projectDir` → only that project is rescanned
   * R19.1: `gitBranch` from `sessions-index.json` (zero extra I/O)
   * R19.2: `subagentCount` — active sub-agent JSONL files (mtime < 5min) in `{sessionDir}/subagents/`
   * R19.3: `latestUserMessage`, `model`, `lastToolUse` from JSONL tail read (~64KB); only for non-stopped sessions
@@ -145,7 +153,8 @@ Expose ccmon as a Nix flake package via `writeShellScriptBin` wrapper with pinne
 - **package.json**: Bun project config — `"type": "module"`, `@types/bun`, `dump` script (Phase: Session Detection)
 - **tsconfig.json**: IDE TypeScript support — ESNext, moduleResolution bundler (Phase: Session Detection)
 - **bun.lock**: Bun lockfile (Phase: Session Detection)
-- **src/config.ts**: Config loading, validation, defaults, CLI override merge (Phase: Backend)
+- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client (Phase: Web UI)
+- **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours (Phase: Backend)
 - **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()` (Phase: Session Detection, Backend)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection (Phase: Session Detection)
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands (Phase: Session Detection, Backend)
