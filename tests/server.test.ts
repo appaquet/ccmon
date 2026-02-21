@@ -37,6 +37,8 @@ describe('HTTP server', () => {
     const body = await res.text();
     expect(body).toContain('<html');
     expect(body).toContain('ccmon');
+    expect(body).toContain('id="project-grid"');
+    expect(body).toContain('id="status-bar"');
   });
 
   test('GET /api/state returns JSON array', async () => {

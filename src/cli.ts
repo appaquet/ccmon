@@ -49,7 +49,7 @@ if (subcommand === 'dump') {
 
   const serveConfig = mergeCliOverrides(config, { port, host });
   const { port: resolvedPort, stop } = startServer({ port: serveConfig.port, hostname: serveConfig.host, maxInactivityHours: serveConfig.maxInactivityHours });
-  process.stdout.write(`ccmon server listening on http://localhost:${resolvedPort}\n`);
+  process.stdout.write(`ccmon server listening on http://${serveConfig.host}:${resolvedPort}\n`);
 
   process.on('SIGINT', () => {
     stop();

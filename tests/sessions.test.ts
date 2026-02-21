@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdir, writeFile, rm, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
+import { utimesSync } from 'node:fs';
 import {
   scanProjects,
   readStatus,
@@ -10,6 +11,8 @@ import {
   mapHookEventToState,
   writeStatus,
   filterStaleProjects,
+  countActiveSubagents,
+  readSessionTail,
 } from '../src/sessions';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -560,5 +563,205 @@ describe('filterStaleProjects', () => {
     const projects = [makeProject(null), makeProject(old)];
     const result = filterStaleProjects(projects, Infinity);
     expect(result).toHaveLength(2);
+  });
+});
+
+// ─── session enrichment ───────────────────────────────────────────────────────
+
+describe('session enrichment', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-enrichment');
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  // ── gitBranch ──
+
+  test('gitBranch flows from index entry through ProjectInfo', async () => {
+    const projDir = join(tmpDir, '-home-user-branchtest');
+    await mkdir(projDir, { recursive: true });
+
+    const entry = {
+      sessionId: 'branch-sess',
+      fullPath: join(projDir, 'branch-sess.jsonl'),
+      fileMtime: 1_700_000_000_000,
+      projectPath: '/home/user/branchtest',
+      isSidechain: false,
+      gitBranch: 'main',
+    };
+    await writeFile(join(projDir, 'sessions-index.json'), JSON.stringify({ version: 1, entries: [entry] }));
+    await writeFile(entry.fullPath, makeFirstLine('/home/user/branchtest', 'branch-sess') + '\n');
+
+    const results = await scanProjects(tmpDir);
+    expect(results).toHaveLength(1);
+    expect(results[0].gitBranch).toBe('main');
+  });
+
+  test('gitBranch is undefined when not present in index entry', async () => {
+    const projDir = join(tmpDir, '-home-user-nobranch');
+    await mkdir(projDir, { recursive: true });
+
+    const entry = {
+      sessionId: 'nobranch-sess',
+      fullPath: join(projDir, 'nobranch-sess.jsonl'),
+      fileMtime: 1_700_000_000_000,
+      projectPath: '/home/user/nobranch',
+      isSidechain: false,
+      // no gitBranch
+    };
+    await writeFile(join(projDir, 'sessions-index.json'), JSON.stringify({ version: 1, entries: [entry] }));
+    await writeFile(entry.fullPath, makeFirstLine('/home/user/nobranch', 'nobranch-sess') + '\n');
+
+    const results = await scanProjects(tmpDir);
+    expect(results).toHaveLength(1);
+    expect(results[0].gitBranch).toBeUndefined();
+  });
+
+  // ── countActiveSubagents ──
+
+  test('countActiveSubagents: 2 recent jsonl files → returns 2', async () => {
+    const sessionId = 'my-session';
+    const sessionDir = join(tmpDir, sessionId);
+    const subagentsDir = join(sessionDir, 'subagents');
+    await mkdir(subagentsDir, { recursive: true });
+    await writeFile(join(subagentsDir, 'agent-1.jsonl'), '{}');
+    await writeFile(join(subagentsDir, 'agent-2.jsonl'), '{}');
+
+    const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
+    const count = await countActiveSubagents(jsonlPath);
+    expect(count).toBe(2);
+  });
+
+  test('countActiveSubagents: old mtime files → returns 0', async () => {
+    const sessionId = 'old-session';
+    const sessionDir = join(tmpDir, sessionId);
+    const subagentsDir = join(sessionDir, 'subagents');
+    await mkdir(subagentsDir, { recursive: true });
+
+    const agent1 = join(subagentsDir, 'agent-1.jsonl');
+    const agent2 = join(subagentsDir, 'agent-2.jsonl');
+    await writeFile(agent1, '{}');
+    await writeFile(agent2, '{}');
+
+    // Backdate both files to 10 minutes ago
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+    utimesSync(agent1, tenMinAgo, tenMinAgo);
+    utimesSync(agent2, tenMinAgo, tenMinAgo);
+
+    const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
+    const count = await countActiveSubagents(jsonlPath);
+    expect(count).toBe(0);
+  });
+
+  test('countActiveSubagents: missing subagents dir → returns 0', async () => {
+    const jsonlPath = join(tmpDir, 'no-subagents-session.jsonl');
+    const count = await countActiveSubagents(jsonlPath);
+    expect(count).toBe(0);
+  });
+
+  test('countActiveSubagents: non-jsonl files are not counted', async () => {
+    const sessionId = 'mixed-session';
+    const sessionDir = join(tmpDir, sessionId);
+    const subagentsDir = join(sessionDir, 'subagents');
+    await mkdir(subagentsDir, { recursive: true });
+    await writeFile(join(subagentsDir, 'agent-1.jsonl'), '{}');
+    await writeFile(join(subagentsDir, 'notes.txt'), 'some text');
+
+    const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
+    const count = await countActiveSubagents(jsonlPath);
+    expect(count).toBe(1);
+  });
+
+  // ── readSessionTail ──
+
+  function makeUserEntry(content: string | object[]): string {
+    const message = typeof content === 'string' ? { role: 'user', content } : { role: 'user', content };
+    return JSON.stringify({ type: 'user', message });
+  }
+
+  function makeAssistantEntry(model: string, contentBlocks: object[]): string {
+    return JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', model, content: contentBlocks },
+    });
+  }
+
+  test('readSessionTail: extracts latestUserMessage, model, lastToolUse', async () => {
+    const jsonlPath = join(tmpDir, 'tail-test.jsonl');
+    const lines = [
+      makeUserEntry('what is X'),
+      makeUserEntry('<command-message>ctx-load</command-message>'),
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'tool_use', name: 'Read', input: {} },
+        { type: 'text', text: 'some text' },
+      ]),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.latestUserMessage).toBe('what is X');
+    expect(result.model).toBe('claude-sonnet-4-6');
+    expect(result.lastToolUse).toBe('Read');
+  });
+
+  test('readSessionTail: slash command content is excluded from latestUserMessage', async () => {
+    const jsonlPath = join(tmpDir, 'slash-cmd-test.jsonl');
+    const lines = [
+      makeUserEntry('<command-message>ctx-load</command-message>'),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.latestUserMessage).toBeUndefined();
+  });
+
+  test('readSessionTail: message truncated to 200 chars', async () => {
+    const jsonlPath = join(tmpDir, 'truncate-test.jsonl');
+    const longMessage = 'A'.repeat(300);
+    await writeFile(jsonlPath, makeUserEntry(longMessage) + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.latestUserMessage).toBe('A'.repeat(200));
+  });
+
+  test('readSessionTail: missing file returns empty object', async () => {
+    const result = await readSessionTail(join(tmpDir, 'nonexistent.jsonl'));
+    expect(result.latestUserMessage).toBeUndefined();
+    expect(result.model).toBeUndefined();
+    expect(result.lastToolUse).toBeUndefined();
+  });
+
+  test('readSessionTail: corrupt lines are skipped, valid lines parsed', async () => {
+    const jsonlPath = join(tmpDir, 'corrupt-lines-test.jsonl');
+    const lines = [
+      'not valid json {{{',
+      makeUserEntry('valid message'),
+      'also broken',
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.latestUserMessage).toBe('valid message');
+  });
+
+  test('readSessionTail: picks last tool use from assistant content array', async () => {
+    const jsonlPath = join(tmpDir, 'multi-tool-test.jsonl');
+    const lines = [
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'tool_use', name: 'Bash', input: {} },
+      ]),
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'tool_use', name: 'Edit', input: {} },
+      ]),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    // Reversed scan picks Edit (last in file = first found from end)
+    expect(result.lastToolUse).toBe('Edit');
   });
 });

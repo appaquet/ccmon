@@ -32,6 +32,7 @@ export interface SessionsIndexEntry {
   modified?: string;    // ISO 8601
   projectPath: string;
   isSidechain: boolean;
+  gitBranch?: string;
 }
 
 export interface SessionsIndex {
@@ -50,6 +51,13 @@ export interface ProjectInfo {
   firstPrompt?: string;
   messageCount?: number;
   sessionModified?: string; // ISO 8601 from index entry
+  gitBranch?: string;
+}
+
+export interface SessionTailInfo {
+  latestUserMessage?: string;
+  model?: string;
+  lastToolUse?: string;
 }
 
 export interface StatusFile {
@@ -62,6 +70,11 @@ export interface StatusFile {
 export interface ProjectState extends ProjectInfo {
   state: SessionState;
   lastUpdated: string | null; // from status file timestamp, null if no status
+  // Enrichment fields — only populated for non-stopped sessions
+  latestUserMessage?: string;
+  subagentCount?: number;
+  model?: string;
+  lastToolUse?: string;
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -101,6 +114,7 @@ export async function readSessionsIndex(projectDirPath: string): Promise<Session
       modified: typeof e.modified === 'string' ? e.modified : undefined,
       projectPath: e.projectPath,
       isSidechain: e.isSidechain,
+      gitBranch: typeof e.gitBranch === 'string' ? e.gitBranch : undefined,
     }));
 
   if (entries.length === 0) return null;
@@ -244,7 +258,24 @@ export async function getProjectState(claudeDir: string = DEFAULT_CLAUDE_DIR): P
         }
       }
 
-      return { ...project, state, lastUpdated };
+      const base: ProjectState = { ...project, state, lastUpdated };
+
+      if (state !== 'stopped') {
+        const [tail, subagentCount] = await Promise.all([
+          readSessionTail(project.latestJSONL),
+          countActiveSubagents(project.latestJSONL),
+        ]);
+        return {
+          ...base,
+          latestUserMessage: tail.latestUserMessage,
+          model: tail.model,
+          lastToolUse: tail.lastToolUse,
+          subagentCount,
+          gitBranch: project.gitBranch,
+        };
+      }
+
+      return base;
     }),
   );
 }
@@ -264,6 +295,114 @@ export function filterStaleProjects(
     if (p.lastUpdated === null) return false;
     return new Date(p.lastUpdated).getTime() >= cutoff;
   });
+}
+
+/**
+ * Counts active sub-agent JSONL files in {sessionDir}/subagents/ where
+ * mtime is within the last 5 minutes. Returns 0 if dir doesn't exist.
+ */
+export async function countActiveSubagents(latestJSONL: string): Promise<number> {
+  // Strip .jsonl extension to get the session dir
+  const sessionDir = latestJSONL.endsWith('.jsonl')
+    ? latestJSONL.slice(0, -'.jsonl'.length)
+    : latestJSONL;
+  const subagentsDir = join(sessionDir, 'subagents');
+  const cutoff = Date.now() - STALE_THRESHOLD_MS;
+
+  let entries: Awaited<ReturnType<typeof readdir>>;
+  try {
+    entries = await readdir(subagentsDir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+
+  let count = 0;
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!entry.name.endsWith('.jsonl')) return;
+      try {
+        const s = await stat(join(subagentsDir, entry.name));
+        if (s.mtimeMs > cutoff) count++;
+      } catch {
+        // skip unreadable files
+      }
+    }),
+  );
+
+  return count;
+}
+
+/**
+ * Reads the last 64KB of a JSONL session file and extracts enrichment fields
+ * by scanning lines from newest to oldest.
+ */
+export async function readSessionTail(jsonlPath: string): Promise<SessionTailInfo> {
+  let text: string;
+  try {
+    const file = Bun.file(jsonlPath);
+    const size = file.size;
+    const slice = size > 65536 ? file.slice(size - 65536) : file;
+    text = await slice.text();
+  } catch {
+    return {};
+  }
+
+  const lines = text.split('\n');
+  const result: SessionTailInfo = {};
+  let foundUser = false;
+  let foundModel = false;
+  let foundTool = false;
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (foundUser && foundModel && foundTool) break;
+
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    let entry: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(line);
+      if (typeof parsed !== 'object' || parsed === null) continue;
+      entry = parsed as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+
+    const type = entry.type;
+    const message = entry.message as Record<string, unknown> | undefined;
+    if (!message) continue;
+
+    if (!foundUser && type === 'user') {
+      const content = message.content;
+      if (typeof content === 'string' && !content.startsWith('<')) {
+        result.latestUserMessage = content.slice(0, 200);
+        foundUser = true;
+      }
+    }
+
+    if ((!foundModel || !foundTool) && type === 'assistant') {
+      if (!foundModel && typeof message.model === 'string') {
+        result.model = message.model;
+        foundModel = true;
+      }
+
+      if (!foundTool && Array.isArray(message.content)) {
+        const toolUse = (message.content as unknown[]).find(
+          (item): item is { type: string; name: string } =>
+            typeof item === 'object' &&
+            item !== null &&
+            (item as Record<string, unknown>).type === 'tool_use' &&
+            typeof (item as Record<string, unknown>).name === 'string',
+        );
+        if (toolUse) {
+          result.lastToolUse = toolUse.name;
+          foundTool = true;
+        }
+      }
+    }
+  }
+
+  return result;
 }
 
 // ─── Exported Test Helpers ───────────────────────────────────────────────────
@@ -311,6 +450,7 @@ async function readProjectInfo(fullPath: string, dirName: string): Promise<Proje
       firstPrompt: latest.firstPrompt,
       messageCount: latest.messageCount,
       sessionModified: latest.modified,
+      gitBranch: latest.gitBranch,
     };
   }
 
@@ -469,6 +609,7 @@ type RawIndexEntry = {
   summary?: unknown;
   messageCount?: unknown;
   modified?: unknown;
+  gitBranch?: unknown;
   projectPath: string;
   isSidechain: boolean;
 };

@@ -1,22 +1,11 @@
 import type { ServerWebSocket } from 'bun';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { getProjectState, filterStaleProjects } from './sessions';
 import { DEFAULT_CONFIG } from './config';
 import { watchForChanges } from './watcher';
 
 const DEFAULT_CLAUDE_DIR = `${Bun.env.HOME ?? '/root'}/.claude/projects`;
-
-const PLACEHOLDER_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ccmon</title>
-</head>
-<body>
-  <h1>ccmon</h1>
-  <p>Claude Code Monitor — UI coming in Phase 03.</p>
-</body>
-</html>`;
 
 export interface ServerOptions {
   port?: number;
@@ -34,6 +23,9 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
   const hostname = options.hostname ?? DEFAULT_CONFIG.host;
   const claudeDir = options.claudeDir ?? DEFAULT_CLAUDE_DIR;
   const maxInactivityHours = options.maxInactivityHours ?? DEFAULT_CONFIG.maxInactivityHours;
+
+  const htmlPath = join(import.meta.dir, '..', 'public', 'index.html');
+  const html = readFileSync(htmlPath, 'utf8');
 
   const clients = new Set<ServerWebSocket<unknown>>();
 
@@ -95,7 +87,7 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
       }
 
       if (url.pathname === '/') {
-        return new Response(PLACEHOLDER_HTML, {
+        return new Response(html, {
           headers: { 'Content-Type': 'text/html; charset=utf-8' },
         });
       }
