@@ -148,6 +148,22 @@
       padding: 60px 20px;
       font-size: 15px;
     }
+
+    @keyframes flash-waiting {
+      0%, 100% { border-color: var(--border); }
+      50%       { border-color: var(--waiting); box-shadow: 0 0 8px rgba(239,68,68,0.4); }
+    }
+    .card-flashing-waiting {
+      animation: flash-waiting 1s ease-in-out infinite;
+    }
+
+    @keyframes flash-stopped {
+      0%, 100% { border-color: var(--border); }
+      50%       { border-color: var(--stopped); box-shadow: 0 0 12px rgba(249,115,22,0.5); }
+    }
+    .card-flashing-stopped {
+      animation: flash-stopped 0.5s ease-in-out 10;
+    }
   </style>
 </head>
 <body>
@@ -209,11 +225,14 @@
       return str.length > max ? str.slice(0, max) + '…' : str;
     }
 
-    function createCard(proj) {
+    function createCard(proj, flashStopped) {
       const card = document.createElement('div');
-      card.className = 'card';
-
       const s = proj.state || 'stopped';
+      const flashClasses = s === 'waiting_for_permission' ? ' card-flashing-waiting'
+        : flashStopped ? ' card-flashing-stopped'
+        : '';
+      card.className = 'card' + flashClasses;
+
       const badgeClass = stateBadgeClass[s] || 'badge-stopped';
       const dotClass = stateDotClass[s] || 'dot-stopped';
       const label = stateLabel[s] || s;
@@ -249,6 +268,11 @@
         html += `<div class="card-meta">⬡ ${esc(proj.subagentCount)} sub-agent${proj.subagentCount !== 1 ? 's' : ''}</div>`;
       }
 
+      // task count
+      if (proj.tasksDone !== undefined && proj.tasksTotal !== undefined && proj.tasksTotal > 0) {
+        html += `<div class="card-meta">${esc(proj.tasksDone)}/${esc(proj.tasksTotal)} tasks</div>`;
+      }
+
       // last updated (always shown at bottom)
       const rel = relativeTime(proj.lastUpdated);
       html += `<div class="card-footer">${rel ? esc(rel) : '—'}</div>`;
@@ -257,10 +281,26 @@
       return card;
     }
 
+    const prevState = new Map(); // projectName → last known state string
+
     function render() {
       const grid = document.getElementById('project-grid');
       const all = [...state.values()].flat();
       all.sort((a, b) => a.projectName.localeCompare(b.projectName));
+
+      // Compute running→stopped transitions before clearing DOM
+      const flashStopped = new Set();
+      for (const proj of all) {
+        if (prevState.get(proj.projectName) === 'running' && proj.state === 'stopped') {
+          flashStopped.add(proj.projectName);
+        }
+        prevState.set(proj.projectName, proj.state);
+      }
+      const currentNames = new Set(all.map(p => p.projectName));
+      for (const name of [...prevState.keys()]) {
+        if (!currentNames.has(name)) prevState.delete(name);
+      }
+
       grid.innerHTML = '';
 
       if (all.length === 0) {
@@ -272,7 +312,7 @@
       }
 
       for (const proj of all) {
-        grid.appendChild(createCard(proj));
+        grid.appendChild(createCard(proj, flashStopped.has(proj.projectName)));
       }
     }
 

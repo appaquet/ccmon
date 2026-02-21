@@ -765,6 +765,88 @@ describe('session enrichment', () => {
     // Reversed scan picks Edit (last in file = first found from end)
     expect(result.lastToolUse).toBe('Edit');
   });
+
+  test('readSessionTail: TodoWrite present with mixed statuses → correct tasksDone and tasksTotal', async () => {
+    const jsonlPath = join(tmpDir, 'todowrite-mixed.jsonl');
+    const todos = [
+      { content: 'Task A', status: 'completed' },
+      { content: 'Task B', status: 'in_progress' },
+      { content: 'Task C', status: 'completed' },
+      { content: 'Task D', status: 'pending' },
+    ];
+    const lines = [
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'tool_use', name: 'TodoWrite', input: { todos } },
+      ]),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.tasksTotal).toBe(4);
+    expect(result.tasksDone).toBe(2);
+  });
+
+  test('readSessionTail: TodoWrite absent → tasksDone and tasksTotal both undefined', async () => {
+    const jsonlPath = join(tmpDir, 'todowrite-absent.jsonl');
+    const lines = [
+      makeUserEntry('do something'),
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'tool_use', name: 'Bash', input: { command: 'ls' } },
+      ]),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.tasksDone).toBeUndefined();
+    expect(result.tasksTotal).toBeUndefined();
+  });
+
+  test('readSessionTail: TodoWrite all completed → tasksDone equals tasksTotal', async () => {
+    const jsonlPath = join(tmpDir, 'todowrite-all-done.jsonl');
+    const todos = [
+      { content: 'Step 1', status: 'completed' },
+      { content: 'Step 2', status: 'completed' },
+      { content: 'Step 3', status: 'completed' },
+    ];
+    const lines = [
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'tool_use', name: 'TodoWrite', input: { todos } },
+      ]),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.tasksTotal).toBe(3);
+    expect(result.tasksDone).toBe(3);
+    expect(result.tasksDone).toBe(result.tasksTotal);
+  });
+
+  test('readSessionTail: multiple assistant entries, most recent TodoWrite is used', async () => {
+    const jsonlPath = join(tmpDir, 'todowrite-most-recent.jsonl');
+    const olderTodos = [
+      { content: 'Old task A', status: 'pending' },
+      { content: 'Old task B', status: 'pending' },
+    ];
+    const newerTodos = [
+      { content: 'New task A', status: 'completed' },
+      { content: 'New task B', status: 'completed' },
+      { content: 'New task C', status: 'in_progress' },
+    ];
+    const lines = [
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'tool_use', name: 'TodoWrite', input: { todos: olderTodos } },
+      ]),
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'tool_use', name: 'TodoWrite', input: { todos: newerTodos } },
+      ]),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    // Backward scan finds the newer (last in file) entry first
+    expect(result.tasksTotal).toBe(3);
+    expect(result.tasksDone).toBe(2);
+  });
 });
 
 // ─── cache behaviour ──────────────────────────────────────────────────────────

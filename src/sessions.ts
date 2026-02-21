@@ -78,6 +78,8 @@ export interface SessionTailInfo {
   latestUserMessage?: string;
   model?: string;
   lastToolUse?: string;
+  tasksDone?: number;
+  tasksTotal?: number;
 }
 
 export interface StatusFile {
@@ -95,6 +97,8 @@ export interface ProjectState extends ProjectInfo {
   subagentCount?: number;
   model?: string;
   lastToolUse?: string;
+  tasksDone?: number;
+  tasksTotal?: number;
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -410,6 +414,7 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
   let foundUser = false;
   let foundModel = false;
   let foundTool = false;
+  let foundTasks = false;
 
   for (let i = lines.length - 1; i >= 0; i--) {
     if (foundUser && foundModel && foundTool) break;
@@ -438,23 +443,46 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
       }
     }
 
-    if ((!foundModel || !foundTool) && type === 'assistant') {
+    if (type === 'assistant') {
       if (!foundModel && typeof message.model === 'string') {
         result.model = message.model;
         foundModel = true;
       }
 
-      if (!foundTool && Array.isArray(message.content)) {
-        const toolUse = (message.content as unknown[]).find(
-          (item): item is { type: string; name: string } =>
-            typeof item === 'object' &&
-            item !== null &&
-            (item as Record<string, unknown>).type === 'tool_use' &&
-            typeof (item as Record<string, unknown>).name === 'string',
-        );
-        if (toolUse) {
-          result.lastToolUse = toolUse.name;
-          foundTool = true;
+      if (Array.isArray(message.content)) {
+        const contentBlocks = message.content as unknown[];
+
+        if (!foundTool) {
+          const toolUse = contentBlocks.find(
+            (item): item is { type: string; name: string } =>
+              typeof item === 'object' &&
+              item !== null &&
+              (item as Record<string, unknown>).type === 'tool_use' &&
+              typeof (item as Record<string, unknown>).name === 'string',
+          );
+          if (toolUse) {
+            result.lastToolUse = toolUse.name;
+            foundTool = true;
+          }
+        }
+
+        if (!foundTasks) {
+          const todoWrite = contentBlocks.find(
+            (item): item is { type: string; name: string; input: Record<string, unknown> } =>
+              typeof item === 'object' &&
+              item !== null &&
+              (item as Record<string, unknown>).type === 'tool_use' &&
+              (item as Record<string, unknown>).name === 'TodoWrite',
+          );
+          if (todoWrite !== undefined) {
+            const input = (todoWrite as Record<string, unknown>).input as Record<string, unknown> | undefined;
+            if (input !== undefined && Array.isArray(input.todos)) {
+              const todos = input.todos as Array<{ status: string }>;
+              result.tasksTotal = todos.length;
+              result.tasksDone = todos.filter((t) => t.status === 'completed').length;
+              foundTasks = true;
+            }
+          }
         }
       }
     }
@@ -523,6 +551,8 @@ async function buildProjectState(project: ProjectInfo, claudeDir: string): Promi
       latestUserMessage: tail.latestUserMessage,
       model: tail.model,
       lastToolUse: tail.lastToolUse,
+      tasksDone: tail.tasksDone,
+      tasksTotal: tail.tasksTotal,
       subagentCount,
       gitBranch: project.gitBranch,
     };
