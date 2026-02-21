@@ -145,7 +145,7 @@ Phase 01 (Session Detection) is complete: `scanProjects()`, `readStatus()`, `che
 ## Files
 
 - **src/sessions.ts**: Added `readSessionsIndex()`, `writeStatus()`, `mapHookEventToState()`. `Stop`→`stopped`, removed `waiting_for_answer`
-- **src/cli.ts**: Added `status`, `dump --watch`, `dump --project`, `serve`, `ws` subcommands; NDJSON watch output
+- **src/cli.ts**: Added `status`, `dump --watch`, `dump --project`, `serve`, `sub` subcommands; NDJSON watch output
 - **src/server.ts**: Bun HTTP + WebSocket server
 - **tests/sessions.test.ts**: Tests for all new session functions
 - **tests/cli.test.ts**: Tests for status, dump --watch, --project filter (14 tests)

@@ -84,7 +84,7 @@ Step 9 complete: `ccmon ws` WebSocket client subcommand implemented, broadcast-o
   * R16.1: Personal/dotfiles audience — concise, assumes NixOS + home-manager
   * R16.2: Covers: flake input, adding to packages, hook configuration, available commands
 
-* R17: ✅ `ccmon ws` CLI subcommand connects to running server via WebSocket, streams state updates as NDJSON (Phase: Backend)
+* R17: ✅ `ccmon sub` CLI subcommand connects to running server via WebSocket, streams state updates as NDJSON (Phase: Backend)
   * R17.1: `--port N` flag (default 3000), exits on SIGINT or server disconnect
   * R17.2: Used for smoke-testing server stack and background monitoring
 
