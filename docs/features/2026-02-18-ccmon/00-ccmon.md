@@ -10,9 +10,9 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 02 + Phase 03 implementation complete (86 tests). Session enrichment live: latestUserMessage, subagentCount (active, mtime<5min), model, lastToolUse, gitBranch. Web UI: dark-theme CSS grid, WebSocket with exponential reconnect, color-coded cards, enrichment fields shown when present. Config system: host/port/maxInactivityHours via config.json + CLI flags.
+Step 13 (R20) complete: 95 tests. All caching implemented (R20.1-R20.4 were pre-existing); added 9 new tests for cache hit/miss and targeted refresh. R20.5 targeted refresh complete: `getProjectState(claudeDir, changedDir?)` only rescans the changed project, merges into `projectStateCache`.
 
-Opus code review identified two issues in Step 13 (R20): (1) sub-agent count overcounts — completed agents' files stay "active" for 5min after finishing; fix is reduce threshold to 45s. (2) `getProjectState()` re-scans all I/O on every watcher tick — pgrep/proc scan, sessions-index.json re-parse, readSessionTail 64KB read all need mtime-keyed caching. Step 13 plan written to 02-backend.md. Next: `/implement` Step 13.
+Phase 02 (Backend) implementation fully complete. Next: Phase 05 (UI Enhancements) — task detection, permission flash, stopped flash.
 
 ## Requirements
 
@@ -88,7 +88,7 @@ Opus code review identified two issues in Step 13 (R20): (1) sub-agent count ove
 
 * R17: ✅ `ccmon sub` CLI subcommand connects to running server via WebSocket, streams state updates as NDJSON (Phase: Backend)
 * R19: ✅ Session enrichment — richer `ProjectState` fields from JSONL tail parse (Phase: Backend)
-* R20: ⬜ `getProjectState()` efficiency — caching and targeted refresh to reduce I/O on frequent calls (Phase: Backend)
+* R20: ✅ `getProjectState()` efficiency — caching and targeted refresh to reduce I/O on frequent calls (Phase: Backend)
   * R20.1: Sub-agent active threshold reduced 5min → 45s (avoids counting recently-finished agents)
   * R20.2: Liveness scan (`pgrep`/`/proc`) cached with 2-3s TTL
   * R20.3: `sessions-index.json` parse cached by file mtime
@@ -104,6 +104,12 @@ Opus code review identified two issues in Step 13 (R20): (1) sub-agent count ove
   * R18.4: Config at `$XDG_CONFIG_HOME/ccmon/config.json`; `CCMON_CONFIG` env var overrides path; silent defaults if missing
   * R17.1: `--port N` flag (default 3000), exits on SIGINT or server disconnect
   * R17.2: Used for smoke-testing server stack and background monitoring
+
+### UI Enhancements
+
+* R21: ⬜ Investigate task count detection from JSONL — detect done/total tasks from session data (Phase: UI Enhancements)
+* R22: ⬜ Flash card when state transitions to `waiting_for_permission` (Phase: UI Enhancements)
+* R23: ⬜ Flash card for 5s when state transitions from `running` → `stopped` (Phase: UI Enhancements)
 
 #### Out of Scope
 
@@ -130,7 +136,7 @@ Logic to scan `~/.claude/projects/` and map directories to project metadata. All
 ### 🔄 02 Phase: Backend
 [02-backend](02-backend.md)
 
-Refactor `scanProjects()` to use `sessions-index.json`, `ccmon status` sub-command, `dump --watch` (NDJSON, `--project` filter), Bun HTTP + WebSocket server, hook config. Fixed: `Stop`→`stopped`, removed `waiting_for_answer`. 56 tests passing. Hooks confirmed live.
+Refactor `scanProjects()` to use `sessions-index.json`, `ccmon status` sub-command, `dump --watch` (NDJSON, `--project` filter), Bun HTTP + WebSocket server, hook config, session enrichment, efficiency caching. 95 tests passing. Hooks confirmed live.
 
 ### ✅ 03 Phase: Web UI
 [03-web-ui](03-web-ui.md)
@@ -141,6 +147,11 @@ Single-page vanilla JS UI. Connects via WebSocket, renders project list, updates
 [04-packaging](04-packaging.md)
 
 Expose ccmon as a Nix flake package via `writeShellScriptBin` wrapper with pinned bun. Add README with install/hook instructions for personal NixOS + home-manager setup. All 3 steps done: flake.nix, README.md, CLAUDE.md.
+
+### ⬜ 05 Phase: UI Enhancements
+[05-ui-enhancements](05-ui-enhancements.md)
+
+Task count detection from JSONL, permission flash, running→stopped flash animation.
 
 ## Files
 

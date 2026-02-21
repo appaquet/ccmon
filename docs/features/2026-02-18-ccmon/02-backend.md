@@ -191,30 +191,26 @@ Fields to add to `ProjectState`: `latestUserMessage`, `subagentCount` (active, m
 Audit findings: `getProjectState()` runs full I/O on every watcher event (debounced 100ms). Key hotspots:
 
 **Sub-agent count fix (priority 1):**
-* [ ] Reduce active threshold: 5min → 45s in `countActiveSubagents()` (R20.1)
+* [x] Reduce active threshold: 5min → 45s in `countActiveSubagents()` (R20.1)
   * Sub-agents write continuously while running; 45s covers any lag without counting finished ones
 
 **Caching (priority 2-4):**
-* [ ] Cache `pgrep`/`/proc` liveness scan results with 2-3s TTL (R20.2)
-  * Currently: subprocess + hundreds of readlink calls on every event
-  * Fix: module-level cache `{ result, ts }`, skip if `Date.now() - ts < 2500`
-* [ ] Cache `sessions-index.json` parse by path + mtime (R20.3)
-  * Currently: re-read + re-parse on every `getProjectState()` call
-  * Fix: `Map<path, { mtime, data }>`, stat before parse, return cached if mtime unchanged
-* [ ] Cache `readSessionTail()` by JSONL file mtime (R20.4)
-  * Currently: 64KB read + parse on every call for non-stopped sessions
-  * Fix: same mtime-keyed cache pattern
+* [x] Cache `pgrep`/`/proc` liveness scan results with 2-3s TTL (R20.2)
+  * module-level cache `{ result, ts }`, skip if `Date.now() - ts < 2500`
+* [x] Cache `sessions-index.json` parse by path + mtime (R20.3)
+  * `Map<path, { mtime, data }>`, stat before parse, return cached if mtime unchanged
+* [x] Cache `readSessionTail()` by JSONL file mtime (R20.4)
+  * Same mtime-keyed cache pattern
 
 **Targeted refresh (priority 5):**
-* [ ] Pass changed `projectDir` from watcher callback through to `getProjectState()` (R20.5)
-  * Currently: watcher knows which dir changed but full rescan of all projects happens
-  * Fix: `getProjectState(claudeDir, changedDir?)` — if `changedDir` provided, only rescan that project, merge into cached full state
-* [ ] Tests for caching behavior (verify cache hits on second call with same mtime)
+* [x] Pass changed `projectDir` from watcher callback through to `getProjectState()` (R20.5)
+  * `getProjectState(claudeDir, changedDir?)` — if `changedDir` provided, only rescan that project, merge into cached full state via `projectStateCache`
+* [x] Tests for caching behavior — 9 new tests (6 cache hit/miss + 3 targeted refresh); 95 pass total
 
 ## Files
 
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge (new file)
-- **src/sessions.ts**: Added `readSessionsIndex()`, `writeStatus()`, `mapHookEventToState()`, `filterStaleProjects()`. `Stop`→`stopped`, removed `waiting_for_answer`
+- **src/sessions.ts**: Added `readSessionsIndex()`, `writeStatus()`, `mapHookEventToState()`, `filterStaleProjects()`. `Stop`→`stopped`, removed `waiting_for_answer`. Step 13: mtime-keyed caches for liveness/sessions-index/tail, projectStateCache, `_resetCachesForTesting()`
 - **src/cli.ts**: Added `status`, `dump --watch`, `dump --project`, `serve`, `sub` subcommands; NDJSON watch output
 - **src/server.ts**: Bun HTTP + WebSocket server
 - **tests/sessions.test.ts**: Tests for all new session functions
