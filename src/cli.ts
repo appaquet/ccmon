@@ -44,7 +44,11 @@ if (subcommand === 'dump') {
     process.exit(1);
   }
 
-  const { port: resolvedPort, stop } = startServer({ port, maxInactivityHours: config.maxInactivityHours });
+  const hostArg = process.argv.indexOf('--host');
+  const host = hostArg !== -1 ? process.argv[hostArg + 1] : undefined;
+
+  const serveConfig = mergeCliOverrides(config, { port, host });
+  const { port: resolvedPort, stop } = startServer({ port: serveConfig.port, hostname: serveConfig.host, maxInactivityHours: serveConfig.maxInactivityHours });
   process.stdout.write(`ccmon server listening on http://localhost:${resolvedPort}\n`);
 
   process.on('SIGINT', () => {
@@ -57,7 +61,7 @@ if (subcommand === 'dump') {
   });
 } else {
   process.stderr.write(
-    'Usage: ccmon <subcommand>\n\nSubcommands:\n  dump                   Print current Claude Code project state as JSON\n  dump --watch           Watch for changes and print updates\n  dump --max-age <hours> Override maxInactivityHours from config\n  dump --no-filter       Disable inactivity filter\n  status                 Read hook event from stdin and write status file\n  serve                  Start HTTP + WebSocket server\n  sub                    Connect to running server, stream state as NDJSON\n',
+    'Usage: ccmon <subcommand>\n\nSubcommands:\n  dump                   Print current Claude Code project state as JSON\n  dump --watch           Watch for changes and print updates\n  dump --max-age <hours> Override maxInactivityHours from config\n  dump --no-filter       Disable inactivity filter\n  status                 Read hook event from stdin and write status file\n  serve                  Start HTTP + WebSocket server\n  serve --host <addr>    Listen on custom host (default: 0.0.0.0)\n  serve --port <N>       Listen on custom port (default: 9480)\n  sub                    Connect to running server, stream state as NDJSON\n',
   );
   process.exit(1);
 }
@@ -206,7 +210,7 @@ async function resolveProjectDir(cwd: string, dir: string): Promise<string> {
 
 async function runSub(): Promise<void> {
   const portArg = process.argv.indexOf('--port');
-  const port = portArg !== -1 ? parseInt(process.argv[portArg + 1], 10) : 3000;
+  const port = portArg !== -1 ? parseInt(process.argv[portArg + 1], 10) : config.port;
 
   const ws = new WebSocket(`ws://localhost:${port}/ws`);
 

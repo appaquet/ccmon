@@ -45,10 +45,19 @@ describe('loadConfig', () => {
 
   test('valid file with maxInactivityHours: 6 returns correct value', async () => {
     const configPath = join(tmpDir, 'config.json');
-    await writeFile(configPath, JSON.stringify({ maxInactivityHours: 6 }));
+    await writeFile(configPath, JSON.stringify({ maxInactivityHours: 6, host: '0.0.0.0', port: 9480 }));
 
     const config = loadConfig(configPath);
     expect(config.maxInactivityHours).toBe(6);
+  });
+
+  test('valid file with host and port returns correct values', async () => {
+    const configPath = join(tmpDir, 'config.json');
+    await writeFile(configPath, JSON.stringify({ maxInactivityHours: 3, host: '127.0.0.1', port: 8080 }));
+
+    const config = loadConfig(configPath);
+    expect(config.host).toBe('127.0.0.1');
+    expect(config.port).toBe(8080);
   });
 
   test('invalid JSON: returns defaults', async () => {
@@ -84,6 +93,18 @@ describe('mergeCliOverrides', () => {
     const base = { ...DEFAULT_CONFIG };
     const result = mergeCliOverrides(base, { maxInactivityHours: 1 });
     expect(result.maxInactivityHours).toBe(1);
+  });
+
+  test('overrides host', () => {
+    const base = { ...DEFAULT_CONFIG };
+    const result = mergeCliOverrides(base, { host: '127.0.0.1' });
+    expect(result.host).toBe('127.0.0.1');
+  });
+
+  test('overrides port', () => {
+    const base = { ...DEFAULT_CONFIG };
+    const result = mergeCliOverrides(base, { port: 8080 });
+    expect(result.port).toBe(8080);
   });
 
   test('empty overrides keeps config unchanged', () => {
