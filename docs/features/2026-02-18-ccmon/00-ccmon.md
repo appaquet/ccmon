@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Step 9 complete (sub subcommand, broadcast test, 57 tests). Step 10 planned: config system + stale filter (R18). Plan written to 02-backend.md, awaiting `/implement`.
+Steps 9+10 complete: `sub` subcommand, broadcast test, config system, stale filter (R17, R18). 71 tests passing. Phase 02 complete. Phase 03 (Web UI) planning in progress.
 
 ## Requirements
 
@@ -85,7 +85,7 @@ Step 9 complete (sub subcommand, broadcast test, 57 tests). Step 10 planned: con
   * R16.2: Covers: flake input, adding to packages, hook configuration, available commands
 
 * R17: ✅ `ccmon sub` CLI subcommand connects to running server via WebSocket, streams state updates as NDJSON (Phase: Backend)
-* R18: ⬜ Config file system with stale project filter (Phase: Backend)
+* R18: ✅ Config file system with stale project filter (Phase: Backend)
   * R18.1: `filterStaleProjects()` excludes projects with `lastUpdated` null or older than `maxInactivityHours` (default 3h)
   * R18.2: `dump` and `dump --watch` apply filter; `--max-age <hours>` and `--no-filter` CLI flags override config
   * R18.3: `serve` reads config and applies filter to all outputs (no CLI override for serve)
