@@ -4,7 +4,7 @@
   "scripts": {
     "dump": "bun run src/cli.ts dump",
     "serve": "bun run src/cli.ts serve",
-    "ws": "bun run src/cli.ts ws"
+    "sub": "bun run src/cli.ts sub"
   },
   "devDependencies": {
     "@types/bun": "latest"
