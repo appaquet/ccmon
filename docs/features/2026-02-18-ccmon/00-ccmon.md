@@ -10,9 +10,11 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 01 (Session Detection) complete ✅. Phase 02 (Backend) fully planned with 7 steps: (1) refactor `scanProjects()` to use `sessions-index.json` as primary source with JSONL fallback, extending `ProjectInfo` with `summary`, `firstPrompt`, `messageCount`; (2-4) `ccmon status` sub-command + `writeStatus()` + hook event mapping; (5) `dump --watch`; (6) HTTP + WebSocket server; (7) hook configuration.
+Phase 02 (Backend) implementation complete. All 7 steps done: `sessions-index.json` refactor (6/9 projects enriched, JSONL fallback for rest), `mapHookEventToState()`, `writeStatus()`, `ccmon status` sub-command, `dump --watch`, HTTP + WebSocket server (`/`, `/api/state`, `/ws`), hook config in dotfiles. 53 tests passing across 4 test files.
 
-Key design decisions: `sessions-index.json` provides richer data and eliminates need for `encodeCwd()` (use lookup map instead). `ccmon status` reads hook JSON from stdin, Bun startup ~17ms. `claude-tmux-indicator` stays independent. Next: `/implement` Phase 02.
+Remaining: manual testing (pipe hook JSON to `ccmon status`, run `dump --watch`), CLAUDE.md update. Next: Phase 03 (Web UI) or manual validation of Phase 02.
+
+Note: real `sessions-index.json` uses `projectPath` field (not `originalPath` as initially planned). `PermissionRequest` not available as hook event — omitted from config.
 
 ## Requirements
 
@@ -27,7 +29,7 @@ Key design decisions: `sessions-index.json` provides richer data and eliminates 
 
 ### State Reporting via Hooks
 
-* R3: ⬜ `ccmon status` sub-command writes `status.local.json` from hook stdin (Phase: Backend)
+* R3: 🔄 `ccmon status` sub-command writes `status.local.json` from hook stdin (Phase: Backend)
   * R3.1: Hook events → states:
     * `UserPromptSubmit` → `running` (Claude processing user input)
     * `PostToolUse` → `running` (Claude continuing after tool)
@@ -37,19 +39,19 @@ Key design decisions: `sessions-index.json` provides richer data and eliminates 
   * R3.2: `status.local.json` contains: `state`, `timestamp`, `session_id`, `working_dir`
   * R3.3: File written to `~/.claude/projects/{dir}/status.local.json` (project dir found via `sessions-index.json` lookup or path encoding fallback)
   * R3.4: Reads hook JSON from stdin (cwd, session_id, hook_event_name), maps event to state, resolves cwd to project dir
-* R14: ⬜ Use `sessions-index.json` as primary data source for project scanning (Phase: Backend)
+* R14: 🔄 Use `sessions-index.json` as primary data source for project scanning (Phase: Backend)
   * R14.1: `sessions-index.json` contains `originalPath`, session entries with `summary`, `messageCount`, `firstPrompt`, `isSidechain`, `fullPath`, `fileMtime`, `gitBranch`
   * R14.2: Fall back to JSONL first-line parse when `sessions-index.json` is absent (not all project dirs have it)
   * R14.3: Extend `ProjectInfo` with optional fields: `summary`, `firstPrompt`, `messageCount`, `sessionModified`
   * R14.4: Filter out `isSidechain: true` entries
-* R4: ⬜ Hook config adds `ccmon status` alongside existing `claude-tmux-indicator` in `~/dotfiles/home-manager/modules/claude/settings.json` (Phase: Backend)
+* R4: 🔄 Hook config adds `ccmon status` alongside existing `claude-tmux-indicator` in `~/dotfiles/home-manager/modules/claude/settings.json` (Phase: Backend)
   * R4.1: Both hooks run in same matcher group (parallel stdin copies)
   * R4.2: `claude-tmux-indicator` remains independent — ccmon hooks alongside it, does not extend it
 
 ### Web Server
 
-* R5: ⬜ Bun HTTP server serves the dashboard at `/` (Phase: Backend)
-* R6: ⬜ WebSocket endpoint pushes real-time state updates to connected clients (Phase: Backend)
+* R5: 🔄 Bun HTTP server serves the dashboard at `/` (Phase: Backend)
+* R6: 🔄 WebSocket endpoint pushes real-time state updates to connected clients (Phase: Backend)
   * R6.1: Server watches all known `status.local.json` files for changes and broadcasts updates
   * R6.2: On new client connect, send current state of all projects immediately
 
@@ -66,7 +68,7 @@ Key design decisions: `sessions-index.json` provides richer data and eliminates 
 
 * R11: ✅ `ccmon dump` CLI command outputs full state of all projects as JSON to stdout (Phase: Session Detection)
   * R11.1: Serves as integration test and external introspection tool
-* R13: ⬜ `ccmon dump --watch` prints state on change with separator + timestamp (Phase: Backend)
+* R13: 🔄 `ccmon dump --watch` prints state on change with separator + timestamp (Phase: Backend)
   * R13.1: Initial dump printed immediately, then watches for changes via `watchForChanges()`
   * R13.2: On each change: re-runs `getProjectState()`, prints separator line with ISO timestamp, then full JSON
   * R13.3: Exits cleanly on SIGINT (calls `watcher.stop()`)
@@ -97,10 +99,10 @@ Key design decisions: `sessions-index.json` provides richer data and eliminates 
 
 Logic to scan `~/.claude/projects/` and map directories to project metadata. All 8 steps complete, 24 tests passing. `lastUpdated` falls back to JSONL file mtime.
 
-### ⬜ 02 Phase: Backend
+### 🔄 02 Phase: Backend
 [02-backend](02-backend.md)
 
-Refactor `scanProjects()` to use `sessions-index.json` (richer data, fewer I/O ops, JSONL fallback). `ccmon status` sub-command, `dump --watch`, Bun HTTP + WebSocket server, hook configuration alongside `claude-tmux-indicator`.
+Refactor `scanProjects()` to use `sessions-index.json` (richer data, fewer I/O ops, JSONL fallback). `ccmon status` sub-command, `dump --watch`, Bun HTTP + WebSocket server, hook configuration alongside `claude-tmux-indicator`. All code + tests done (53 pass). Manual testing remaining.
 
 ### ⬜ 03 Phase: Web UI
 [03-web-ui](03-web-ui.md)
@@ -118,8 +120,12 @@ Single-page vanilla JS UI. Connects via WebSocket, renders project list, updates
 - **package.json**: Bun project config — `"type": "module"`, `@types/bun`, `dump` script (Phase: Session Detection)
 - **tsconfig.json**: IDE TypeScript support — ESNext, moduleResolution bundler (Phase: Session Detection)
 - **bun.lock**: Bun lockfile (Phase: Session Detection)
-- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()` (Phase: Session Detection)
+- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()` (Phase: Session Detection, Backend)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection (Phase: Session Detection)
-- **src/cli.ts**: CLI entry point — `dump` subcommand outputs JSON state to stdout (Phase: Session Detection)
-- **tests/sessions.test.ts**: 21 unit tests for sessions.ts (Phase: Session Detection)
+- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `status`, `serve` subcommands (Phase: Session Detection, Backend)
+- **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints (Phase: Backend)
+- **tests/sessions.test.ts**: 39 unit tests for sessions.ts (Phase: Session Detection, Backend)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
+- **tests/cli.test.ts**: 10 tests for cli.ts — status sub-command, dump --watch (Phase: Backend)
+- **tests/server.test.ts**: 4 tests for server.ts — HTTP endpoints, WebSocket (Phase: Backend)
+- **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)

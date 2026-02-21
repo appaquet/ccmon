@@ -16,93 +16,93 @@ Phase 01 (Session Detection) is complete: `scanProjects()`, `readStatus()`, `che
 
 ### Step 1: Refactor `scanProjects()` to use `sessions-index.json` — TDD
 
-* [ ] Write test for `readSessionsIndex()` in `tests/sessions.test.ts`
+* [x] Write test for `readSessionsIndex()` in `tests/sessions.test.ts`
   * Test: valid `sessions-index.json` → returns `{ originalPath, entries[] }` with parsed fields
   * Test: missing file → returns `null`
   * Test: corrupt JSON → returns `null`
   * Test: picks entry with max `fileMtime` as latest session
   * Test: filters out `isSidechain: true` entries
-* [ ] Implement `readSessionsIndex(projectDirPath: string)` in `src/sessions.ts`
+* [x] Implement `readSessionsIndex(projectDirPath: string)` in `src/sessions.ts`
   * Read and parse `sessions-index.json`
   * Return `originalPath` + entries array (validated)
-* [ ] Refactor `scanProjects()` to try `sessions-index.json` first, fall back to JSONL scan
+* [x] Refactor `scanProjects()` to try `sessions-index.json` first, fall back to JSONL scan
   * Primary: read index → use `originalPath` as cwd, latest entry's `sessionId`, `fullPath` as latestJSONL
   * Fallback: existing JSONL first-line parse (unchanged)
-* [ ] Extend `ProjectInfo` with optional fields from index:
+* [x] Extend `ProjectInfo` with optional fields from index:
   * `summary?: string` — AI-generated session summary
   * `firstPrompt?: string` — what user was working on
   * `messageCount?: number` — session depth
   * `sessionModified?: string` — ISO timestamp from index entry
-* [ ] Update existing `scanProjects` tests for new fields (backward-compatible: JSONL fallback still works)
-* [ ] Verify: `bun test` passes, `bun run dump` outputs enriched data
+* [x] Update existing `scanProjects` tests for new fields (backward-compatible: JSONL fallback still works)
+* [x] Verify: `bun test` passes, `bun run dump` outputs enriched data
 
 ### Step 2: `mapHookEventToState()` — TDD
 
-* [ ] Write test for `mapHookEventToState()` in `tests/sessions.test.ts` (R3.1)
+* [x] Write test for `mapHookEventToState()` in `tests/sessions.test.ts` (R3.1)
   * Test: all 5 events map correctly
   * Test: unknown event returns `null`
-* [ ] Implement `mapHookEventToState()` in `src/sessions.ts`
-* [ ] Verify: `bun test` passes
+* [x] Implement `mapHookEventToState()` in `src/sessions.ts`
+* [x] Verify: `bun test` passes
 
 ### Step 3: `writeStatus()` — TDD
 
-* [ ] Write test for `writeStatus()` in `tests/sessions.test.ts` (R3.2, R3.3)
+* [x] Write test for `writeStatus()` in `tests/sessions.test.ts` (R3.2, R3.3)
   * Test: writes correct `status.local.json` matching `StatusFile` schema to temp dir
   * Test: round-trip — `writeStatus()` output is parseable by existing `readStatus()`
-* [ ] Implement `writeStatus(projectDirPath: string, status: StatusFile)` in `src/sessions.ts`
+* [x] Implement `writeStatus(projectDirPath: string, status: StatusFile)` in `src/sessions.ts`
   * Writes to `{projectDirPath}/status.local.json`
   * No encoding needed — caller provides the full path (from scanProjects lookup or stdin cwd mapping)
-* [ ] Verify: `bun test` passes
+* [x] Verify: `bun test` passes
 
 ### Step 4: `ccmon status` sub-command — TDD
 
-* [ ] Write test for `status` sub-command in `tests/cli.test.ts` (R3.4)
+* [x] Write test for `status` sub-command in `tests/cli.test.ts` (R3.4)
   * Test: pipe mock hook JSON to stdin → correct `status.local.json` written
   * Test: stdout outputs hook response JSON
   * Test: invalid/missing stdin → non-zero exit with stderr message
   * Test: cwd that doesn't match any known project dir → creates dir or errors gracefully
-* [ ] Implement `status` sub-command in `src/cli.ts`
+* [x] Implement `status` sub-command in `src/cli.ts`
   * Read JSON from stdin (cwd, session_id, hook_event_name)
   * Map cwd → project dir: scan `~/.claude/projects/` for matching `originalPath` via `sessions-index.json`, or fall back to encoding cwd as `-`-separated path
   * Call `mapHookEventToState()`, `writeStatus()`
   * Output hook response JSON to stdout
-* [ ] Verify: `bun test` passes
+* [x] Verify: `bun test` passes
 * [ ] Manual test: pipe sample JSON and verify `status.local.json` written
 
 ### Step 5: `dump --watch` — TDD
 
-* [ ] Write test for `dump --watch` in `tests/cli.test.ts` (R13)
+* [x] Write test for `dump --watch` in `tests/cli.test.ts` (R13)
   * Test: prints initial state then keeps process alive
   * Test: prints update block with separator on status file change
   * Test: exits cleanly on SIGINT
-* [ ] Implement `--watch` flag in `src/cli.ts`
+* [x] Implement `--watch` flag in `src/cli.ts`
   * Parse `--watch` flag from argv
   * Print initial `getProjectState()` JSON
   * Start `watchForChanges()`, on update: print separator with timestamp + new JSON
   * Handle SIGINT: call `watcher.stop()`, exit 0
-* [ ] Verify: `bun test` passes
+* [x] Verify: `bun test` passes
 * [ ] Manual test: run `bun run dump --watch`, trigger status change, observe update
 
 ### Step 6: HTTP + WebSocket server
 
-* [ ] Implement Bun HTTP server in `src/server.ts` (R5)
+* [x] Implement Bun HTTP server in `src/server.ts` (R5)
   * Serve static HTML at `/` (inline or from file)
   * Listen on configurable port (default 3000)
-* [ ] Implement WebSocket endpoint for real-time push (R6)
+* [x] Implement WebSocket endpoint for real-time push (R6)
   * On connect: send current state of all projects (R6.2)
   * Watch status files via `watchForChanges()`, broadcast updates (R6.1)
-* [ ] Write test for server in `tests/server.test.ts`
-  * Test: HTTP GET `/` returns HTML
+* [x] Write test for server in `tests/server.test.ts`
+  * Test: HTTP GET `/` returns HTML, `/api/state` returns JSON, unknown returns 404
   * Test: WebSocket connect receives initial state
-* [ ] Verify: `bun test` passes
+* [x] Verify: `bun test` passes
 
 ### Step 7: Hook configuration
 
-* [ ] Add `ccmon status` hook commands in `~/dotfiles/home-manager/modules/claude/settings.json` (R4)
-  * Add alongside existing `claude-tmux-indicator` in same matcher groups
-  * Events: `UserPromptSubmit`, `PostToolUse`, `PermissionRequest`, `Stop`, `SessionEnd`
+* [x] Add `ccmon status` hook commands in `~/dotfiles/home-manager/modules/claude/settings.json` (R4)
+  * Added alongside existing `claude-tmux-indicator` in same matcher groups
+  * Events: `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd` (no `PermissionRequest` — not a standard hook event)
 * [ ] Manual test: start a Claude Code session, verify `status.local.json` appears
-* [ ] Update CLAUDE.md with new commands (`bun run dump --watch`, hook setup notes) (R12)
+* [ ] Update CLAUDE.md with new commands (`bun run dump --watch`, `bun run serve`)
 
 ## Files
 
