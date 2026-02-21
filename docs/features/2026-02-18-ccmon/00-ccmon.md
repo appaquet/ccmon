@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 02 (Backend) mostly complete, 56 tests passing. New step 9 planned: `ccmon ws` WebSocket client subcommand + broadcast-on-change test (R17). Plan written, awaiting `/implement`.
+Step 9 complete: `ccmon ws` WebSocket client subcommand implemented, broadcast-on-change test added (R17). 57 tests passing. Phase 02 implementation complete. Next: Phase 03 (Web UI).
 
 ## Requirements
 
@@ -84,7 +84,7 @@ Phase 02 (Backend) mostly complete, 56 tests passing. New step 9 planned: `ccmon
   * R16.1: Personal/dotfiles audience — concise, assumes NixOS + home-manager
   * R16.2: Covers: flake input, adding to packages, hook configuration, available commands
 
-* R17: ⬜ `ccmon ws` CLI subcommand connects to running server via WebSocket, streams state updates as NDJSON (Phase: Backend)
+* R17: ✅ `ccmon ws` CLI subcommand connects to running server via WebSocket, streams state updates as NDJSON (Phase: Backend)
   * R17.1: `--port N` flag (default 3000), exits on SIGINT or server disconnect
   * R17.2: Used for smoke-testing server stack and background monitoring
 
