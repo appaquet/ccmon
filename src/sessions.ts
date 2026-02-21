@@ -6,6 +6,10 @@ import { join, basename } from 'node:path';
 
 const STALE_THRESHOLD_MS = 5 * 60 * 1000;
 
+// Sub-agents write continuously while active; 45s covers any lag without
+// counting finished agents as still running.
+const SUBAGENT_ACTIVE_THRESHOLD_MS = 45 * 1000;
+
 const DEFAULT_CLAUDE_DIR = join(
   Bun.env.HOME ?? '/root',
   '.claude',
@@ -17,6 +21,22 @@ const VALID_STATES: ReadonlySet<string> = new Set([
   'waiting_for_permission',
   'stopped',
 ]);
+
+// ─── Module-level Caches ─────────────────────────────────────────────────────
+
+// Caches the pgrep + /proc liveness scan result for 2.5s to avoid repeated
+// process enumeration on every poll cycle.
+let livenessCache: { result: Set<string>; ts: number } | null = null;
+
+// Keyed by projectDirPath; avoids re-parsing sessions-index.json unless mtime changed.
+const sessionsIndexCache = new Map<string, { mtime: number; data: SessionsIndex | null }>();
+
+// Keyed by jsonlPath; avoids re-reading the tail unless the file changed.
+const sessionTailCache = new Map<string, { mtime: number; data: SessionTailInfo }>();
+
+// Keyed by projectDirPath (full path); holds the most recent ProjectState for each project.
+// Populated on a full scan; updated in-place on targeted single-project rescans.
+const projectStateCache = new Map<string, ProjectState>();
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -86,6 +106,20 @@ export interface ProjectState extends ProjectInfo {
  */
 export async function readSessionsIndex(projectDirPath: string): Promise<SessionsIndex | null> {
   const indexPath = join(projectDirPath, 'sessions-index.json');
+
+  let mtime: number;
+  try {
+    const s = await stat(indexPath);
+    mtime = s.mtimeMs;
+  } catch {
+    return null;
+  }
+
+  const cached = sessionsIndexCache.get(projectDirPath);
+  if (cached !== undefined && cached.mtime === mtime) {
+    return cached.data;
+  }
+
   let raw: string;
   try {
     raw = await Bun.file(indexPath).text();
@@ -97,10 +131,14 @@ export async function readSessionsIndex(projectDirPath: string): Promise<Session
   try {
     parsed = JSON.parse(raw);
   } catch {
+    sessionsIndexCache.set(projectDirPath, { mtime, data: null });
     return null;
   }
 
-  if (!isSessionsIndexRaw(parsed)) return null;
+  if (!isSessionsIndexRaw(parsed)) {
+    sessionsIndexCache.set(projectDirPath, { mtime, data: null });
+    return null;
+  }
 
   const entries = parsed.entries
     .filter((e) => !e.isSidechain)
@@ -117,9 +155,14 @@ export async function readSessionsIndex(projectDirPath: string): Promise<Session
       gitBranch: typeof e.gitBranch === 'string' ? e.gitBranch : undefined,
     }));
 
-  if (entries.length === 0) return null;
+  if (entries.length === 0) {
+    sessionsIndexCache.set(projectDirPath, { mtime, data: null });
+    return null;
+  }
 
-  return { projectPath: entries[0].projectPath, entries };
+  const result: SessionsIndex = { projectPath: entries[0].projectPath, entries };
+  sessionsIndexCache.set(projectDirPath, { mtime, data: result });
+  return result;
 }
 
 /**
@@ -207,11 +250,18 @@ export async function readStatus(projectDir: string): Promise<StatusFile | null>
 export async function checkLiveness(cwds: string[]): Promise<Set<string>> {
   if (cwds.length === 0) return new Set();
 
+  if (livenessCache !== null && Date.now() - livenessCache.ts < 2500) {
+    return livenessCache.result;
+  }
+
   const pids = new Set<number>();
   collectPgrepPids(pids);
   await collectProcExePids(pids);
 
-  if (pids.size === 0) return new Set();
+  if (pids.size === 0) {
+    livenessCache = { result: new Set(), ts: Date.now() };
+    return livenessCache.result;
+  }
 
   const cwdSet = new Set(cwds);
   const live = new Set<string>();
@@ -225,59 +275,54 @@ export async function checkLiveness(cwds: string[]): Promise<Set<string>> {
     }),
   );
 
+  livenessCache = { result: live, ts: Date.now() };
   return live;
 }
 
 /**
  * Returns the aggregated state for every discovered Claude Code project.
  * Combines scan, status file, staleness check, and liveness detection.
+ *
+ * If changedProjectDir (full path) is provided and the cache is populated,
+ * only that project is rescanned and merged into the cached state, avoiding
+ * a full I/O sweep of all projects on every watcher event.
  */
-export async function getProjectState(claudeDir: string = DEFAULT_CLAUDE_DIR): Promise<ProjectState[]> {
+export async function getProjectState(
+  claudeDir: string = DEFAULT_CLAUDE_DIR,
+  changedProjectDir?: string,
+): Promise<ProjectState[]> {
+  // Targeted refresh: only rescan the changed project when the cache is warm.
+  if (changedProjectDir !== undefined && projectStateCache.size > 0) {
+    const dirName = changedProjectDir.split('/').pop() ?? '';
+    const info = await readProjectInfo(changedProjectDir, dirName);
+    if (info !== null) {
+      const updatedState = await buildProjectState(info, claudeDir);
+      projectStateCache.set(changedProjectDir, updatedState);
+    } else {
+      // Project disappeared — remove from cache.
+      projectStateCache.delete(changedProjectDir);
+    }
+    return [...projectStateCache.values()];
+  }
+
+  // Full scan: populate the cache.
   const projects = await scanProjects(claudeDir);
-  if (projects.length === 0) return [];
+  if (projects.length === 0) {
+    projectStateCache.clear();
+    return [];
+  }
 
-  const [statuses, liveCwds] = await Promise.all([
-    Promise.all(
-      projects.map((p) => readStatus(join(claudeDir, p.projectDir))),
-    ),
-    checkLiveness(projects.map((p) => p.cwd)),
-  ]);
-
-  return Promise.all(
-    projects.map(async (project, i) => {
-      const status = statuses[i];
-      const state = resolveState(project.cwd, status, liveCwds);
-
-      let lastUpdated: string | null = status?.timestamp ?? null;
-      if (lastUpdated === null) {
-        try {
-          const mtimeStat = await stat(project.latestJSONL);
-          lastUpdated = new Date(mtimeStat.mtimeMs).toISOString();
-        } catch {
-          // leave as null if stat fails
-        }
-      }
-
-      const base: ProjectState = { ...project, state, lastUpdated };
-
-      if (state !== 'stopped') {
-        const [tail, subagentCount] = await Promise.all([
-          readSessionTail(project.latestJSONL),
-          countActiveSubagents(project.latestJSONL),
-        ]);
-        return {
-          ...base,
-          latestUserMessage: tail.latestUserMessage,
-          model: tail.model,
-          lastToolUse: tail.lastToolUse,
-          subagentCount,
-          gitBranch: project.gitBranch,
-        };
-      }
-
-      return base;
-    }),
+  const states = await Promise.all(
+    projects.map((p) => buildProjectState(p, claudeDir)),
   );
+
+  projectStateCache.clear();
+  for (let i = 0; i < projects.length; i++) {
+    const fullPath = join(claudeDir, projects[i].projectDir);
+    projectStateCache.set(fullPath, states[i]);
+  }
+
+  return states;
 }
 
 /**
@@ -307,7 +352,7 @@ export async function countActiveSubagents(latestJSONL: string): Promise<number>
     ? latestJSONL.slice(0, -'.jsonl'.length)
     : latestJSONL;
   const subagentsDir = join(sessionDir, 'subagents');
-  const cutoff = Date.now() - STALE_THRESHOLD_MS;
+  const cutoff = Date.now() - SUBAGENT_ACTIVE_THRESHOLD_MS;
 
   let entries: Awaited<ReturnType<typeof readdir>>;
   try {
@@ -337,6 +382,19 @@ export async function countActiveSubagents(latestJSONL: string): Promise<number>
  * by scanning lines from newest to oldest.
  */
 export async function readSessionTail(jsonlPath: string): Promise<SessionTailInfo> {
+  let mtime: number;
+  try {
+    const s = await stat(jsonlPath);
+    mtime = s.mtimeMs;
+  } catch {
+    return {};
+  }
+
+  const cached = sessionTailCache.get(jsonlPath);
+  if (cached !== undefined && cached.mtime === mtime) {
+    return cached.data;
+  }
+
   let text: string;
   try {
     const file = Bun.file(jsonlPath);
@@ -402,10 +460,21 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     }
   }
 
+  sessionTailCache.set(jsonlPath, { mtime, data: result });
   return result;
 }
 
 // ─── Exported Test Helpers ───────────────────────────────────────────────────
+
+/**
+ * Resets all module-level caches. Only call from tests.
+ */
+export function _resetCachesForTesting(): void {
+  livenessCache = null;
+  sessionsIndexCache.clear();
+  sessionTailCache.clear();
+  projectStateCache.clear();
+}
 
 /**
  * Parses pgrep -a output lines ("PID command ...") and returns the list of PIDs.
@@ -425,6 +494,42 @@ export function parseProcessOutput(output: string): number[] {
 }
 
 // ─── Private Helpers ─────────────────────────────────────────────────────────
+
+async function buildProjectState(project: ProjectInfo, claudeDir: string): Promise<ProjectState> {
+  const projectDirPath = join(claudeDir, project.projectDir);
+  const status = await readStatus(projectDirPath);
+  const liveCwds = await checkLiveness([project.cwd]);
+  const state = resolveState(project.cwd, status, liveCwds);
+
+  let lastUpdated: string | null = status?.timestamp ?? null;
+  if (lastUpdated === null) {
+    try {
+      const mtimeStat = await stat(project.latestJSONL);
+      lastUpdated = new Date(mtimeStat.mtimeMs).toISOString();
+    } catch {
+      // leave as null if stat fails
+    }
+  }
+
+  const base: ProjectState = { ...project, state, lastUpdated };
+
+  if (state !== 'stopped') {
+    const [tail, subagentCount] = await Promise.all([
+      readSessionTail(project.latestJSONL),
+      countActiveSubagents(project.latestJSONL),
+    ]);
+    return {
+      ...base,
+      latestUserMessage: tail.latestUserMessage,
+      model: tail.model,
+      lastToolUse: tail.lastToolUse,
+      subagentCount,
+      gitBranch: project.gitBranch,
+    };
+  }
+
+  return base;
+}
 
 async function readProjectInfo(fullPath: string, dirName: string): Promise<ProjectInfo | null> {
   let isDir: boolean;

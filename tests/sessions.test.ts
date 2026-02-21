@@ -13,6 +13,7 @@ import {
   filterStaleProjects,
   countActiveSubagents,
   readSessionTail,
+  _resetCachesForTesting,
 } from '../src/sessions';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -763,5 +764,214 @@ describe('session enrichment', () => {
     const result = await readSessionTail(jsonlPath);
     // Reversed scan picks Edit (last in file = first found from end)
     expect(result.lastToolUse).toBe('Edit');
+  });
+});
+
+// ─── cache behaviour ──────────────────────────────────────────────────────────
+
+describe('sessionsIndexCache (R20.3)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-idx-cache');
+    _resetCachesForTesting();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeEntry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      sessionId: 'sess-cache',
+      fullPath: '/some/path/sess.jsonl',
+      fileMtime: 1_700_000_000_000,
+      projectPath: '/home/user/cached',
+      isSidechain: false,
+      ...overrides,
+    };
+  }
+
+  test('same mtime: second call returns cached result without re-reading file', async () => {
+    const entry = makeEntry();
+    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify({ entries: [entry] }));
+
+    const first = await readSessionsIndex(tmpDir);
+    expect(first).not.toBeNull();
+
+    // Overwrite file content but keep the same mtime so cache key is unchanged
+    const filePath = join(tmpDir, 'sessions-index.json');
+    const { mtimeMs } = await import('node:fs/promises').then((m) => m.stat(filePath));
+    const mtime = new Date(mtimeMs);
+    await writeFile(filePath, 'this is no longer valid json');
+    await utimes(filePath, mtime, mtime);
+
+    // Should return the first (cached) result despite the file now being corrupt
+    const second = await readSessionsIndex(tmpDir);
+    expect(second).toBe(first); // same object reference proves cache hit
+  });
+
+  test('changed mtime: re-reads the file and returns fresh data', async () => {
+    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify({ entries: [makeEntry({ sessionId: 'original' })] }));
+
+    const first = await readSessionsIndex(tmpDir);
+    expect(first!.entries[0].sessionId).toBe('original');
+
+    // Small sleep so filesystem mtime advances
+    await Bun.sleep(10);
+    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify({ entries: [makeEntry({ sessionId: 'updated' })] }));
+
+    const second = await readSessionsIndex(tmpDir);
+    expect(second!.entries[0].sessionId).toBe('updated');
+  });
+});
+
+describe('sessionTailCache (R20.4)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-tail-cache');
+    _resetCachesForTesting();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeUserLine(content: string): string {
+    return JSON.stringify({ type: 'user', message: { role: 'user', content } });
+  }
+
+  test('same mtime: second call returns cached result without re-reading file', async () => {
+    const jsonlPath = join(tmpDir, 'tail.jsonl');
+    await writeFile(jsonlPath, makeUserLine('original message') + '\n');
+
+    const first = await readSessionTail(jsonlPath);
+    expect(first.latestUserMessage).toBe('original message');
+
+    // Overwrite content, restore original mtime so cache key is unchanged
+    const { mtimeMs } = await import('node:fs/promises').then((m) => m.stat(jsonlPath));
+    const mtime = new Date(mtimeMs);
+    await writeFile(jsonlPath, makeUserLine('different message') + '\n');
+    await utimes(jsonlPath, mtime, mtime);
+
+    const second = await readSessionTail(jsonlPath);
+    expect(second).toBe(first); // same object reference proves cache hit
+    expect(second.latestUserMessage).toBe('original message');
+  });
+
+  test('changed mtime: re-reads the file and returns fresh data', async () => {
+    const jsonlPath = join(tmpDir, 'tail-refresh.jsonl');
+    await writeFile(jsonlPath, makeUserLine('first message') + '\n');
+
+    const first = await readSessionTail(jsonlPath);
+    expect(first.latestUserMessage).toBe('first message');
+
+    await Bun.sleep(10);
+    await writeFile(jsonlPath, makeUserLine('second message') + '\n');
+
+    const second = await readSessionTail(jsonlPath);
+    expect(second.latestUserMessage).toBe('second message');
+  });
+});
+
+describe('livenessCache (R20.2)', () => {
+  beforeEach(() => {
+    _resetCachesForTesting();
+  });
+
+  test('second call within 2.5s returns same Set reference (cache hit)', async () => {
+    // Use a cwd that won't match any real process so result is a stable empty set
+    const first = await checkLiveness(['/nonexistent/test/path']);
+    const second = await checkLiveness(['/nonexistent/test/path']);
+    // Same Set object reference proves the cache was returned rather than a fresh scan
+    expect(second).toBe(first);
+  });
+
+  test('after cache reset, re-runs scan and returns new Set', async () => {
+    const first = await checkLiveness(['/nonexistent/test/path']);
+    _resetCachesForTesting();
+    const second = await checkLiveness(['/nonexistent/test/path']);
+    // Different object even if both are empty, because cache was cleared
+    expect(second).not.toBe(first);
+  });
+});
+
+// ─── targeted refresh (R20.5) ──────────────────────────────────────────────────
+
+describe('getProjectState targeted refresh (R20.5)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-targeted');
+    _resetCachesForTesting();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  async function makeProject(name: string, cwd: string, sessionId: string): Promise<string> {
+    const projDir = join(tmpDir, name);
+    await mkdir(projDir, { recursive: true });
+    await writeFile(join(projDir, 'session.jsonl'), makeFirstLine(cwd, sessionId) + '\n');
+    return projDir;
+  }
+
+  test('targeted rescan updates only the changed project while other projects stay cached', async () => {
+    const dirA = await makeProject('-home-user-a', '/home/user/a', 'sid-a');
+    const dirB = await makeProject('-home-user-b', '/home/user/b', 'sid-b');
+
+    // Full scan to warm the cache
+    const first = await getProjectState(tmpDir);
+    expect(first).toHaveLength(2);
+
+    // Write a new JSONL for project B to change its session ID via a new project file
+    // (update the status to see state change — simplest observable diff)
+    await writeFile(
+      join(dirB, 'status.local.json'),
+      JSON.stringify({
+        state: 'stopped',
+        timestamp: new Date().toISOString(),
+        session_id: 'sid-b',
+        working_dir: '/home/user/b',
+      }),
+    );
+
+    // Targeted rescan of only project B
+    const second = await getProjectState(tmpDir, dirB);
+    expect(second).toHaveLength(2);
+
+    // Project A should still be present
+    const projA = second.find((p) => p.projectName === 'a');
+    const projB = second.find((p) => p.projectName === 'b');
+    expect(projA).toBeDefined();
+    expect(projB).toBeDefined();
+  });
+
+  test('targeted rescan with cold cache falls back to full scan', async () => {
+    await makeProject('-home-user-x', '/home/user/x', 'sid-x');
+
+    // Cache is cold (reset in beforeEach) — changedProjectDir provided but ignored
+    const results = await getProjectState(tmpDir, join(tmpDir, '-home-user-x'));
+    expect(results).toHaveLength(1);
+    expect(results[0].projectName).toBe('x');
+  });
+
+  test('targeted rescan of disappeared project removes it from cache', async () => {
+    const dirA = await makeProject('-home-user-gone', '/home/user/gone', 'sid-gone');
+    const dirB = await makeProject('-home-user-stay', '/home/user/stay', 'sid-stay');
+
+    // Warm the cache
+    const first = await getProjectState(tmpDir);
+    expect(first).toHaveLength(2);
+
+    // Remove project A's JSONL so readProjectInfo returns null
+    await rm(dirA, { recursive: true, force: true });
+
+    // Targeted rescan of the now-gone project
+    const second = await getProjectState(tmpDir, dirA);
+    expect(second).toHaveLength(1);
+    expect(second[0].projectName).toBe('stay');
   });
 });

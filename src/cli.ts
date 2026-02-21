@@ -106,9 +106,9 @@ async function runDumpWatch(): Promise<void> {
     process.exit(1);
   }
 
-  const watcher = watchForChanges(claudeDir, async () => {
+  const watcher = watchForChanges(claudeDir, async (projectDir: string) => {
     try {
-      const state = await getProjectState(claudeDir);
+      const state = await getProjectState(claudeDir, projectDir);
       const output = formatWatchOutput(state);
       if (output) console.log(output);
     } catch (err) {

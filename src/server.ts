@@ -29,17 +29,17 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
 
   const clients = new Set<ServerWebSocket<unknown>>();
 
-  async function broadcastState(): Promise<void> {
+  async function broadcastState(changedProjectDir?: string): Promise<void> {
     if (clients.size === 0) return;
-    const state = filterStaleProjects(await getProjectState(claudeDir), maxInactivityHours);
+    const state = filterStaleProjects(await getProjectState(claudeDir, changedProjectDir), maxInactivityHours);
     const payload = JSON.stringify(state);
     for (const ws of clients) {
       ws.send(payload);
     }
   }
 
-  const watcher = watchForChanges(claudeDir, () => {
-    broadcastState().catch((err: unknown) => {
+  const watcher = watchForChanges(claudeDir, (projectDir: string) => {
+    broadcastState(projectDir).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`ccmon: broadcast error: ${msg}\n`);
     });
