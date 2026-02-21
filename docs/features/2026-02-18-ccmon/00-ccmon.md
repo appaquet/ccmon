@@ -10,9 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 02 (Backend) + Phase 04 (Packaging) implementation complete. Recent additions: `dump --project <name>` filter (outputs single JSON object), NDJSON watch output (no separator, pipeable to jq), `Stop` hook remapped to `stopped` (was `waiting_for_answer` — aligns with tmux behavior), `waiting_for_answer` state removed entirely. 56 tests passing across 4 test files.
-
-Hooks live and confirmed working via `status.local.json`. Next logical step: Phase 03 (Web UI). Phase 02 + 04 manual testing optional before proceeding.
+Phase 02 (Backend) mostly complete, 56 tests passing. New step 9 planned: `ccmon ws` WebSocket client subcommand + broadcast-on-change test (R17). Plan written, awaiting `/implement`.
 
 ## Requirements
 
@@ -66,7 +64,7 @@ Hooks live and confirmed working via `status.local.json`. Next logical step: Pha
 
 * R11: ✅ `ccmon dump` CLI command outputs full state of all projects as JSON to stdout (Phase: Session Detection)
   * R11.1: Serves as integration test and external introspection tool
-* R13: 🔄 `ccmon dump --watch` prints NDJSON state on change (Phase: Backend)
+* R13: ✅ `ccmon dump --watch` prints NDJSON state on change (Phase: Backend)
   * R13.1: Initial dump printed immediately, then watches for changes via `watchForChanges()`
   * R13.2: On each change: re-runs `getProjectState()`, prints JSON (no separator — NDJSON for jq piping)
   * R13.3: Exits cleanly on SIGINT (calls `watcher.stop()`)
@@ -85,6 +83,10 @@ Hooks live and confirmed working via `status.local.json`. Next logical step: Pha
 * R16: 🔄 README with install and hook configuration instructions (Phase: Packaging)
   * R16.1: Personal/dotfiles audience — concise, assumes NixOS + home-manager
   * R16.2: Covers: flake input, adding to packages, hook configuration, available commands
+
+* R17: ⬜ `ccmon ws` CLI subcommand connects to running server via WebSocket, streams state updates as NDJSON (Phase: Backend)
+  * R17.1: `--port N` flag (default 3000), exits on SIGINT or server disconnect
+  * R17.2: Used for smoke-testing server stack and background monitoring
 
 #### Out of Scope
 

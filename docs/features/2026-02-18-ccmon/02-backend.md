@@ -125,6 +125,23 @@ Phase 01 (Session Detection) is complete: `scanProjects()`, `readStatus()`, `che
 * [x] Remove `waiting_for_answer` from `SessionState` type and `VALID_STATES`
 * [x] Update all tests — 56 pass, 0 fail
 
+### Step 9: `ccmon ws` subcommand + broadcast test — TDD
+
+* [ ] Add broadcast-on-change test in `tests/server.test.ts` (R6.1)
+  * Connect WS client, wait for initial state, write `status.local.json`, verify client receives broadcast
+  * Use sleep 300ms init + 400ms after write (matches watcher debounce pattern)
+  * Assert ≥2 messages received (initial + broadcast)
+* [ ] Add `ws` subcommand logic in `src/cli.ts`
+  * Parse `--port N` flag (default 3000)
+  * Connect WebSocket to `ws://localhost:{port}/ws`
+  * On message: write to stdout + newline (NDJSON)
+  * On error/close: exit with appropriate code
+  * Handle SIGINT: close WebSocket, exit 0
+* [ ] Update CLI usage text in `src/cli.ts` with `ws` subcommand
+* [ ] Add `"ws": "bun run src/cli.ts ws"` script in `package.json`
+* [ ] Update `CLAUDE.md` with `ws` subcommand docs
+* [ ] Verify: `bun test` passes
+
 ## Files
 
 - **src/sessions.ts**: Added `readSessionsIndex()`, `writeStatus()`, `mapHookEventToState()`. `Stop`→`stopped`, removed `waiting_for_answer`
