@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 02: steps 9-11 complete (74 tests — config, stale filter, host/port, sub subcommand). Step 12 planned: session enrichment (latestUserMessage, subagentCount, model, lastToolUse). Phase 03 (Web UI) plan ready. Both awaiting `/implement`.
+Phase 02 complete + Phase 03 complete. 86 tests. Session enrichment (R19): latestUserMessage, subagentCount, model, lastToolUse, gitBranch from JSONL tail. Web UI: dark-theme grid, WebSocket, color cards, exponential reconnect, enrichment fields shown. Next: review, packaging, or manual testing.
 
 ## Requirements
 
@@ -53,12 +53,12 @@ Phase 02: steps 9-11 complete (74 tests — config, stale filter, host/port, sub
 
 ### UI
 
-* R7: ⬜ Single HTML page with vanilla JavaScript, no frameworks (Phase: Web UI)
-* R8: ⬜ Lists all detected projects, one entry per project directory in `~/.claude/projects/` (Phase: Web UI)
+* R7: ✅ Single HTML page with vanilla JavaScript, no frameworks (Phase: Web UI)
+* R8: ✅ Lists all detected projects, one entry per project directory in `~/.claude/projects/` (Phase: Web UI)
   * R8.1: Project name = last segment of working directory path
-* R9: ⬜ Each project shows: name, state with color/icon indicator (Phase: Web UI)
+* R9: ✅ Each project shows: name, state with color/icon indicator (Phase: Web UI)
   * R9.1: States: `stopped` (orange), `running` (green), `waiting_for_permission` (red)
-* R10: ⬜ UI updates in real-time via WebSocket without page reload (Phase: Web UI)
+* R10: ✅ UI updates in real-time via WebSocket without page reload (Phase: Web UI)
 
 ### CLI
 
@@ -85,7 +85,7 @@ Phase 02: steps 9-11 complete (74 tests — config, stale filter, host/port, sub
   * R16.2: Covers: flake input, adding to packages, hook configuration, available commands
 
 * R17: ✅ `ccmon sub` CLI subcommand connects to running server via WebSocket, streams state updates as NDJSON (Phase: Backend)
-* R19: ⬜ Session enrichment — richer `ProjectState` fields from JSONL tail parse (Phase: Backend)
+* R19: ✅ Session enrichment — richer `ProjectState` fields from JSONL tail parse (Phase: Backend)
   * R19.1: `gitBranch` from `sessions-index.json` (zero extra I/O)
   * R19.2: `subagentCount` — active sub-agent JSONL files (mtime < 5min) in `{sessionDir}/subagents/`
   * R19.3: `latestUserMessage`, `model`, `lastToolUse` from JSONL tail read (~64KB); only for non-stopped sessions
@@ -124,7 +124,7 @@ Logic to scan `~/.claude/projects/` and map directories to project metadata. All
 
 Refactor `scanProjects()` to use `sessions-index.json`, `ccmon status` sub-command, `dump --watch` (NDJSON, `--project` filter), Bun HTTP + WebSocket server, hook config. Fixed: `Stop`→`stopped`, removed `waiting_for_answer`. 56 tests passing. Hooks confirmed live.
 
-### ⬜ 03 Phase: Web UI
+### ✅ 03 Phase: Web UI
 [03-web-ui](03-web-ui.md)
 
 Single-page vanilla JS UI. Connects via WebSocket, renders project list, updates in real-time.

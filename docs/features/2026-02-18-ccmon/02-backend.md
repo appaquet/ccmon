@@ -176,20 +176,15 @@ Design decisions: config at `$XDG_CONFIG_HOME/ccmon/config.json` (default `~/.co
 
 Fields to add to `ProjectState`: `latestUserMessage`, `subagentCount` (active, mtime<5min), `model`, `lastToolUse`. Only parsed for `running`/`waiting_for_permission` sessions (skip stopped).
 
-* [ ] Add `gitBranch?: string` to `ProjectInfo` + `SessionsIndexEntry` in `src/sessions.ts` (R19.1)
-  * Source: `sessions-index.json` entry `gitBranch` field
-  * Tests: extend `makeIndexEntry` helper and assertions
-* [ ] Implement `countActiveSubagents(latestJSONL: string): Promise<number>` in `src/sessions.ts` (R19.2)
+* [x] Add `gitBranch?: string` to `ProjectInfo` + `SessionsIndexEntry` in `src/sessions.ts` (R19.1)
+* [x] Implement `countActiveSubagents(latestJSONL: string): Promise<number>` in `src/sessions.ts` (R19.2)
   * Derive subagents dir from JSONL path, count `*.jsonl` files with mtime < 5min
-  * Tests: temp dir with subagent files, verify active-only count
-* [ ] Implement `readSessionTail(jsonlPath: string)` in `src/sessions.ts` (R19.3)
-  * Read last ~64KB via `Bun.file().slice()`, parse lines backwards
-  * Extract: `latestUserMessage` (last `type=user`, plain string content, not slash command), `model` (last assistant `message.model`), `lastToolUse` (last tool_use block name)
-  * Tests: write temp JSONL with representative entries, verify extraction
-* [ ] Extend `ProjectState` with new optional fields; wire into `getProjectState()` (R19)
-  * Call `readSessionTail()` + `countActiveSubagents()` only for non-stopped sessions
-  * Tests: integration test via `getProjectState()` with a temp project dir
-* [ ] Verify: `bun test` passes
+* [x] Implement `readSessionTail(jsonlPath: string)` in `src/sessions.ts` (R19.3)
+  * Read last ~64KB, parse lines backwards; extract `latestUserMessage`, `model`, `lastToolUse`
+* [x] Extend `ProjectState` with new optional fields; wire into `getProjectState()` (R19)
+  * `Promise.all` for parallel tail + subagent reads; only for non-stopped sessions
+  * 12 new tests in sessions.test.ts (40 → 52)
+* [x] Verify: `bun test` passes — 86 tests total
 
 ## Files
 
