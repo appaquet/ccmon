@@ -46,6 +46,6 @@ bun test                       # Run tests
 **Status file**: Hook writes to `~/.claude/projects/{encoded-dir}/status.local.json`
 - Encoded dir replaces `/` with `-` in cwd when no existing project found
 - Status includes: `state`, `timestamp`, `session_id`, `working_dir`
-- States: `running`, `waiting_for_answer`, `waiting_for_permission`, `stopped`
+- States: `running`, `waiting_for_permission`, `stopped`
 
 **Environment**: `CLAUDE_PROJECTS_DIR` (default: `~/.claude/projects`)

@@ -282,13 +282,6 @@ describe('readStatus', () => {
     expect(result!.working_dir).toBe('/home/user/proj');
   });
 
-  test('waiting_for_answer state: accepted', async () => {
-    const payload = { state: 'waiting_for_answer', timestamp: '2026-02-19T10:00:00.000Z', session_id: 's', working_dir: '/p' };
-    await writeFile(join(tmpDir, 'status.local.json'), JSON.stringify(payload));
-    const result = await readStatus(tmpDir);
-    expect(result!.state).toBe('waiting_for_answer');
-  });
-
   test('waiting_for_permission state: accepted', async () => {
     const payload = { state: 'waiting_for_permission', timestamp: '2026-02-19T10:00:00.000Z', session_id: 's', working_dir: '/p' };
     await writeFile(join(tmpDir, 'status.local.json'), JSON.stringify(payload));
@@ -456,8 +449,8 @@ describe('mapHookEventToState', () => {
     expect(mapHookEventToState('PermissionRequest')).toBe('waiting_for_permission');
   });
 
-  test('Stop → waiting_for_answer', () => {
-    expect(mapHookEventToState('Stop')).toBe('waiting_for_answer');
+  test('Stop → stopped', () => {
+    expect(mapHookEventToState('Stop')).toBe('stopped');
   });
 
   test('SessionEnd → stopped', () => {

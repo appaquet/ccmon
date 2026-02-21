@@ -14,14 +14,13 @@ const DEFAULT_CLAUDE_DIR = join(
 
 const VALID_STATES: ReadonlySet<string> = new Set([
   'running',
-  'waiting_for_answer',
   'waiting_for_permission',
   'stopped',
 ]);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type SessionState = 'running' | 'waiting_for_answer' | 'waiting_for_permission' | 'stopped';
+export type SessionState = 'running' | 'waiting_for_permission' | 'stopped';
 
 export interface SessionsIndexEntry {
   sessionId: string;
@@ -118,7 +117,7 @@ export function mapHookEventToState(hookEvent: string): SessionState | null {
     case 'UserPromptSubmit': return 'running';
     case 'PostToolUse':      return 'running';
     case 'PermissionRequest': return 'waiting_for_permission';
-    case 'Stop':             return 'waiting_for_answer';
+    case 'Stop':             return 'stopped';
     case 'SessionEnd':       return 'stopped';
     default:                 return null;
   }

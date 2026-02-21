@@ -355,7 +355,7 @@ describe('status', () => {
       ['UserPromptSubmit', 'running'],
       ['PostToolUse', 'running'],
       ['PermissionRequest', 'waiting_for_permission'],
-      ['Stop', 'waiting_for_answer'],
+      ['Stop', 'stopped'],
       ['SessionEnd', 'stopped'],
     ];
 
