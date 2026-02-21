@@ -10,11 +10,9 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 02 (Backend) implementation complete. All 7 steps done: `sessions-index.json` refactor (6/9 projects enriched, JSONL fallback for rest), `mapHookEventToState()`, `writeStatus()`, `ccmon status` sub-command, `dump --watch`, HTTP + WebSocket server (`/`, `/api/state`, `/ws`), hook config in dotfiles. 53 tests passing across 4 test files.
+Phase 04 (Packaging) complete. `flake.nix` now exposes `packages.${system}.default` (ccmon) and `apps.${system}.default` via `writeShellScriptBin` with pinned bun from nixpkgs. `nix build .#ccmon` validated. README.md written with install/hook instructions. 53 tests still passing.
 
-Remaining: manual testing (pipe hook JSON to `ccmon status`, run `dump --watch`), CLAUDE.md update. Next: Phase 03 (Web UI) or manual validation of Phase 02.
-
-Note: real `sessions-index.json` uses `projectPath` field (not `originalPath` as initially planned). `PermissionRequest` not available as hook event — omitted from config.
+Phase 02 (Backend) code complete, manual testing remaining. Next: Phase 03 (Web UI) or user acceptance of Phases 02+04.
 
 ## Requirements
 
@@ -79,11 +77,11 @@ Note: real `sessions-index.json` uses `projectPath` field (not `originalPath` as
 
 ### Packaging
 
-* R15: ⬜ Nix flake exposes ccmon as a package (Phase: Packaging)
+* R15: 🔄 Nix flake exposes ccmon as a package (Phase: Packaging)
   * R15.1: `writeShellScriptBin` wrapper calling `${pkgs.bun}/bin/bun run` on source in Nix store
   * R15.2: `packages.${system}.default` and `apps.${system}.default` outputs
   * R15.3: Bun pinned from nixpkgs (hermetic)
-* R16: ⬜ README with install and hook configuration instructions (Phase: Packaging)
+* R16: 🔄 README with install and hook configuration instructions (Phase: Packaging)
   * R16.1: Personal/dotfiles audience — concise, assumes NixOS + home-manager
   * R16.2: Covers: flake input, adding to packages, hook configuration, available commands
 
@@ -119,17 +117,17 @@ Refactor `scanProjects()` to use `sessions-index.json` (richer data, fewer I/O o
 
 Single-page vanilla JS UI. Connects via WebSocket, renders project list, updates in real-time.
 
-### ⬜ 04 Phase: Packaging
+### 🔄 04 Phase: Packaging
 [04-packaging](04-packaging.md)
 
-Expose ccmon as a Nix flake package via `writeShellScriptBin` wrapper with pinned bun. Add README with install/hook instructions for personal NixOS + home-manager setup.
+Expose ccmon as a Nix flake package via `writeShellScriptBin` wrapper with pinned bun. Add README with install/hook instructions for personal NixOS + home-manager setup. All 3 steps done: flake.nix, README.md, CLAUDE.md.
 
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
-- **CLAUDE.md**: Development instructions, maintained across all phases (Phase: Session Detection)
-- **README.md**: Project overview
-- **flake.nix**: Nix devShell with Bun (Phase: Session Detection)
+- **CLAUDE.md**: Development instructions, maintained across all phases (Phase: Session Detection, Packaging)
+- **README.md**: Install guide, hook config, commands reference (Phase: Packaging)
+- **flake.nix**: Nix devShell + packages/apps outputs for ccmon (Phase: Session Detection, Packaging)
 - **.envrc**: direnv config — `use flake` (Phase: Session Detection)
 - **.gitignore**: Excludes `.direnv/` and `*.local.log` (Phase: Session Detection)
 - **package.json**: Bun project config — `"type": "module"`, `@types/bun`, `dump` script (Phase: Session Detection)

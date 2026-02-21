@@ -18,3 +18,7 @@ build/
 
 # Local-only files (not committed, machine-specific)
 *.local.*
+
+# Nix build output
+result
+result-*

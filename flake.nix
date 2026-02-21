@@ -10,7 +10,21 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        src = ./.;
+        ccmon = pkgs.writeShellScriptBin "ccmon" ''
+          exec ${pkgs.bun}/bin/bun run ${src}/src/cli.ts "$@"
+        '';
       in {
+        packages = {
+          ccmon = ccmon;
+          default = ccmon;
+        };
+
+        apps.default = {
+          type = "app";
+          program = "${ccmon}/bin/ccmon";
+        };
+
         devShells.default = pkgs.mkShell {
           buildInputs = [ pkgs.bun ];
         };
