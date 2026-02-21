@@ -66,10 +66,11 @@ Phase 02 (Backend) code complete, manual testing remaining. Next: Phase 03 (Web 
 
 * R11: ✅ `ccmon dump` CLI command outputs full state of all projects as JSON to stdout (Phase: Session Detection)
   * R11.1: Serves as integration test and external introspection tool
-* R13: 🔄 `ccmon dump --watch` prints state on change with separator + timestamp (Phase: Backend)
+* R13: 🔄 `ccmon dump --watch` prints NDJSON state on change (Phase: Backend)
   * R13.1: Initial dump printed immediately, then watches for changes via `watchForChanges()`
-  * R13.2: On each change: re-runs `getProjectState()`, prints separator line with ISO timestamp, then full JSON
+  * R13.2: On each change: re-runs `getProjectState()`, prints JSON (no separator — NDJSON for jq piping)
   * R13.3: Exits cleanly on SIGINT (calls `watcher.stop()`)
+  * R13.4: `--project <name>` filters by `projectName`, outputs single object instead of array
 
 ### Developer Experience
 

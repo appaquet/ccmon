@@ -104,6 +104,21 @@ Phase 01 (Session Detection) is complete: `scanProjects()`, `readStatus()`, `che
 * [ ] Manual test: start a Claude Code session, verify `status.local.json` appears
 * [ ] Update CLAUDE.md with new commands (`bun run dump --watch`, `bun run serve`)
 
+### Step 8: `--project` filter + drop separator — TDD
+
+* [ ] Update `dump --watch` tests in `tests/cli.test.ts`:
+  * Remove separator assertions — watch should output NDJSON (one JSON per line, no `---` separator)
+  * Add test: `--project <name>` filters to single JSON object (not array)
+  * Add test: `--project unknown` outputs nothing / empty
+* [ ] Update `dump` (non-watch) tests:
+  * Add test: `dump --project <name>` outputs single JSON object
+* [ ] Implement in `src/cli.ts`:
+  * Parse `--project <name>` from argv (value follows the flag)
+  * `dump`: filter `getProjectState()` by `projectName`, output single object if `--project` set
+  * `dump --watch`: remove `--- <timestamp>` separator line; output one JSON line per update. If `--project` set, filter and output single object
+* [ ] Verify: `bun test` passes
+* [ ] Update README.md with `--project` flag documentation
+
 ## Files
 
 - **src/sessions.ts**: Add `readSessionsIndex()`, `writeStatus()`, `mapHookEventToState()`. Refactor `scanProjects()` to prefer sessions-index.json. Extend `ProjectInfo` with `summary`, `firstPrompt`, `messageCount`, `sessionModified`
