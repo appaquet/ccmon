@@ -163,6 +163,34 @@ Design decisions: config at `$XDG_CONFIG_HOME/ccmon/config.json` (default `~/.co
 * [x] Update `CLAUDE.md` with config file docs and updated dump command flags
 * [x] Verify: `bun test` passes — 71 tests (57 + 14 new)
 
+### Step 11 (host/port): Configurable host + port for serve — complete
+
+* [x] Add `host: '0.0.0.0'` and `port: 9480` to `CcmonConfig` + `DEFAULT_CONFIG` in `src/config.ts`
+* [x] Add `hostname?: string` to `ServerOptions` in `src/server.ts`; pass to `Bun.serve()`
+* [x] Parse `--host` flag in `serve` subcommand in `src/cli.ts`; pass `hostname` + `port` from config
+* [x] `sub` subcommand uses `config.port` instead of hardcoded 3000
+* [x] Update `tests/config.test.ts` with host/port coverage
+* [x] Verify: `bun test` passes — 74 tests
+
+### Step 12: Session enrichment — TDD
+
+Fields to add to `ProjectState`: `latestUserMessage`, `subagentCount` (active, mtime<5min), `model`, `lastToolUse`. Only parsed for `running`/`waiting_for_permission` sessions (skip stopped).
+
+* [ ] Add `gitBranch?: string` to `ProjectInfo` + `SessionsIndexEntry` in `src/sessions.ts` (R19.1)
+  * Source: `sessions-index.json` entry `gitBranch` field
+  * Tests: extend `makeIndexEntry` helper and assertions
+* [ ] Implement `countActiveSubagents(latestJSONL: string): Promise<number>` in `src/sessions.ts` (R19.2)
+  * Derive subagents dir from JSONL path, count `*.jsonl` files with mtime < 5min
+  * Tests: temp dir with subagent files, verify active-only count
+* [ ] Implement `readSessionTail(jsonlPath: string)` in `src/sessions.ts` (R19.3)
+  * Read last ~64KB via `Bun.file().slice()`, parse lines backwards
+  * Extract: `latestUserMessage` (last `type=user`, plain string content, not slash command), `model` (last assistant `message.model`), `lastToolUse` (last tool_use block name)
+  * Tests: write temp JSONL with representative entries, verify extraction
+* [ ] Extend `ProjectState` with new optional fields; wire into `getProjectState()` (R19)
+  * Call `readSessionTail()` + `countActiveSubagents()` only for non-stopped sessions
+  * Tests: integration test via `getProjectState()` with a temp project dir
+* [ ] Verify: `bun test` passes
+
 ## Files
 
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge (new file)

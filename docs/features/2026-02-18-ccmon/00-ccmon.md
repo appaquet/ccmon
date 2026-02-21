@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 02 complete (71 tests). Phase 03 (Web UI) plan written: vanilla JS grid, WebSocket, color-coded cards, exponential reconnect. Phase 03 session enrichment planning in progress (parallel).
+Phase 02: steps 9-11 complete (74 tests — config, stale filter, host/port, sub subcommand). Step 12 planned: session enrichment (latestUserMessage, subagentCount, model, lastToolUse). Phase 03 (Web UI) plan ready. Both awaiting `/implement`.
 
 ## Requirements
 
@@ -85,6 +85,10 @@ Phase 02 complete (71 tests). Phase 03 (Web UI) plan written: vanilla JS grid, W
   * R16.2: Covers: flake input, adding to packages, hook configuration, available commands
 
 * R17: ✅ `ccmon sub` CLI subcommand connects to running server via WebSocket, streams state updates as NDJSON (Phase: Backend)
+* R19: ⬜ Session enrichment — richer `ProjectState` fields from JSONL tail parse (Phase: Backend)
+  * R19.1: `gitBranch` from `sessions-index.json` (zero extra I/O)
+  * R19.2: `subagentCount` — active sub-agent JSONL files (mtime < 5min) in `{sessionDir}/subagents/`
+  * R19.3: `latestUserMessage`, `model`, `lastToolUse` from JSONL tail read (~64KB); only for non-stopped sessions
 * R18: ✅ Config file system with stale project filter (Phase: Backend)
   * R18.1: `filterStaleProjects()` excludes projects with `lastUpdated` null or older than `maxInactivityHours` (default 3h)
   * R18.2: `dump` and `dump --watch` apply filter; `--max-age <hours>` and `--no-filter` CLI flags override config
