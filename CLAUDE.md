@@ -10,8 +10,10 @@ Claude Code Monitor — monitors Claude Code sessions. All timestamps are ISO 86
 
 ### dump
 ```bash
-bun run dump                              # All projects as single JSON array
+bun run dump                              # All active projects as single JSON array
 bun run dump --project <name>             # Single project as JSON object (or empty if not found)
+bun run dump --max-age <hours>            # Override maxInactivityHours from config
+bun run dump --no-filter                  # Disable inactivity filter
 bun run dump --watch                      # Stream all projects, one JSON per line; Ctrl+C to stop
 bun run dump --watch --project <name>     # Stream single project, one JSON per line
 ```
@@ -55,5 +57,10 @@ bun test                       # Run tests
 - Encoded dir replaces `/` with `-` in cwd when no existing project found
 - Status includes: `state`, `timestamp`, `session_id`, `working_dir`
 - States: `running`, `waiting_for_permission`, `stopped`
+
+**Config file**: `$XDG_CONFIG_HOME/ccmon/config.json` (default: `~/.config/ccmon/config.json`)
+- `CCMON_CONFIG` env var overrides the config path
+- Loaded by `dump`, `dump --watch`, `serve`, and `sub` subcommands; CLI flags override config values
+- Schema: `{ "maxInactivityHours": 3 }` — exclude projects with no activity for this many hours (0 to disable)
 
 **Environment**: `CLAUDE_PROJECTS_DIR` (default: `~/.claude/projects`)

@@ -9,6 +9,7 @@ import {
   getProjectState,
   mapHookEventToState,
   writeStatus,
+  filterStaleProjects,
 } from '../src/sessions';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -509,5 +510,55 @@ describe('writeStatus', () => {
     expect(result!.state).toBe('waiting_for_permission');
     expect(result!.session_id).toBe('round-trip-id');
     expect(result!.working_dir).toBe('/home/user/rt');
+  });
+});
+
+// ─── filterStaleProjects ──────────────────────────────────────────────────────
+
+describe('filterStaleProjects', () => {
+  function makeProject(lastUpdated: string | null): import('../src/sessions').ProjectState {
+    return {
+      projectDir: 'dir',
+      cwd: '/home/user/proj',
+      projectName: 'proj',
+      sessionId: 'sid',
+      latestJSONL: '/home/user/proj/session.jsonl',
+      state: 'stopped',
+      lastUpdated,
+    };
+  }
+
+  test('recent lastUpdated: project is kept', () => {
+    const recent = new Date(Date.now() - 1000).toISOString(); // 1 second ago
+    const projects = [makeProject(recent)];
+    const result = filterStaleProjects(projects, 1);
+    expect(result).toHaveLength(1);
+  });
+
+  test('old lastUpdated: project is removed', () => {
+    const old = new Date(Date.now() - 5 * 3600 * 1000).toISOString(); // 5 hours ago
+    const projects = [makeProject(old)];
+    const result = filterStaleProjects(projects, 1);
+    expect(result).toHaveLength(0);
+  });
+
+  test('null lastUpdated: project is removed', () => {
+    const projects = [makeProject(null)];
+    const result = filterStaleProjects(projects, 1);
+    expect(result).toHaveLength(0);
+  });
+
+  test('maxInactivityHours = 0: all projects returned (filter disabled)', () => {
+    const old = new Date(Date.now() - 100 * 3600 * 1000).toISOString();
+    const projects = [makeProject(null), makeProject(old)];
+    const result = filterStaleProjects(projects, 0);
+    expect(result).toHaveLength(2);
+  });
+
+  test('maxInactivityHours = Infinity: all projects returned (filter disabled)', () => {
+    const old = new Date(Date.now() - 100 * 3600 * 1000).toISOString();
+    const projects = [makeProject(null), makeProject(old)];
+    const result = filterStaleProjects(projects, Infinity);
+    expect(result).toHaveLength(2);
   });
 });

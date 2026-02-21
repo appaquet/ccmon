@@ -72,6 +72,97 @@ describe('HTTP server', () => {
   });
 });
 
+describe('HTTP server with maxInactivityHours filter', () => {
+  let tmpDir: string;
+  let stop: (() => void) | null = null;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-server-filter');
+  });
+
+  afterEach(async () => {
+    if (stop) {
+      stop();
+      stop = null;
+    }
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('/api/state with near-zero maxInactivityHours filters out stale projects', async () => {
+    const projDir = join(tmpDir, '-home-user-staleproj');
+    await mkdir(projDir, { recursive: true });
+    const firstLine = JSON.stringify({
+      sessionId: 'stale-test',
+      cwd: '/home/user/staleproj',
+      gitBranch: 'main',
+      timestamp: new Date().toISOString(),
+    });
+    await writeFile(join(projDir, 'session.jsonl'), firstLine + '\n');
+
+    // Write an old status so lastUpdated is well in the past
+    const oldTime = new Date(Date.now() - 10 * 3600 * 1000).toISOString(); // 10 hours ago
+    await writeFile(
+      join(projDir, 'status.local.json'),
+      JSON.stringify({
+        state: 'stopped',
+        timestamp: oldTime,
+        session_id: 'stale-test',
+        working_dir: '/home/user/staleproj',
+      }),
+    );
+
+    // maxInactivityHours = 0.000001 → effectively filters everything older than ~3.6ms
+    const srv = startServer({ port: 0, claudeDir: tmpDir, maxInactivityHours: 0.000001 });
+    stop = srv.stop;
+
+    const res = await fetch(`http://localhost:${srv.port}/api/state`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as unknown[];
+    expect(Array.isArray(body)).toBe(true);
+    expect(body.length).toBe(0);
+  });
+
+  test('WebSocket initial state with Infinity maxInactivityHours still includes projects', async () => {
+    const projDir = join(tmpDir, '-home-user-infproj');
+    await mkdir(projDir, { recursive: true });
+    const firstLine = JSON.stringify({
+      sessionId: 'inf-test',
+      cwd: '/home/user/infproj',
+      gitBranch: 'main',
+      timestamp: new Date().toISOString(),
+    });
+    await writeFile(join(projDir, 'session.jsonl'), firstLine + '\n');
+
+    const srv = startServer({ port: 0, claudeDir: tmpDir, maxInactivityHours: Infinity });
+    stop = srv.stop;
+
+    const message = await new Promise<string>((resolve, reject) => {
+      const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('Timed out waiting for initial state'));
+      }, 3000);
+
+      ws.onmessage = (event) => {
+        clearTimeout(timeout);
+        ws.close();
+        resolve(event.data as string);
+      };
+
+      ws.onerror = (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      };
+    });
+
+    const parsed = JSON.parse(message) as unknown[];
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed.length).toBe(1);
+    const entry = parsed[0] as Record<string, unknown>;
+    expect(entry.projectName).toBe('infproj');
+  });
+});
+
 describe('WebSocket server', () => {
   let tmpDir: string;
   let stop: (() => void) | null = null;

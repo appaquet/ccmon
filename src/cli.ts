@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { getProjectState, scanProjects, mapHookEventToState, writeStatus } from './sessions';
+import { getProjectState, scanProjects, mapHookEventToState, writeStatus, filterStaleProjects } from './sessions';
+import { loadConfig, mergeCliOverrides } from './config';
 import { watchForChanges } from './watcher';
 import { startServer } from './server';
 
@@ -10,6 +11,17 @@ const subcommand = process.argv[2];
 
 const projectFlagIdx = process.argv.indexOf('--project');
 const projectFilter = projectFlagIdx !== -1 ? (process.argv[projectFlagIdx + 1] ?? null) : null;
+
+const maxAgeIdx = process.argv.indexOf('--max-age');
+const maxAgeArg = maxAgeIdx !== -1 ? parseFloat(process.argv[maxAgeIdx + 1] ?? '') : undefined;
+const noFilter = process.argv.includes('--no-filter');
+
+const config = mergeCliOverrides(
+  loadConfig(),
+  {
+    maxInactivityHours: noFilter ? Infinity : maxAgeArg,
+  },
+);
 
 if (subcommand === 'dump') {
   const watch = process.argv.includes('--watch');
@@ -32,7 +44,7 @@ if (subcommand === 'dump') {
     process.exit(1);
   }
 
-  const { port: resolvedPort, stop } = startServer({ port });
+  const { port: resolvedPort, stop } = startServer({ port, maxInactivityHours: config.maxInactivityHours });
   process.stdout.write(`ccmon server listening on http://localhost:${resolvedPort}\n`);
 
   process.on('SIGINT', () => {
@@ -45,14 +57,15 @@ if (subcommand === 'dump') {
   });
 } else {
   process.stderr.write(
-    'Usage: ccmon <subcommand>\n\nSubcommands:\n  dump           Print current Claude Code project state as JSON\n  dump --watch   Watch for changes and print updates\n  status         Read hook event from stdin and write status file\n  serve          Start HTTP + WebSocket server\n  sub            Connect to running server, stream state as NDJSON\n',
+    'Usage: ccmon <subcommand>\n\nSubcommands:\n  dump                   Print current Claude Code project state as JSON\n  dump --watch           Watch for changes and print updates\n  dump --max-age <hours> Override maxInactivityHours from config\n  dump --no-filter       Disable inactivity filter\n  status                 Read hook event from stdin and write status file\n  serve                  Start HTTP + WebSocket server\n  sub                    Connect to running server, stream state as NDJSON\n',
   );
   process.exit(1);
 }
 
 async function runDump(): Promise<void> {
   try {
-    const state = await getProjectState(claudeDir);
+    const rawState = await getProjectState(claudeDir);
+    const state = filterStaleProjects(rawState, config.maxInactivityHours);
     if (projectFilter !== null) {
       const match = state.find((p) => p.projectName === projectFilter) ?? null;
       if (match !== null) {
@@ -70,7 +83,8 @@ async function runDump(): Promise<void> {
 }
 
 async function runDumpWatch(): Promise<void> {
-  function formatWatchOutput(state: Awaited<ReturnType<typeof getProjectState>>): string {
+  function formatWatchOutput(rawState: Awaited<ReturnType<typeof getProjectState>>): string {
+    const state = filterStaleProjects(rawState, config.maxInactivityHours);
     if (projectFilter !== null) {
       const match = state.find((p) => p.projectName === projectFilter) ?? null;
       return match !== null ? JSON.stringify(match, null, 2) : '';

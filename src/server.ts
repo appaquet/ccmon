@@ -1,5 +1,6 @@
 import type { ServerWebSocket } from 'bun';
-import { getProjectState } from './sessions';
+import { getProjectState, filterStaleProjects } from './sessions';
+import { DEFAULT_CONFIG } from './config';
 import { watchForChanges } from './watcher';
 
 const DEFAULT_PORT = 3000;
@@ -21,6 +22,7 @@ const PLACEHOLDER_HTML = `<!DOCTYPE html>
 export interface ServerOptions {
   port?: number;
   claudeDir?: string;
+  maxInactivityHours?: number;
 }
 
 /**
@@ -30,12 +32,13 @@ export interface ServerOptions {
 export function startServer(options: ServerOptions = {}): { port: number; stop: () => void } {
   const port = options.port ?? DEFAULT_PORT;
   const claudeDir = options.claudeDir ?? DEFAULT_CLAUDE_DIR;
+  const maxInactivityHours = options.maxInactivityHours ?? DEFAULT_CONFIG.maxInactivityHours;
 
   const clients = new Set<ServerWebSocket<unknown>>();
 
   async function broadcastState(): Promise<void> {
     if (clients.size === 0) return;
-    const state = await getProjectState(claudeDir);
+    const state = filterStaleProjects(await getProjectState(claudeDir), maxInactivityHours);
     const payload = JSON.stringify(state);
     for (const ws of clients) {
       ws.send(payload);
@@ -55,7 +58,8 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
       open(ws) {
         clients.add(ws);
         getProjectState(claudeDir)
-          .then((state) => {
+          .then((rawState) => {
+            const state = filterStaleProjects(rawState, maxInactivityHours);
             ws.send(JSON.stringify(state));
           })
           .catch((err: unknown) => {
@@ -83,8 +87,8 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
       }
 
       if (url.pathname === '/api/state') {
-        return getProjectState(claudeDir).then((state) =>
-          Response.json(state),
+        return getProjectState(claudeDir).then((rawState) =>
+          Response.json(filterStaleProjects(rawState, maxInactivityHours)),
         );
       }
 

@@ -249,6 +249,23 @@ export async function getProjectState(claudeDir: string = DEFAULT_CLAUDE_DIR): P
   );
 }
 
+/**
+ * Filters out projects that have had no activity within the given number of hours.
+ * Projects with null lastUpdated are always considered stale.
+ * Pass maxInactivityHours <= 0 or Infinity to disable filtering.
+ */
+export function filterStaleProjects(
+  projects: ProjectState[],
+  maxInactivityHours: number,
+): ProjectState[] {
+  if (maxInactivityHours <= 0 || !isFinite(maxInactivityHours)) return projects;
+  const cutoff = Date.now() - maxInactivityHours * 3600 * 1000;
+  return projects.filter((p) => {
+    if (p.lastUpdated === null) return false;
+    return new Date(p.lastUpdated).getTime() >= cutoff;
+  });
+}
+
 // ─── Exported Test Helpers ───────────────────────────────────────────────────
 
 /**
