@@ -77,6 +77,16 @@ Note: real `sessions-index.json` uses `projectPath` field (not `originalPath` as
 
 * R12: ✅ `CLAUDE.md` at project root with build/run/test instructions, improved across all phases (Phase: Session Detection)
 
+### Packaging
+
+* R15: ⬜ Nix flake exposes ccmon as a package (Phase: Packaging)
+  * R15.1: `writeShellScriptBin` wrapper calling `${pkgs.bun}/bin/bun run` on source in Nix store
+  * R15.2: `packages.${system}.default` and `apps.${system}.default` outputs
+  * R15.3: Bun pinned from nixpkgs (hermetic)
+* R16: ⬜ README with install and hook configuration instructions (Phase: Packaging)
+  * R16.1: Personal/dotfiles audience — concise, assumes NixOS + home-manager
+  * R16.2: Covers: flake input, adding to packages, hook configuration, available commands
+
 #### Out of Scope
 
 * Authentication / multi-user support
@@ -108,6 +118,11 @@ Refactor `scanProjects()` to use `sessions-index.json` (richer data, fewer I/O o
 [03-web-ui](03-web-ui.md)
 
 Single-page vanilla JS UI. Connects via WebSocket, renders project list, updates in real-time.
+
+### ⬜ 04 Phase: Packaging
+[04-packaging](04-packaging.md)
+
+Expose ccmon as a Nix flake package via `writeShellScriptBin` wrapper with pinned bun. Add README with install/hook instructions for personal NixOS + home-manager setup.
 
 ## Files
 
