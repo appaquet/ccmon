@@ -7,6 +7,32 @@ import { join } from 'node:path';
 const TMPDIR = Bun.env.TMPDIR || '/tmp';
 const CLI_PATH = join(import.meta.dir, '..', 'src', 'cli.ts');
 
+/**
+ * Splits a string of concatenated pretty-printed JSON values into individual
+ * JSON strings by tracking bracket/brace nesting depth.
+ */
+function splitJsonBlocks(text: string): string[] {
+  const blocks: string[] = [];
+  let depth = 0;
+  let start = -1;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '{' || ch === '[') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}' || ch === ']') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        blocks.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+
+  return blocks;
+}
+
 async function makeTempDir(prefix: string): Promise<string> {
   const dir = join(TMPDIR, `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   await mkdir(dir, { recursive: true });
@@ -84,6 +110,134 @@ describe('dump', () => {
     expect(parsed).toHaveLength(1);
     expect(parsed[0].cwd).toBe('/home/user/proj');
   });
+});
+
+// ─── dump --project ───────────────────────────────────────────────────────────
+
+describe('dump --project', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-cli-dump-project');
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('outputs single JSON object matching the given projectName', async () => {
+    const projDir = join(tmpDir, '-home-user-myapp');
+    await mkdir(projDir, { recursive: true });
+    await writeFile(join(projDir, 'session.jsonl'), makeFirstLine('/home/user/myapp', 'sid1') + '\n');
+
+    // Second project with a different name
+    const proj2Dir = join(tmpDir, '-home-user-otherapp');
+    await mkdir(proj2Dir, { recursive: true });
+    await writeFile(join(proj2Dir, 'session.jsonl'), makeFirstLine('/home/user/otherapp', 'sid2') + '\n');
+
+    const result = await spawnCli(['dump', '--project', 'myapp'], {
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    // Single object, not an array
+    expect(Array.isArray(parsed)).toBe(false);
+    expect(typeof parsed).toBe('object');
+    expect(parsed.projectName).toBe('myapp');
+    expect(parsed.cwd).toBe('/home/user/myapp');
+  });
+
+  test('outputs nothing when project name does not exist', async () => {
+    const projDir = join(tmpDir, '-home-user-myapp');
+    await mkdir(projDir, { recursive: true });
+    await writeFile(join(projDir, 'session.jsonl'), makeFirstLine('/home/user/myapp', 'sid1') + '\n');
+
+    const result = await spawnCli(['dump', '--project', 'nonexistent'], {
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe('');
+  });
+});
+
+// ─── dump --watch --project ────────────────────────────────────────────────────
+
+describe('dump --watch --project', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-cli-watch-project');
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('initial output is a single JSON object for the given project', async () => {
+    const projDir = join(tmpDir, '-home-user-watchapp');
+    await mkdir(projDir, { recursive: true });
+    await writeFile(
+      join(projDir, 'session.jsonl'),
+      makeFirstLine('/home/user/watchapp', 'sess-wp') + '\n',
+    );
+
+    const proc = Bun.spawn(['bun', 'run', CLI_PATH, 'dump', '--watch', '--project', 'watchapp'], {
+      stdin: 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    await Bun.sleep(300);
+    proc.kill('SIGINT');
+
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+
+    const blocks = splitJsonBlocks(stdout);
+    expect(blocks.length).toBeGreaterThanOrEqual(1);
+    const parsed = JSON.parse(blocks[0]);
+    // Single object, not array
+    expect(Array.isArray(parsed)).toBe(false);
+    expect(parsed.projectName).toBe('watchapp');
+    expect(parsed.cwd).toBe('/home/user/watchapp');
+  }, 5000);
+
+  test('each update is a single JSON object after status file changes', async () => {
+    const projDir = join(tmpDir, '-home-user-watchapp2');
+    await mkdir(projDir, { recursive: true });
+    await writeFile(
+      join(projDir, 'session.jsonl'),
+      makeFirstLine('/home/user/watchapp2', 'sess-wp2') + '\n',
+    );
+
+    const proc = Bun.spawn(['bun', 'run', CLI_PATH, 'dump', '--watch', '--project', 'watchapp2'], {
+      stdin: 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    await Bun.sleep(300);
+
+    // Trigger a status file change
+    await writeFile(join(projDir, 'status.local.json'), makeStatusPayload('running'));
+    await Bun.sleep(400);
+
+    proc.kill('SIGINT');
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+
+    const blocks = splitJsonBlocks(stdout);
+    expect(blocks.length).toBeGreaterThanOrEqual(2);
+    for (const block of blocks) {
+      const parsed = JSON.parse(block);
+      expect(Array.isArray(parsed)).toBe(false);
+      expect(parsed.projectName).toBe('watchapp2');
+    }
+  }, 5000);
 });
 
 // ─── status ───────────────────────────────────────────────────────────────────
@@ -269,13 +423,14 @@ describe('dump --watch', () => {
     await proc.exited;
 
     // First output should be a valid JSON array
-    const firstBlock = stdout.split('---')[0].trim();
-    const parsed = JSON.parse(firstBlock);
+    const blocks = splitJsonBlocks(stdout);
+    expect(blocks.length).toBeGreaterThanOrEqual(1);
+    const parsed = JSON.parse(blocks[0]);
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed[0].cwd).toBe('/home/user/watchproj');
   }, 5000);
 
-  test('prints separator and updated JSON when status file changes', async () => {
+  test('prints updated JSON when status file changes', async () => {
     const projDir = join(tmpDir, '-home-user-watchchange');
     await mkdir(projDir, { recursive: true });
     await writeFile(
@@ -302,11 +457,11 @@ describe('dump --watch', () => {
     const stdout = await new Response(proc.stdout).text();
     await proc.exited;
 
-    // Should contain a separator line after the initial dump
-    expect(stdout).toContain('---');
+    // No separator lines — output is consecutive JSON blocks
+    expect(stdout).not.toContain('---');
 
-    // Each block separated by --- should be valid JSON
-    const blocks = stdout.split(/^---.*$/m).map((b) => b.trim()).filter(Boolean);
+    // Each block should be independently parseable JSON
+    const blocks = splitJsonBlocks(stdout);
     expect(blocks.length).toBeGreaterThanOrEqual(2);
     for (const block of blocks) {
       const parsed = JSON.parse(block);

@@ -8,6 +8,9 @@ const claudeDir = Bun.env.CLAUDE_PROJECTS_DIR ?? join(Bun.env.HOME ?? '/root', '
 
 const subcommand = process.argv[2];
 
+const projectFlagIdx = process.argv.indexOf('--project');
+const projectFilter = projectFlagIdx !== -1 ? (process.argv[projectFlagIdx + 1] ?? null) : null;
+
 if (subcommand === 'dump') {
   const watch = process.argv.includes('--watch');
 
@@ -48,7 +51,14 @@ if (subcommand === 'dump') {
 async function runDump(): Promise<void> {
   try {
     const state = await getProjectState(claudeDir);
-    console.log(JSON.stringify(state, null, 2));
+    if (projectFilter !== null) {
+      const match = state.find((p) => p.projectName === projectFilter) ?? null;
+      if (match !== null) {
+        console.log(JSON.stringify(match, null, 2));
+      }
+    } else {
+      console.log(JSON.stringify(state, null, 2));
+    }
     process.exit(0);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -58,9 +68,18 @@ async function runDump(): Promise<void> {
 }
 
 async function runDumpWatch(): Promise<void> {
+  function formatWatchOutput(state: Awaited<ReturnType<typeof getProjectState>>): string {
+    if (projectFilter !== null) {
+      const match = state.find((p) => p.projectName === projectFilter) ?? null;
+      return match !== null ? JSON.stringify(match, null, 2) : '';
+    }
+    return JSON.stringify(state, null, 2);
+  }
+
   try {
     const state = await getProjectState(claudeDir);
-    console.log(JSON.stringify(state, null, 2));
+    const output = formatWatchOutput(state);
+    if (output) console.log(output);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`Error getting initial state: ${message}\n`);
@@ -70,8 +89,8 @@ async function runDumpWatch(): Promise<void> {
   const watcher = watchForChanges(claudeDir, async () => {
     try {
       const state = await getProjectState(claudeDir);
-      console.log(`--- ${new Date().toISOString()}`);
-      console.log(JSON.stringify(state, null, 2));
+      const output = formatWatchOutput(state);
+      if (output) console.log(output);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`Error getting state update: ${message}\n`);
