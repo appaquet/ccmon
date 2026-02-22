@@ -10,9 +10,9 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 06 (Notifications & Streaming) implemented: 117 tests. R27: byte-offset JSONL streaming with 10MB cap and delta reads — `isDelta` flag correctly avoids discarding first appended line. R28: `latestAssistantMessage` extracted alongside `latestUserMessage`, both displayed in UI (▶/◀). R26: `writeNotificationStatus` function handles Notification hook, amber flash in dashboard, `permission_prompt` suppressed when already `waiting_for_permission`. R29: `SessionEnrichment` base type shared by `ProjectState` and `SubagentInfo`; `getSubagentInfos` applies streaming to sub-agent JSONL files; `subagentCount` kept for backward compat.
+Phase 07 (QA Pass) implemented: 125 tests. R30: setInterval(render,5000) in UI. R31: server-owned Map<projectDir,ProjectState> as source of truth, ready promise, no on-demand rescans. R33: per-project 3s debounce on running→stopped. R32: inputTokens/outputTokens in SessionEnrichment, accumulated across all JSONL lines, displayed in dashboard.
 
-Next: Phase 07 (QA Pass) — R30 last-activity refresh, R31 server state persistence on reload, R32 token usage, R33 running→stopped flicker.
+Phase 08 planned (JSONL-Primary Detection): switch running/stopped detection from hook-driven status.local.json to JSONL mtime + system:stop_hook_summary. Keep only PermissionRequest + Notification hooks. Eliminates R33 race at source.
 
 ## Inbox
 
@@ -138,10 +138,19 @@ Next: Phase 07 (QA Pass) — R30 last-activity refresh, R31 server state persist
 
 ### QA Pass
 
-* R30: ⬜ Last activity timestamp in web UI updates periodically without page reload (Phase: QA Pass)
-* R31: ⬜ Server persists current project state in memory so page refresh returns correct state (Phase: QA Pass)
-* R32: ⬜ Token usage from JSONL included in session payload and displayed in dashboard (Phase: QA Pass)
-* R33: ⬜ Running session does not flicker to stopped then back to running during active work (Phase: QA Pass)
+* R30: ✅ Last activity timestamp in web UI updates periodically without page reload (Phase: QA Pass)
+* R31: ✅ Server persists current project state in memory so page refresh returns correct state (Phase: QA Pass)
+* R32: ✅ Token usage from JSONL included in session payload and displayed in dashboard (Phase: QA Pass)
+* R33: ✅ Running session does not flicker to stopped then back to running during active work (Phase: QA Pass)
+
+### JSONL-Primary Detection
+
+* R34: ⬜ JSONL mtime is the primary signal for running/stopped state — no dependency on status.local.json for activity detection (Phase: JSONL-Primary Detection)
+  * R34.1: Watcher monitors *.jsonl files; running derived from recent mtime; stopped from system:stop_hook_summary or staleness
+  * R34.2: status.local.json read only for waiting_for_permission and notification fields
+* R35: ⬜ Hook config reduced to PermissionRequest + Notification only (Phase: JSONL-Primary Detection)
+  * R35.1: UserPromptSubmit, PostToolUse, Stop, SessionEnd hooks removed from ccmon dotfiles config
+  * R35.2: R33 debounce revisited — may be unnecessary once race condition is eliminated
 
 #### Out of Scope
 
@@ -194,6 +203,11 @@ Replace stateless 64KB tail reads with byte-offset JSONL streaming for accurate 
 [07-qa-pass](07-qa-pass.md)
 
 Bug fixes and improvements from real-world usage: last activity timestamp auto-refresh, server state persistence on page reload, token usage display.
+
+### ⬜ 08 Phase: JSONL-Primary Detection
+[08-jsonl-primary](08-jsonl-primary.md)
+
+Replace hook-driven running/stopped detection with JSONL mtime + system:stop_hook_summary watching. Reduce hook config to PermissionRequest + Notification only. Eliminates the R33 race condition at its source.
 
 ## Files
 
