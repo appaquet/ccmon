@@ -1,6 +1,7 @@
 import type { ServerWebSocket } from 'bun';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { hostname as osHostname } from 'node:os';
 import { getProjectState, filterStaleProjects, DEFAULT_CLAUDE_DIR } from './sessions';
 import type { ProjectState } from './sessions';
 import { DEFAULT_CONFIG } from './config';
@@ -46,7 +47,7 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
 
   function broadcastCurrent(): void {
     if (clients.size === 0) return;
-    const payload = JSON.stringify(currentFilteredState());
+    const payload = JSON.stringify({ hostname: osHostname(), projects: currentFilteredState() });
     for (const ws of clients) {
       ws.send(payload);
     }
@@ -103,7 +104,7 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
       open(ws) {
         clients.add(ws);
         // Send current map contents — no rescan.
-        ws.send(JSON.stringify(currentFilteredState()));
+        ws.send(JSON.stringify({ hostname: osHostname(), projects: currentFilteredState() }));
       },
       message(_ws, _data) {
         // clients do not send messages to the server

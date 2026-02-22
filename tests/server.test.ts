@@ -156,7 +156,8 @@ describe('HTTP server with maxInactivityHours filter', () => {
       };
     });
 
-    const parsed = JSON.parse(message) as unknown[];
+    const envelope = JSON.parse(message) as { hostname: string; projects: unknown[] };
+    const parsed = envelope.projects;
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed.length).toBe(1);
     const entry = parsed[0] as Record<string, unknown>;
@@ -222,12 +223,14 @@ describe('WebSocket server', () => {
 
     expect(messages.length).toBeGreaterThanOrEqual(2);
 
-    const first = JSON.parse(messages[0]) as unknown[];
+    const firstEnvelope = JSON.parse(messages[0]) as { hostname: string; projects: unknown[] };
+    const first = firstEnvelope.projects;
     expect(Array.isArray(first)).toBe(true);
     const firstEntry = first.find((e) => (e as Record<string, unknown>).projectName === 'broadcastproj');
     expect(firstEntry).toBeDefined();
 
-    const second = JSON.parse(messages[1]) as unknown[];
+    const secondEnvelope = JSON.parse(messages[1]) as { hostname: string; projects: unknown[] };
+    const second = secondEnvelope.projects;
     expect(Array.isArray(second)).toBe(true);
     const secondEntry = second.find((e) => (e as Record<string, unknown>).projectName === 'broadcastproj');
     expect(secondEntry).toBeDefined();
@@ -267,11 +270,41 @@ describe('WebSocket server', () => {
       };
     });
 
-    const parsed = JSON.parse(message) as unknown[];
+    const envelope = JSON.parse(message) as { hostname: string; projects: unknown[] };
+    const parsed = envelope.projects;
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed.length).toBe(1);
     const entry = parsed[0] as Record<string, unknown>;
     expect(entry.projectName).toBe('wsproj');
+  });
+
+  test('WebSocket message includes hostname field', async () => {
+    const srv = startServer({ port: 0, claudeDir: tmpDir });
+    stop = srv.stop;
+    await srv.ready;
+
+    const message = await new Promise<string>((resolve, reject) => {
+      const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('Timed out waiting for initial state'));
+      }, 3000);
+
+      ws.onmessage = (event) => {
+        clearTimeout(timeout);
+        ws.close();
+        resolve(event.data as string);
+      };
+
+      ws.onerror = (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      };
+    });
+
+    const envelope = JSON.parse(message) as Record<string, unknown>;
+    expect(typeof envelope.hostname).toBe('string');
+    expect((envelope.hostname as string).length).toBeGreaterThan(0);
   });
 });
 
@@ -340,7 +373,8 @@ describe('server-side state map (R31)', () => {
       };
     });
 
-    const parsed = JSON.parse(message) as unknown[];
+    const envelope = JSON.parse(message) as { hostname: string; projects: unknown[] };
+    const parsed = envelope.projects;
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed.length).toBe(1);
     const entry = parsed[0] as Record<string, unknown>;
@@ -418,7 +452,8 @@ describe('state propagation (R34)', () => {
 
     const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
     ws.onmessage = (event) => {
-      messages.push(JSON.parse(event.data as string) as unknown[]);
+      const envelope = JSON.parse(event.data as string) as { hostname: string; projects: unknown[] };
+      messages.push(envelope.projects);
     };
 
     // Wait for initial state delivery

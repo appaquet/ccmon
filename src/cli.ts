@@ -255,7 +255,9 @@ async function runSub(): Promise<void> {
   const ws = new WebSocket(`ws://localhost:${port}/ws`);
 
   ws.onmessage = (event) => {
-    process.stdout.write(event.data + '\n');
+    const parsed = JSON.parse(event.data.toString());
+    const projects = Array.isArray(parsed) ? parsed : parsed.projects;
+    process.stdout.write(JSON.stringify(projects) + '\n');
   };
 
   ws.onerror = () => {

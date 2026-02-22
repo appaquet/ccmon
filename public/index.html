@@ -43,6 +43,13 @@
       color: var(--text);
     }
 
+    #header-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      position: relative;
+    }
+
     #status-bar {
       font-size: 12px;
       font-weight: 500;
@@ -52,6 +59,192 @@
       border: 1px solid var(--border);
       color: var(--muted);
       transition: color 0.2s;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    #status-bar:hover {
+      background: rgba(255,255,255,0.08);
+    }
+
+    #settings-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.15s, color 0.15s;
+      user-select: none;
+    }
+
+    #settings-btn:hover {
+      background: rgba(255,255,255,0.10);
+      color: var(--text);
+    }
+
+    #backend-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      width: 340px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      z-index: 100;
+      padding: 8px 0;
+    }
+
+    #backend-menu.open {
+      display: block;
+    }
+
+    .menu-section-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 6px 14px 4px;
+    }
+
+    .backend-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 14px;
+    }
+
+    .backend-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .backend-host {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .backend-url {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .backend-status {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-dot-connected    { background: var(--running); }
+    .status-dot-connecting   { background: var(--stopped); }
+    .status-dot-disconnected { background: var(--waiting); }
+
+    .status-label-connected    { color: var(--running); }
+    .status-label-connecting   { color: var(--stopped); }
+    .status-label-disconnected { color: var(--muted); }
+
+    .remove-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 4px;
+      padding: 2px 7px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+
+    .remove-btn:hover:not(:disabled) {
+      background: rgba(239,68,68,0.12);
+      color: var(--waiting);
+      border-color: var(--waiting);
+    }
+
+    .remove-btn:disabled {
+      opacity: 0.3;
+      cursor: default;
+    }
+
+    .menu-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 6px 0;
+    }
+
+    .add-server-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+    }
+
+    #add-server-input {
+      flex: 1;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--text);
+      font-size: 12px;
+      padding: 4px 8px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    #add-server-input:focus {
+      border-color: var(--muted);
+    }
+
+    #add-server-input::placeholder {
+      color: var(--muted);
+    }
+
+    #add-server-btn {
+      background: rgba(255,255,255,0.07);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 5px;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+
+    #add-server-btn:hover {
+      background: rgba(255,255,255,0.12);
+    }
+
+    #add-server-error {
+      font-size: 11px;
+      color: var(--waiting);
+      padding: 0 14px 6px;
+      display: none;
     }
 
     main {
@@ -278,14 +471,25 @@
 <body>
   <header>
     <h1>ccmon</h1>
-    <div id="status-bar">Connecting...</div>
+    <div id="header-right">
+      <div id="status-bar">Connecting...</div>
+      <div id="settings-btn" title="Manage servers">⚙</div>
+      <div id="backend-menu">
+        <div class="menu-section-label">Backends</div>
+        <div id="backend-list"></div>
+        <div class="menu-divider"></div>
+        <div class="add-server-row">
+          <input id="add-server-input" type="text" placeholder="ws://host:port/ws" />
+          <button id="add-server-btn">Add</button>
+        </div>
+        <div id="add-server-error"></div>
+      </div>
+    </div>
   </header>
   <main>
     <div id="project-grid"></div>
   </main>
   <script>
-    let projects = [];
-
     const stateLabel = {
       running: 'Running',
       stopped: 'Stopped',
@@ -465,7 +669,7 @@
     const prevState = new Map();                // projectName → last known state string
     const prevNotificationTimestamp = new Map(); // projectName → last known notificationTimestamp
 
-    function render() {
+    function render(projects) {
       const grid = document.getElementById('project-grid');
       const all = [...projects];
       all.sort((a, b) => a.projectName.localeCompare(b.projectName));
@@ -515,43 +719,229 @@
       }
     }
 
-    function setStatus(s) {
-      const bar = document.getElementById('status-bar');
-      bar.textContent = s === 'connected' ? '● Connected' : '⟳ Reconnecting...';
-      bar.style.color = s === 'connected' ? '#22c55e' : '#f97316';
-    }
+    // BackendManager: manages multiple WebSocket backend connections
+    const BackendManager = {
+      backends: [],
 
-    let backoff = 1000;
+      init() {
+        // Entry 0 is always the main server
+        this.backends.push(this._createEntry(`ws://${location.host}/ws`));
 
-    function connectWebSocket() {
-      const ws = new WebSocket(`ws://${location.host}/ws`);
-
-      ws.onopen = () => {
-        backoff = 1000;
-        setStatus('connected');
-      };
-
-      ws.onmessage = (e) => {
+        // Load additional servers from localStorage
         try {
-          projects = JSON.parse(e.data);
-          render();
-        } catch (err) {
-          console.error('Failed to parse WebSocket message:', err);
-        }
-      };
+          const saved = JSON.parse(localStorage.getItem('ccmon-backends') || '[]');
+          for (const url of saved) {
+            if (typeof url === 'string' && url !== this.backends[0].url) {
+              this.backends.push(this._createEntry(url));
+            }
+          }
+        } catch (_) { /* malformed localStorage entry — start fresh */ }
 
-      ws.onclose = ws.onerror = () => {
-        setStatus('reconnecting');
-        setTimeout(connectWebSocket, backoff);
-        backoff = Math.min(backoff * 2, 30000);
-      };
+        for (const entry of this.backends) {
+          this._connect(entry);
+        }
+      },
+
+      _createEntry(url) {
+        return { url, ws: null, hostname: null, status: 'connecting', projects: [], backoff: 1000 };
+      },
+
+      _connect(entry) {
+        entry.status = 'connecting';
+        updateStatusPill();
+        updateBackendMenu();
+
+        try {
+          const ws = new WebSocket(entry.url);
+          entry.ws = ws;
+
+          ws.onopen = () => {
+            entry.backoff = 1000;
+            entry.status = 'connected';
+            updateStatusPill();
+            updateBackendMenu();
+          };
+
+          ws.onmessage = (e) => {
+            try {
+              const data = JSON.parse(e.data);
+              // Support both new { hostname, projects } envelope and legacy raw array
+              if (Array.isArray(data)) {
+                entry.projects = data;
+              } else {
+                if (data.hostname) entry.hostname = data.hostname;
+                entry.projects = data.projects || [];
+              }
+              mergeAndRender();
+            } catch (err) {
+              console.error('Failed to parse WebSocket message:', err);
+            }
+          };
+
+          ws.onclose = ws.onerror = () => {
+            if (entry.ws !== ws) return; // superseded by a later connection attempt
+            entry.status = 'disconnected';
+            updateStatusPill();
+            updateBackendMenu();
+            const delay = entry.backoff;
+            entry.backoff = Math.min(entry.backoff * 2, 30000);
+            setTimeout(() => {
+              if (this.backends.includes(entry)) {
+                this._connect(entry);
+              }
+            }, delay);
+          };
+        } catch (err) {
+          entry.status = 'disconnected';
+          updateStatusPill();
+          updateBackendMenu();
+        }
+      },
+
+      addBackend(url) {
+        const entry = this._createEntry(url);
+        this.backends.push(entry);
+        this._saveExtras();
+        this._connect(entry);
+        updateBackendMenu();
+      },
+
+      removeBackend(index) {
+        if (index === 0) return; // main server cannot be removed
+        const entry = this.backends[index];
+        if (entry.ws) {
+          entry.ws.onclose = entry.ws.onerror = null;
+          entry.ws.close();
+          entry.ws = null;
+        }
+        this.backends.splice(index, 1);
+        this._saveExtras();
+        mergeAndRender();
+        updateBackendMenu();
+      },
+
+      _saveExtras() {
+        // Persist all entries except entry 0 (the main server)
+        const urls = this.backends.slice(1).map(e => e.url);
+        localStorage.setItem('ccmon-backends', JSON.stringify(urls));
+      },
+    };
+
+    function mergeAndRender() {
+      const merged = BackendManager.backends.flatMap(e => e.projects);
+      merged.sort((a, b) => a.projectName.localeCompare(b.projectName));
+      render(merged);
     }
 
-    connectWebSocket();
+    function updateStatusPill() {
+      const bar = document.getElementById('status-bar');
+      const statuses = BackendManager.backends.map(e => e.status);
+      const connectedCount = statuses.filter(s => s === 'connected').length;
+      const total = statuses.length;
+
+      if (connectedCount === total) {
+        bar.textContent = '● Connected';
+        bar.style.color = '#22c55e';
+      } else if (connectedCount > 0) {
+        bar.textContent = '● Partial';
+        bar.style.color = '#f59e0b';
+      } else {
+        bar.textContent = '⟳ Reconnecting...';
+        bar.style.color = '#f97316';
+      }
+    }
+
+    function updateBackendMenu() {
+      const list = document.getElementById('backend-list');
+      list.innerHTML = '';
+      BackendManager.backends.forEach((entry, index) => {
+        const row = document.createElement('div');
+        row.className = 'backend-row';
+
+        const displayName = entry.hostname || entry.url;
+        const showUrl = entry.hostname ? entry.url : null;
+
+        const dotClass = `status-dot status-dot-${entry.status}`;
+        const labelClass = `status-label-${entry.status}`;
+        const statusText = entry.status === 'connected' ? 'Connected'
+          : entry.status === 'connecting' ? 'Connecting...'
+          : 'Disconnected';
+
+        row.innerHTML = `
+          <div class="backend-info">
+            <div class="backend-host" title="${esc(displayName)}">${esc(displayName)}</div>
+            ${showUrl ? `<div class="backend-url" title="${esc(entry.url)}">${esc(entry.url)}</div>` : ''}
+          </div>
+          <div class="backend-status">
+            <span class="${dotClass}"></span>
+            <span class="${labelClass}">${esc(statusText)}</span>
+          </div>
+          <button class="remove-btn" ${index === 0 ? 'disabled' : ''} data-index="${index}">Remove</button>
+        `;
+
+        row.querySelector('.remove-btn').addEventListener('click', (e) => {
+          const idx = parseInt(e.currentTarget.dataset.index, 10);
+          BackendManager.removeBackend(idx);
+        });
+
+        list.appendChild(row);
+      });
+    }
+
+    // Settings menu toggle
+    const menuEl = document.getElementById('backend-menu');
+
+    function toggleMenu() {
+      menuEl.classList.toggle('open');
+      if (menuEl.classList.contains('open')) {
+        updateBackendMenu();
+      }
+    }
+
+    document.getElementById('status-bar').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMenu();
+    });
+
+    document.getElementById('settings-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMenu();
+    });
+
+    document.addEventListener('click', (e) => {
+      if (menuEl.classList.contains('open') && !menuEl.contains(e.target)) {
+        menuEl.classList.remove('open');
+      }
+    });
+
+    // Add server form
+    document.getElementById('add-server-btn').addEventListener('click', () => {
+      const input = document.getElementById('add-server-input');
+      const errorEl = document.getElementById('add-server-error');
+      const url = input.value.trim();
+
+      if (!url.match(/^wss?:\/\/.+/)) {
+        errorEl.textContent = 'URL must start with ws:// or wss://';
+        errorEl.style.display = 'block';
+        return;
+      }
+
+      errorEl.style.display = 'none';
+      input.value = '';
+      BackendManager.addBackend(url);
+    });
+
+    document.getElementById('add-server-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        document.getElementById('add-server-btn').click();
+      }
+    });
+
+    BackendManager.init();
 
     // Refresh relative timestamps (e.g. "2m ago") every 5 seconds without
     // requiring a new WS message.
-    setInterval(render, 5000);
+    setInterval(mergeAndRender, 5000);
   </script>
 </body>
 </html>
