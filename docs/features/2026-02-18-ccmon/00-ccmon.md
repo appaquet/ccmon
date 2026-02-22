@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 16 (Inbox Bug Fixes) planned. Three bugs: (1) task completions not reflected in WebSocket/sub mode — delta reads drop TaskUpdate for tasks created in earlier reads, (2) `waiting_for_permission` sticks after answering — resolveState Priority 1 blocks JSONL mtime check, (3) hook config safety — already handled, adding verification tests. Plan ready, awaiting `/implement`.
+Phase 16 (Inbox Bug Fixes) implemented. Three bugs fixed: (1) `scanTaskCreateUpdate()` now accepts base tasks param so delta reads can resolve `TaskUpdate` for tasks created in earlier reads; (2) `resolveState()` Priority 1 now falls through to JSONL mtime when JSONL is newer than permission timestamp + grace, fixing stuck `waiting_for_permission`; (3) hook safety verified — `SessionStart` test added. 189 tests passing (7 new). Pending user validation in live dashboard.
 
 ## Inbox
 
@@ -291,7 +291,7 @@ Rework dashboard cards to unified agent-row layout: context window progress bar 
 
 Fix stop detection race: Claude writes post-stop `system` entry to JSONL (8ms after hook), making JSONL mtime slightly newer than stopped timestamp. Add 5s grace period to `resolveState()` comparison (R34.6).
 
-### ⬜ 16 Phase: Inbox Bug Fixes
+### 🔄 16 Phase: Inbox Bug Fixes
 [16-inbox-bug-fixes](16-inbox-bug-fixes.md)
 
 Three bugs: task completions not reflected in WebSocket/sub (delta reads drop TaskUpdate for prior tasks), `waiting_for_permission` sticking after answering (resolveState Priority 1 blocks JSONL mtime), hook config safety verification (already safe, adding tests).
@@ -309,12 +309,12 @@ Three bugs: task completions not reflected in WebSocket/sub (delta reads drop Ta
 - **bun.lock**: Bun lockfile (Phase: Session Detection)
 - **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc() (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed (Phase: Backend, Review Fixes)
-- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()`; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback; `STOP_GRACE_MS` grace period in `resolveState()` (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix)
+- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()`; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback; `STOP_GRACE_MS` grace period in `resolveState()`; `scanTaskCreateUpdate` base tasks param for delta reads; `resolveState` permission override fix (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed (Phase: Session Detection, Review Fixes)
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner (Phase: Session Detection, Backend, Review Fixes)
 - **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init (Phase: Backend, Review Fixes)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
-- **tests/sessions.test.ts**: 182 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix)
+- **tests/sessions.test.ts**: 189 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
 - **tests/cli.test.ts**: 18 tests for cli.ts — 4 new arg-validation cases, status, dump --watch, --project filter (Phase: Review Fixes)
 - **tests/config.test.ts**: Config loading tests; 22+ tests covering partial config, invalid types (Phase: Review Fixes 2)

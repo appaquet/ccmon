@@ -2718,4 +2718,148 @@ describe('resolveState (R34)', () => {
   test('P4: stale JSONL mtime, no status → stopped', () => {
     expect(resolveState(staleJsonl, null)).toBe('stopped');
   });
+
+  test('P1/Bug2: fresh waiting_for_permission but JSONL mtime newer than permission timestamp → running', () => {
+    // Simulates user answering a permission request: Claude resumes and writes to JSONL,
+    // making JSONL mtime clearly newer than the permission signal.
+    const permissionTs = now - 30_000; // permission 30s ago
+    const freshPermissionStatus = makeStatus('waiting_for_permission', permissionTs);
+    // JSONL written 20s after permission (10s ago), well beyond STOP_GRACE_MS (5s)
+    const jsonlAfterPermission = now - 10_000;
+    expect(resolveState(jsonlAfterPermission, freshPermissionStatus)).toBe('running');
+  });
+
+  test('P1/Bug2: fresh waiting_for_permission with JSONL mtime older than permission timestamp → waiting_for_permission', () => {
+    // JSONL predates the permission request — Claude has not yet responded to the prompt.
+    const permissionTs = now - 10_000; // permission 10s ago
+    const freshPermissionStatus = makeStatus('waiting_for_permission', permissionTs);
+    const jsonlBeforePermission = now - 60_000; // JSONL written 60s ago (before permission)
+    expect(resolveState(jsonlBeforePermission, freshPermissionStatus)).toBe('waiting_for_permission');
+  });
+
+  test('P1/Bug2: fresh waiting_for_permission with null JSONL mtime → waiting_for_permission', () => {
+    // No JSONL at all — permission must be honored.
+    expect(resolveState(null, freshPermission)).toBe('waiting_for_permission');
+  });
+
+  test('P1/Bug2: fresh waiting_for_permission with JSONL mtime within grace period of permission → waiting_for_permission', () => {
+    // JSONL written 2s after permission — within STOP_GRACE_MS (5s), so permission still wins.
+    const permissionTs = now - 20_000;
+    const freshPermissionStatus = makeStatus('waiting_for_permission', permissionTs);
+    const jsonlWithinGrace = permissionTs + 2_000; // 2s after permission, within 5s grace
+    expect(resolveState(jsonlWithinGrace, freshPermissionStatus)).toBe('waiting_for_permission');
+  });
+});
+
+// ─── delta read task completions (R46 / Bug 1) ────────────────────────────────
+
+describe('readSessionTail delta task completion (R46 Bug 1)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-r46-delta');
+    _resetCachesForTesting();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeTaskCreateEntry(toolUseId: string, subject: string): string {
+    return JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        model: 'claude-sonnet-4-6',
+        content: [{ type: 'tool_use', id: toolUseId, name: 'TaskCreate', input: { subject, description: 'd' } }],
+      },
+    });
+  }
+
+  function makeTaskUpdateEntry(taskId: string, status: string): string {
+    return JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        model: 'claude-sonnet-4-6',
+        content: [{ type: 'tool_use', id: `tu-upd-${taskId}`, name: 'TaskUpdate', input: { taskId, status } }],
+      },
+    });
+  }
+
+  function makeToolResultEntry(toolUseId: string, resultText: string): string {
+    return JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: toolUseId, content: resultText }],
+      },
+    });
+  }
+
+  test('R46/Bug1: TaskUpdate in delta read resolves tasks created in earlier read → tasksDone increments', async () => {
+    const jsonlPath = join(tmpDir, 'r46-delta-update.jsonl');
+
+    // First read: TaskCreate lines only
+    const firstBatch = [
+      makeTaskCreateEntry('tu-1', 'Task A'),
+      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
+      makeTaskCreateEntry('tu-2', 'Task B'),
+      makeToolResultEntry('tu-2', 'Task #2 created successfully'),
+    ].join('\n') + '\n';
+    await writeFile(jsonlPath, firstBatch);
+
+    // Stamp mtime in the past so the second write is detected as a delta.
+    const pastTime = new Date(Date.now() - 5_000);
+    utimesSync(jsonlPath, pastTime, pastTime);
+
+    const first = await readSessionTail(jsonlPath);
+    expect(first.tasksDone).toBe(0);
+    expect(first.tasksTotal).toBe(2);
+
+    // Second read: append TaskUpdate completing Task #1.
+    const secondBatch = makeTaskUpdateEntry('1', 'completed') + '\n';
+    const existing = await Bun.file(jsonlPath).text();
+    await writeFile(jsonlPath, existing + secondBatch);
+
+    const second = await readSessionTail(jsonlPath);
+    expect(second.tasksDone).toBe(1);
+    expect(second.tasksTotal).toBe(2);
+  });
+
+  test('R46/Bug1: TaskUpdate in delta for unknown task ID is silently ignored (no crash, no phantom task)', async () => {
+    const jsonlPath = join(tmpDir, 'r46-delta-unknown.jsonl');
+
+    // First read: one task created
+    const firstBatch = [
+      makeTaskCreateEntry('tu-1', 'Task A'),
+      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
+    ].join('\n') + '\n';
+    await writeFile(jsonlPath, firstBatch);
+
+    const pastTime = new Date(Date.now() - 5_000);
+    utimesSync(jsonlPath, pastTime, pastTime);
+
+    const first = await readSessionTail(jsonlPath);
+    expect(first.tasksTotal).toBe(1);
+
+    // Second read: TaskUpdate for task ID 99 which was never created
+    const secondBatch = makeTaskUpdateEntry('99', 'completed') + '\n';
+    const existing = await Bun.file(jsonlPath).text();
+    await writeFile(jsonlPath, existing + secondBatch);
+
+    const second = await readSessionTail(jsonlPath);
+    // Task 99 must not appear; only original task remains
+    expect(second.tasksTotal).toBe(1);
+    expect(second.tasksDone).toBe(0);
+    expect(second.tasks?.find((t) => t.id === '99')).toBeUndefined();
+  });
+});
+
+// ─── mapHookEventToState (R35 / Bug 3) ───────────────────────────────────────
+
+describe('mapHookEventToState (R35 Bug 3)', () => {
+  test('SessionStart → null (unrecognized event returns null)', () => {
+    expect(mapHookEventToState('SessionStart')).toBeNull();
+  });
 });

@@ -528,7 +528,7 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     lines = lines.slice(1);
   }
 
-  const scannedTasks = scanTaskCreateUpdate(lines);
+  const scannedTasks = scanTaskCreateUpdate(lines, baseData.tasks);
   const scanResult = scanEnrichment(lines, scannedTasks, baseData);
   const merged = mergeEnrichment(scannedTasks, scanResult, baseData);
 
@@ -806,10 +806,11 @@ function mergeEnrichment(
  * IDs are extracted from the tool_result response text ("Task #N created successfully").
  * TaskUpdate patches status and optionally subject/activeForm on existing entries.
  */
-function scanTaskCreateUpdate(lines: string[]): Map<string, TaskInfo> | null {
+function scanTaskCreateUpdate(lines: string[], baseTasks?: TaskInfo[]): Map<string, TaskInfo> | null {
   // Maps tool_use_id → { subject, activeForm } for pending TaskCreate calls awaiting tool_result.
   const pendingCreates = new Map<string, { subject: string; activeForm?: string }>();
-  const tasks = new Map<string, TaskInfo>();
+  // Seed with base tasks so TaskUpdate entries in delta reads can resolve pre-existing tasks.
+  const tasks = new Map<string, TaskInfo>(baseTasks?.map((t) => [t.id, { ...t }]));
 
   for (const line of lines) {
     let entry: Record<string, unknown>;
@@ -1100,11 +1101,19 @@ async function readFirstLine(filePath: string): Promise<string | null> {
  * Exported for unit testing only.
  */
 export function resolveState(jsonlMtimeMs: number | null, status: StatusFile | null): SessionState {
-  // Priority 1: permission request wins when the signal is fresh.
+  // Priority 1: permission request wins when the signal is fresh — unless JSONL has been
+  // written after the permission timestamp (+ grace), which means the user answered and
+  // Claude resumed. In that case fall through to Priority 2.
   if (status?.state === 'waiting_for_permission') {
     const age = Date.now() - new Date(status.timestamp).getTime();
     // Unparseable timestamp (NaN) treated as stale.
-    if (!isNaN(age) && age < PERMISSION_STALE_MS) return 'waiting_for_permission';
+    if (!isNaN(age) && age < PERMISSION_STALE_MS) {
+      const permissionAtMs = new Date(status.timestamp).getTime();
+      if (jsonlMtimeMs === null || jsonlMtimeMs <= permissionAtMs + STOP_GRACE_MS) {
+        return 'waiting_for_permission';
+      }
+      // Fall through to Priority 2: JSONL newer than permission signal → activity resumed.
+    }
   }
 
   // Priority 2: fresh JSONL mtime signals active session.
