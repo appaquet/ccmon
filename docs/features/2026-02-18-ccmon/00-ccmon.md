@@ -10,22 +10,11 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 15 (Stop Detection Fix) implemented. Root cause confirmed from live JSONL data: Claude writes a `system` entry ~8ms after the Stop hook fires, making JSONL mtime slightly newer than the stopped timestamp. `resolveState()` was interpreting this as "activity resumed" and returning `running` for up to 60s.
-
-Fixed by adding `STOP_GRACE_MS = 5_000` constant and updating the comparison in `resolveState()`. Sessions genuinely resuming (new prompt after stop) have JSONL writes many seconds/minutes later — 5s tolerance handles the post-stop system write without masking real activity. 182 tests passing. Pending user validation in live dashboard.
+Phase 16 (Inbox Bug Fixes) planned. Three bugs: (1) task completions not reflected in WebSocket/sub mode — delta reads drop TaskUpdate for tasks created in earlier reads, (2) `waiting_for_permission` sticks after answering — resolveState Priority 1 blocks JSONL mtime check, (3) hook config safety — already handled, adding verification tests. Plan ready, awaiting `/implement`.
 
 ## Inbox
 
-
-- [ ] Completed tasks don't seem to get updated in websocket mode (ui doesn't show them completed),
-  but if i dump i see them done correctly. I used `sub`, shows tasks done 0 while we had 2 done. 
-
-- [ ] Since we removed hooks, when i get prompted for permission and then answer, the state keeps
-  stating at waiting for permission (or whatever ist's called)...
-
-- [ ] In previous iteration, you had modified my settiongs.json and removed hooks that were used for
-  other mean. That's  big no no ...... I added ccmon hooks back as well, let's make sure we can
-  handle more signal than less and it should still work......
+(empty)
 
 ## Requirements
 
@@ -155,6 +144,7 @@ Fixed by adding `STOP_GRACE_MS = 5_000` constant and updating the comparison in 
   * R34.1: Watcher monitors *.jsonl files in project dirs; `running` derived from JSONL mtime < 60s
   * R34.2: `stopped` from Stop/SessionEnd hooks (immediate) or JSONL mtime > 60s (crash fallback)
   * R34.6: 5s grace period on JSONL-vs-stopped comparison — Claude writes post-stop system entry to JSONL, making mtime slightly newer than hook timestamp
+  * R34.7: JSONL activity after `waiting_for_permission` overrides the permission state (permission was answered)
   * R34.3: status.local.json read for waiting_for_permission, stopped timestamp, and notification fields
   * R34.4: pgrep/proc liveness detection removed entirely
   * R34.5: R33 debounce removed — race condition eliminated at source
@@ -186,9 +176,10 @@ Fixed by adding `STOP_GRACE_MS = 5_000` constant and updating the comparison in 
 ### Dashboard Refinements
 
 * R45: 🔄 Last update timestamp displayed in card header next to project name, left of state pill (Phase: Dashboard Refinements)
-* R46: 🔄 Task list from JSONL — individual tasks with subject and status via `TaskCreate`/`TaskUpdate` parsing; `TodoWrite` as legacy fallback (Phase: Dashboard Refinements)
+* R46: 🔄 Task list from JSONL — individual tasks with subject and status via `TaskCreate`/`TaskUpdate` parsing; `TodoWrite` as legacy fallback (Phase: Dashboard Refinements, Inbox Bug Fixes)
   * R46.1: `tasks?: Array<{ id, subject, status, activeForm? }>` in `SessionEnrichment`; `tasksDone`/`tasksTotal` derived from it
   * R46.2: UI shows task count summary + in-progress task subjects
+  * R46.3: `TaskUpdate` entries in delta reads correctly update tasks created in earlier reads
 * R47: 🔄 Input token count takes the last assistant entry's value (not summed) — `input_tokens + cache_creation + cache_read` are per-call totals, not deltas (Phase: Dashboard Refinements)
   * R47.1: `outputTokens` remains summed (per-call deltas, correct to accumulate)
 * R48: 🔄 Agents section header shows pulsing green dot when any sub-agent is active; "N/M active" text removed (Phase: Dashboard Refinements)
@@ -299,6 +290,11 @@ Rework dashboard cards to unified agent-row layout: context window progress bar 
 [15-stop-detection-fix](15-stop-detection-fix.md)
 
 Fix stop detection race: Claude writes post-stop `system` entry to JSONL (8ms after hook), making JSONL mtime slightly newer than stopped timestamp. Add 5s grace period to `resolveState()` comparison (R34.6).
+
+### ⬜ 16 Phase: Inbox Bug Fixes
+[16-inbox-bug-fixes](16-inbox-bug-fixes.md)
+
+Three bugs: task completions not reflected in WebSocket/sub (delta reads drop TaskUpdate for prior tasks), `waiting_for_permission` sticking after answering (resolveState Priority 1 blocks JSONL mtime), hook config safety verification (already safe, adding tests).
 
 ## Files
 

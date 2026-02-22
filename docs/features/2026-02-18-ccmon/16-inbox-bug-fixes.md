@@ -1,0 +1,41 @@
+# Phase 16: Inbox Bug Fixes
+
+## Context
+
+See [00-ccmon](00-ccmon.md). Three bugs from the inbox: task completions not reflected in WebSocket/sub mode, permission state sticking after answering, and hook config safety verification.
+
+## Questions
+
+* Q1: Bug 3 (hook safety) — already handled correctly. `mapHookEventToState()` returns `null` for unknown events, `runStatus()` handles gracefully. Only adding a test to document the expectation.
+
+## Tasks
+
+### Bug 1: Task completions not reflected in WebSocket/sub mode
+
+Root cause: `scanTaskCreateUpdate()` builds a local task map per invocation. In delta mode (server/watcher), only new JSONL bytes are scanned. `TaskUpdate` entries referencing tasks created in earlier reads are silently dropped because the local map doesn't contain them. `dump` works because it reads the full file fresh.
+
+- [ ] Modify `scanTaskCreateUpdate()` to accept optional base tasks and seed its local map so `TaskUpdate` entries in delta reads can resolve pre-existing tasks (R46)
+- [ ] Update `readSessionTail()` / `mergeEnrichment()` call site to pass `baseData.tasks` into `scanTaskCreateUpdate()` (R46)
+- [ ] Add test: two sequential `readSessionTail` reads; second delta contains `TaskUpdate` marking task completed; verify `tasksDone` increments (R46)
+- [ ] Add test: delta read with `TaskUpdate` for unknown task ID (no base task) is silently ignored (R46)
+
+### Bug 2: `waiting_for_permission` sticks after answering
+
+Root cause: `resolveState()` checks `waiting_for_permission` at Priority 1 (before JSONL mtime at Priority 2). When user grants permission, Claude resumes and writes to JSONL (mtime becomes fresh), but `status.local.json` still says `waiting_for_permission` within the 5-min staleness window. Priority 1 returns immediately, never reaching the JSONL mtime check.
+
+- [ ] Update `resolveState()` Priority 1: when `waiting_for_permission` is fresh but JSONL mtime is newer than the permission timestamp (+ grace), fall through to Priority 2 instead of returning immediately (R34)
+- [ ] Add test: `resolveState` with fresh `waiting_for_permission` + JSONL mtime newer → `running` (R34)
+- [ ] Add test: `resolveState` with fresh `waiting_for_permission` + JSONL mtime older → `waiting_for_permission` (R34)
+- [ ] Add test: `resolveState` with fresh `waiting_for_permission` + null JSONL mtime → `waiting_for_permission` (R34)
+
+### Bug 3: Hook config safety (verification only)
+
+No code change needed. `mapHookEventToState()` already returns `null` for unrecognized events, and `runStatus()` handles `null` by outputting `{}\n` and exiting cleanly.
+
+- [ ] Add test: `mapHookEventToState('SessionStart')` returns `null` (R35)
+- [ ] Verify all hook events in settings.json are exercised by existing + new tests (R4, R35)
+
+## Files
+
+- **src/sessions.ts**: Bug 1 fix (`scanTaskCreateUpdate`, `mergeEnrichment`), Bug 2 fix (`resolveState`)
+- **tests/sessions.test.ts**: Tests for all 3 bugs
