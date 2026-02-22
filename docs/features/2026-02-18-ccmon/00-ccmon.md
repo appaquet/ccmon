@@ -152,6 +152,13 @@ Phase 08 planned (JSONL-Primary Detection): switch running/stopped detection fro
   * R35.1: UserPromptSubmit, PostToolUse, Stop, SessionEnd hooks removed from ccmon dotfiles config
   * R35.2: R33 debounce revisited — may be unnecessary once race condition is eliminated
 
+### Sub-Agent Names
+
+* R36: ⬜ Sub-agent cards in dashboard show a meaningful description instead of raw agentId (Phase: Sub-Agent Names)
+  * R36.1: Parent JSONL `queue-operation` enqueue entries carry `{ task_id, description }` — `task_id` maps 1:1 to `agentId`
+  * R36.2: `SubagentInfo` gains `description?: string`; `getSubagentInfos()` builds a description map from parent JSONL once per call
+  * R36.3: UI displays `description ?? agentId` as fallback
+
 #### Out of Scope
 
 * Authentication / multi-user support
@@ -208,6 +215,11 @@ Bug fixes and improvements from real-world usage: last activity timestamp auto-r
 [08-jsonl-primary](08-jsonl-primary.md)
 
 Replace hook-driven running/stopped detection with JSONL mtime + system:stop_hook_summary watching. Reduce hook config to PermissionRequest + Notification only. Eliminates the R33 race condition at its source.
+
+### ⬜ 09 Phase: Sub-Agent Names
+[09-sub-agent-names](09-sub-agent-names.md)
+
+Show meaningful sub-agent descriptions in the dashboard. Name sourced from `queue-operation` enqueue entries in the parent session JSONL (`task_id` → `description` map).
 
 ## Files
 
