@@ -10,9 +10,9 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 05 in progress. R22/R23/R21 initial impl done (99 tests). R21 has two bugs: `TodoWrite` in `progress` entries not scanned (Bug 1), early break before reaching them (Bug 2). R21 targets `TodoWrite` only — user's ccmon sessions use `TaskCreate`/`TaskUpdate` (full-parse rethink deferred). R24/R25 planned: short model names (`shortModel()` JS helper) and running dot pulse animation (`@keyframes pulse-dot`).
+Phase 05 Steps 1-6 complete: 101 tests. R21 bugfix: `progress`-entry `TodoWrite` scanning fixed via `scanTodoWrite()` helper. R22/R23: flash animations. R24: `shortModel()` helper (Opus/Sonnet/Haiku display). R25: `pulse-dot` CSS animation on running badge dot.
 
-Next: `/implement` Steps 4-6 in 05-ui-enhancements.md.
+Manual verification pending for R22/R23/R24/R25. R21 only covers `TodoWrite` sessions; `TaskCreate`/`TaskUpdate` full-parse support deferred.
 
 ## Requirements
 
@@ -110,8 +110,8 @@ Next: `/implement` Steps 4-6 in 05-ui-enhancements.md.
 * R21: 🔄 Task count from JSONL — `tasksDone`/`tasksTotal` via `TodoWrite` entries; bugfix needed for `progress`-type entries (Phase: UI Enhancements)
 * R22: 🔄 Flash card when state transitions to `waiting_for_permission` (Phase: UI Enhancements)
 * R23: 🔄 Flash card for 5s when state transitions from `running` → `stopped` (Phase: UI Enhancements)
-* R24: ⬜ Short model names in web UI — `Opus`/`Sonnet`/`Haiku` display only; JSON unchanged (Phase: UI Enhancements)
-* R25: ⬜ Animate running state badge — pulsing dot on green pill (Phase: UI Enhancements)
+* R24: 🔄 Short model names in web UI — `Opus`/`Sonnet`/`Haiku` display only; JSON unchanged (Phase: UI Enhancements)
+* R25: 🔄 Animate running state badge — pulsing dot on green pill (Phase: UI Enhancements)
 
 #### Out of Scope
 

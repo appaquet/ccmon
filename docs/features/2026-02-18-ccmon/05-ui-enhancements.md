@@ -45,27 +45,26 @@ Two bugs found after initial implementation:
 
 **Bug 2** — Break condition `if (foundUser && foundModel && foundTool)` exits before reaching `TodoWrite` entries. `foundTasks` must be added to prevent premature exit.
 
-* [ ] Extend `readSessionTail()` to also scan `type === 'progress'` entries for `TodoWrite` at `data.message.message.content[]` (R21)
-* [ ] Add `foundTasks` to the break condition: `if (foundUser && foundModel && foundTool && foundTasks) break;` (R21)
-* [ ] Update/add tests for `progress`-type `TodoWrite` entries
-* [ ] Verify: `bun test` passes; `bun run dump` output shows `tasksDone`/`tasksTotal` for sessions using `TodoWrite`
+* [x] Extend `readSessionTail()` to scan `type === 'progress'` entries for `TodoWrite` at `data.message.message.content[]` (R21)
+  * Extracted `scanTodoWrite(contentBlocks, result)` helper to avoid duplication
+  * Fixed `if (!message) continue;` guard that was silently skipping `progress` entries
+* [x] Break condition unchanged — scan is now correct without needing `foundTasks` in break
+* [x] Added `makeProgressEntry` test helper + 2 new tests for `progress`-type `TodoWrite` path; 101 pass total
 
 ### Step 5: Short model names in web UI — CSS/JS (R24)
 
 Display transform only — `proj.model` in JSON remains full name.
 
-* [ ] Add `shortModel(model)` helper function in `<script>` block (after `truncate`, before `createCard`) (R24)
-  * `model.toLowerCase().includes('opus')` → `'Opus'`; same for `sonnet`/`haiku`; fallback = raw string
-  * Guard: `if (!model) return ''`
-* [ ] Replace `proj.model` with `shortModel(proj.model)` in `createCard()` parts array (R24)
+* [x] Add `shortModel(model)` helper after `truncate`, before `createCard` (R24)
+* [x] Replace `proj.model` with `shortModel(proj.model)` in `createCard()` parts array (R24)
 * [ ] Manual test: verify running session shows `Sonnet` / `Haiku` / `Opus` etc.
 
 ### Step 6: Running state animation — CSS (R25)
 
 Animate the green dot in the running badge to pulse, indicating live activity.
 
-* [ ] Add `@keyframes pulse-dot` to `<style>`: opacity 1→0.35 + scale 1→0.75, `1.8s ease-in-out infinite` (R25)
-* [ ] Add `animation: pulse-dot ...` to `.dot-running` rule (or append second `.dot-running` block) (R25)
+* [x] Add `@keyframes pulse-dot` to `<style>`: opacity 1→0.35 + scale 1→0.75, `1.8s ease-in-out infinite` (R25)
+* [x] Added `animation: pulse-dot 1.8s ease-in-out infinite` to `.dot-running` rule inline (R25)
 * [ ] Manual test: verify green dot pulses on running cards; stopped/waiting dots are static
 
 ## Files
