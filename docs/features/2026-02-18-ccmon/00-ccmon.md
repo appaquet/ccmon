@@ -16,14 +16,6 @@ Phase 08 (JSONL-Primary Detection) is the next planned phase — replace hook-dr
 
 ## Inbox
 
-- [ ] Show last update time left of the pill, next to name
-- [ ] Let's plan reintroducing tasks. Would love to see # tasks and currently active ones in web ui.
-  In json payload, would be nice to see the tasks + status for each.
-- [ ] It seems lioke tokens are being summed? i think the tokens in messages aren't to be summed,
-  they are current total input tokens. agent and sub-agents (whic should be using same logic,
-  right???)
-- [ ] "Agents" should show active state when one of the sub-agent is active (pulsating green dot)
-      Remove "1/x active" as well. It's quite easy to count...
 
 ## Requirements
 
@@ -177,6 +169,16 @@ Phase 08 (JSONL-Primary Detection) is the next planned phase — replace hook-dr
   * R36.2: `SubagentInfo` gains `description?: string`; `getSubagentInfos()` builds a description map from parent JSONL once per call
   * R36.3: UI displays `description ?? agentId` as fallback
 
+### Dashboard Refinements
+
+* R45: ⬜ Last update timestamp displayed in card header next to project name, left of state pill (Phase: Dashboard Refinements)
+* R46: ⬜ Task list from JSONL — individual tasks with subject and status via `TaskCreate`/`TaskUpdate` parsing; `TodoWrite` as legacy fallback (Phase: Dashboard Refinements)
+  * R46.1: `tasks?: Array<{ id, subject, status, activeForm? }>` in `SessionEnrichment`; `tasksDone`/`tasksTotal` derived from it
+  * R46.2: UI shows task count summary + in-progress task subjects
+* R47: ⬜ Input token count takes the last assistant entry's value (not summed) — `input_tokens + cache_creation + cache_read` are per-call totals, not deltas (Phase: Dashboard Refinements)
+  * R47.1: `outputTokens` remains summed (per-call deltas, correct to accumulate)
+* R48: ⬜ Agents section header shows pulsing green dot when any sub-agent is active; "N/M active" text removed (Phase: Dashboard Refinements)
+
 #### Out of Scope
 
 * Authentication / multi-user support
@@ -243,6 +245,11 @@ Show meaningful sub-agent descriptions in the dashboard. Name sourced from `queu
 [10-ui-polish](10-ui-polish.md)
 
 Collection of UI improvements and data model fixes: slash command display (R37), sub-agent show one activity (R38), accurate token totals (R39), sub-agent auto-hide lifecycle (R40), keep info on stopped (R41), completion checkmark (R42), agent ordering (R43), sub-agent model display (R44). Implemented: 144 tests passing, all tasks complete.
+
+### ⬜ 11 Phase: Dashboard Refinements
+[11-dashboard-refinements](11-dashboard-refinements.md)
+
+Fixes and improvements from real-world usage: input token counting bug fix (last value, not sum), task reintroduction with modern TaskCreate/TaskUpdate parsing, last update time in card header, agents section active indicator.
 
 ## Files
 
