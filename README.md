@@ -1,13 +1,13 @@
-# ccmon
-
-Claude Code Monitor — monitors Claude Code sessions across projects. Provides real-time visibility into session state via CLI or web dashboard. Integrates seamlessly via Claude Code hooks.
+# Claude Code Monitor (ccmon)
 
 > [!WARNING]
-> This project is vibe-coded — built collaboratively with Claude Code. Expect rough edges.
+> This project is vibe-coded. Don't expect anything stable.
+
+Real-time dashboard for your Claude Code sessions.
 
 ## Quick Start
 
-1. Install — see [Installation](#installation-nix-flake) or run locally with `bun run serve`
+1. Install — see [Installation](#instalation) or run locally with `bun run serve`
 2. Configure hooks — see [Hook Configuration](#hook-configuration)
 3. Open [http://localhost:3000](http://localhost:3000) in your browser
 
@@ -22,20 +22,23 @@ ccmon dump --watch      # Stream project states on change
 
 `dump` and `dump --watch` are primarily for debugging/scripting.
 
-## Installation (Nix Flake)
+## Installation
 
-Add to your `flake.nix`:
+### Via flakes
 
 ```nix
+# Add flake input:
 inputs.ccmon.url = "github:appaquet/ccmon";
 
-# In home-manager or systemPackages:
+# Add to packages:
 inputs.ccmon.packages.${system}.default
 ```
 
-## Hook Configuration
+### Hook Configuration
 
-Configure Claude Code hooks in `~/.claude/settings.json` (or project-level `.claude/settings.json`):
+Configure Claude Code hooks in `~/.claude/settings.json` (or project-level `.claude/settings.json`).
+The project use them to track real-time signals that aren't available through watching session
+files.
 
 ```json
 {
