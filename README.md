@@ -14,6 +14,13 @@ Real-time dashboard for your Claude Code sessions.
 3. Start server with `ccmon serve`
 4. Open [http://localhost:3000](http://localhost:3000) in your browser
 
+## Features
+
+- View all your active Claude Code sessions, including their status, context usage, task progress,
+  and sub-agents
+- Visual notifications for Claude Code when user attention is required (permission requests, stopped
+  sessions, etc.)
+
 ## Commands
 
 ```
