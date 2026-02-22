@@ -6,7 +6,6 @@ import {
   scanProjects,
   readStatus,
   readSessionsIndex,
-  checkLiveness,
   getProjectState,
   mapHookEventToState,
   writeStatus,
@@ -14,8 +13,10 @@ import {
   filterStaleProjects,
   getSubagentInfos,
   readSessionTail,
+  resolveState,
   _resetCachesForTesting,
 } from '../src/sessions';
+import type { StatusFile } from '../src/sessions';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -398,30 +399,6 @@ describe('readStatus', () => {
   });
 });
 
-// ─── checkLiveness ───────────────────────────────────────────────────────────
-
-describe('checkLiveness', () => {
-  // NOTE: Live process detection (pgrep / /proc scanning) cannot be reliably
-  // mocked in unit tests without process injection. Those paths are covered by
-  // manual integration testing via `bun run dump`.
-
-  test('empty cwds: returns empty set', async () => {
-    const result = await checkLiveness([]);
-    expect(result.size).toBe(0);
-  });
-
-  test('parseProcessOutput: extracts cwds matching provided list', () => {
-    // Tested indirectly; parseProcessOutput is an exported helper for unit testing
-    import('../src/sessions').then(({ parseProcessOutput }) => {
-      // pgrep -a output: "PID command args"
-      const output = '1234 /usr/bin/node /path/to/claude --arg\n5678 claude\n';
-      const pids = parseProcessOutput(output);
-      expect(pids).toContain(1234);
-      expect(pids).toContain(5678);
-    });
-  });
-});
-
 // ─── getProjectState ─────────────────────────────────────────────────────────
 
 describe('getProjectState', () => {
@@ -442,44 +419,48 @@ describe('getProjectState', () => {
     return projDir;
   }
 
-  test('status present and fresh (< 5min): uses status state', async () => {
-    const projDir = await makeProject('-home-user-fresh', '/home/user/fresh', 'sid1');
-    const payload = {
-      state: 'running',
-      timestamp: new Date().toISOString(), // now = fresh
-      session_id: 'sid1',
-      working_dir: '/home/user/fresh',
-    };
-    await writeFile(join(projDir, 'status.local.json'), JSON.stringify(payload));
-
-    const results = await getProjectState(tmpDir);
-
-    expect(results).toHaveLength(1);
-    // No live process found by checkLiveness in test env → overridden to stopped
-    // but if running processes were detected it would stay 'running'.
-    // We can only verify lastUpdated is set.
-    expect(results[0].lastUpdated).toBe(payload.timestamp);
-  });
-
-  test('status absent: state = stopped, lastUpdated falls back to JSONL mtime', async () => {
-    await makeProject('-home-user-nostatus', '/home/user/nostatus', 'sid2');
-
+  test('fresh JSONL mtime: state is running (JSONL-primary)', async () => {
+    // JSONL mtime < 60s → running, regardless of status
+    await makeProject('-home-user-fresh', '/home/user/fresh', 'sid1');
+    // No status file; fresh JSONL mtime drives state.
     const before = Date.now();
     const results = await getProjectState(tmpDir);
 
     expect(results).toHaveLength(1);
-    expect(results[0].state).toBe('stopped');
+    expect(results[0].state).toBe('running');
+    // lastUpdated is JSONL mtime, which is recent
     expect(results[0].lastUpdated).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(new Date(results[0].lastUpdated!).getTime()).toBeGreaterThanOrEqual(before - 5000);
     expect(new Date(results[0].lastUpdated!).getTime()).toBeLessThanOrEqual(Date.now() + 1000);
   });
 
-  test('status stale (> 5min) and state != stopped: overridden to stopped', async () => {
+  test('status absent, stale JSONL mtime: state = stopped, lastUpdated from JSONL mtime', async () => {
+    const projDir = await makeProject('-home-user-nostatus', '/home/user/nostatus', 'sid2');
+    // Backdate the JSONL to simulate a stale session (> 60s ago)
+    const jsonlPath = join(projDir, 'session.jsonl');
+    const staleMtime = new Date(Date.now() - 2 * 60 * 1000); // 2 min ago
+    utimesSync(jsonlPath, staleMtime, staleMtime);
+
+    const results = await getProjectState(tmpDir);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].state).toBe('stopped');
+    expect(results[0].lastUpdated).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // lastUpdated comes from the (backdated) JSONL mtime
+    const updatedMs = new Date(results[0].lastUpdated!).getTime();
+    expect(updatedMs).toBeGreaterThanOrEqual(staleMtime.getTime() - 1000);
+    expect(updatedMs).toBeLessThanOrEqual(staleMtime.getTime() + 1000);
+  });
+
+  test('stopped hook signal with stale JSONL: overrides to stopped', async () => {
+    // When status says stopped and JSONL is old, state is stopped.
     const projDir = await makeProject('-home-user-stale', '/home/user/stale', 'sid3');
-    const staleTime = new Date(Date.now() - 10 * 60 * 1000); // 10 min ago
+    const jsonlPath = join(projDir, 'session.jsonl');
+    const staleMtime = new Date(Date.now() - 2 * 60 * 1000);
+    utimesSync(jsonlPath, staleMtime, staleMtime);
     const payload = {
-      state: 'running',
-      timestamp: staleTime.toISOString(),
+      state: 'stopped',
+      timestamp: new Date().toISOString(),
       session_id: 'sid3',
       working_dir: '/home/user/stale',
     };
@@ -491,12 +472,16 @@ describe('getProjectState', () => {
     expect(results[0].state).toBe('stopped');
   });
 
-  test('status stale but already stopped: remains stopped', async () => {
+  test('stopped hook signal wins over fresh JSONL when status is newer', async () => {
+    // If stopped signal timestamp > JSONL mtime, session is stopped.
     const projDir = await makeProject('-home-user-stale-stopped', '/home/user/stale-stopped', 'sid4');
-    const staleTime = new Date(Date.now() - 10 * 60 * 1000);
+    const jsonlPath = join(projDir, 'session.jsonl');
+    // Backdate JSONL to 2 min ago so it is older than the stopped signal
+    const staleMtime = new Date(Date.now() - 2 * 60 * 1000);
+    utimesSync(jsonlPath, staleMtime, staleMtime);
     const payload = {
       state: 'stopped',
-      timestamp: staleTime.toISOString(),
+      timestamp: new Date().toISOString(), // stopped signal is newer than JSONL
       session_id: 'sid4',
       working_dir: '/home/user/stale-stopped',
     };
@@ -550,10 +535,16 @@ describe('getProjectState', () => {
     expect(results[0].notificationTimestamp).toBeUndefined();
   });
 
-  test('R2: invalid status.timestamp treated as stale (NaN guard)', async () => {
+  test('R2: invalid status.timestamp for waiting_for_permission treated as stale (NaN guard)', async () => {
+    // NaN guard: an unparseable timestamp on a waiting_for_permission signal must not
+    // be treated as perpetually fresh — it falls through to the next priority.
     const projDir = await makeProject('-home-user-nan-ts', '/home/user/nan-ts', 'sid-nan');
+    // Backdate the JSONL so it is not within the 60s active threshold
+    const jsonlPath = join(projDir, 'session.jsonl');
+    const staleMtime = new Date(Date.now() - 2 * 60 * 1000);
+    utimesSync(jsonlPath, staleMtime, staleMtime);
     const payload = {
-      state: 'running',
+      state: 'waiting_for_permission',
       timestamp: 'not-a-date',
       session_id: 'sid-nan',
       working_dir: '/home/user/nan-ts',
@@ -562,7 +553,7 @@ describe('getProjectState', () => {
 
     const results = await getProjectState(tmpDir);
     expect(results).toHaveLength(1);
-    // Invalid timestamp produces NaN age → treated as stale → overridden to stopped
+    // NaN age on permission signal treated as stale → falls through to priority 4 → stopped
     expect(results[0].state).toBe('stopped');
   });
 });
@@ -593,12 +584,12 @@ describe('filterStaleProjects NaN guard (R18)', () => {
 // ─── mapHookEventToState ──────────────────────────────────────────────────────
 
 describe('mapHookEventToState', () => {
-  test('UserPromptSubmit → running', () => {
-    expect(mapHookEventToState('UserPromptSubmit')).toBe('running');
+  test('UserPromptSubmit → null (removed in R35)', () => {
+    expect(mapHookEventToState('UserPromptSubmit')).toBeNull();
   });
 
-  test('PostToolUse → running', () => {
-    expect(mapHookEventToState('PostToolUse')).toBe('running');
+  test('PostToolUse → null (removed in R35)', () => {
+    expect(mapHookEventToState('PostToolUse')).toBeNull();
   });
 
   test('PermissionRequest → waiting_for_permission', () => {
@@ -1721,37 +1712,6 @@ describe('sessionTailCache (R20.4)', () => {
   });
 });
 
-describe('livenessCache (R20.2)', () => {
-  beforeEach(() => {
-    _resetCachesForTesting();
-  });
-
-  test('second call within 2.5s returns same Set reference (cache hit)', async () => {
-    // Use a cwd that won't match any real process so result is a stable empty set
-    const first = await checkLiveness(['/nonexistent/test/path']);
-    const second = await checkLiveness(['/nonexistent/test/path']);
-    // Same Set object reference proves the cache was returned rather than a fresh scan
-    expect(second).toBe(first);
-  });
-
-  test('after cache reset, re-runs scan and returns new Set', async () => {
-    const first = await checkLiveness(['/nonexistent/test/path']);
-    _resetCachesForTesting();
-    const second = await checkLiveness(['/nonexistent/test/path']);
-    // Different object even if both are empty, because cache was cleared
-    expect(second).not.toBe(first);
-  });
-
-  test('R2: second caller with different cwd receives same cached Set (not just matching cwds)', async () => {
-    // Prime the cache with one cwd.
-    const first = await checkLiveness(['/nonexistent/path/a']);
-    // A second call with a completely different cwd must return the same cached Set,
-    // proving the cache stores all live cwds rather than only those from the first caller's input.
-    const second = await checkLiveness(['/nonexistent/path/b']);
-    expect(second).toBe(first);
-  });
-});
-
 // ─── targeted refresh (R20.5) ──────────────────────────────────────────────────
 
 describe('getProjectState targeted refresh (R20.5)', () => {
@@ -2626,22 +2586,6 @@ describe('readSessionTail TaskCreate/TaskUpdate task parsing (R46)', () => {
   });
 });
 
-// ─── collectPgrepPids async (R2) ─────────────────────────────────────────────
-
-describe('checkLiveness async pgrep (R2)', () => {
-  beforeEach(() => {
-    _resetCachesForTesting();
-  });
-
-  test('R2: checkLiveness resolves without error (async pgrep)', async () => {
-    // Verify that checkLiveness completes successfully when called with async pgrep.
-    // The key change from spawnSync to Bun.spawn is that the event loop is not blocked;
-    // this is verified by the call completing rather than hanging.
-    const result = await checkLiveness(['/nonexistent/path/async-test']);
-    expect(result instanceof Set).toBe(true);
-  });
-});
-
 // ─── readSessionTail line boundary edge case (R27) ────────────────────────────
 
 describe('readSessionTail line boundary edge case (R27)', () => {
@@ -2688,5 +2632,82 @@ describe('readSessionTail line boundary edge case (R27)', () => {
     const result = await readSessionTail(jsonlPath);
     // Both lines must be reachable; reversed scan finds line2 first (most recent)
     expect(result.latestAssistantActivity?.text).toBe('line two');
+  });
+});
+
+// ─── resolveState (R34) ───────────────────────────────────────────────────────
+
+describe('resolveState (R34)', () => {
+  const now = Date.now();
+
+  // Helpers to build minimal StatusFile fixtures
+  function makeStatus(state: StatusFile['state'], timestampMs: number): StatusFile {
+    return {
+      state,
+      timestamp: new Date(timestampMs).toISOString(),
+      session_id: 'sess',
+      working_dir: '/proj',
+    };
+  }
+
+  const freshPermission = makeStatus('waiting_for_permission', now - 10_000); // 10s ago
+  const stalePermission = makeStatus('waiting_for_permission', now - 10 * 60 * 1000); // 10min ago
+  const freshStopped = makeStatus('stopped', now - 10_000); // 10s ago
+  const freshJsonl = now - 10_000; // 10s ago = within 60s
+  const staleJsonl = now - 90_000; // 90s ago = outside 60s
+
+  test('P1: fresh waiting_for_permission status → waiting_for_permission', () => {
+    expect(resolveState(null, freshPermission)).toBe('waiting_for_permission');
+  });
+
+  test('P1: stale waiting_for_permission status (> 5min) → falls through to stopped', () => {
+    // Stale permission signal is not honored; no JSONL mtime or stopped fallback
+    expect(resolveState(null, stalePermission)).toBe('stopped');
+  });
+
+  test('P1: waiting_for_permission with NaN timestamp → falls through to stopped', () => {
+    const nanStatus: StatusFile = { ...freshPermission, timestamp: 'not-a-date' };
+    expect(resolveState(null, nanStatus)).toBe('stopped');
+  });
+
+  test('P2: fresh JSONL mtime, no status → running', () => {
+    expect(resolveState(freshJsonl, null)).toBe('running');
+  });
+
+  test('P2: fresh JSONL mtime, status is not stopped → running', () => {
+    // Any non-stopped state that is not waiting_for_permission (or stale) defers to JSONL
+    const runningStatus = makeStatus('running' as StatusFile['state'], now - 10_000);
+    expect(resolveState(freshJsonl, runningStatus)).toBe('running');
+  });
+
+  test('P2: fresh JSONL mtime, status stopped but JSONL is newer → running (activity resumed)', () => {
+    // JSONL mtime (now - 10s) is after stopped timestamp (now - 30s): activity resumed
+    const stoppedEarlier = makeStatus('stopped', now - 30_000);
+    expect(resolveState(freshJsonl, stoppedEarlier)).toBe('running');
+  });
+
+  test('P2+P3: fresh JSONL mtime, status stopped and stopped is newer than JSONL → stopped', () => {
+    // stopped timestamp (now - 5s) is after JSONL mtime (now - 30s): stop wins
+    const jsonlBeforeStop = now - 30_000;
+    const stoppedAfter = makeStatus('stopped', now - 5_000);
+    expect(resolveState(jsonlBeforeStop, stoppedAfter)).toBe('stopped');
+  });
+
+  test('P2: fresh JSONL mtime, status stopped with NaN timestamp → running (NaN treated as JSONL newer)', () => {
+    // NaN stopped timestamp cannot establish order; JSONL mtime wins
+    const nanStopped: StatusFile = { ...freshStopped, timestamp: 'not-a-date' };
+    expect(resolveState(freshJsonl, nanStopped)).toBe('running');
+  });
+
+  test('P3: stale JSONL mtime, status stopped → stopped', () => {
+    expect(resolveState(staleJsonl, freshStopped)).toBe('stopped');
+  });
+
+  test('P4: null JSONL mtime, null status → stopped', () => {
+    expect(resolveState(null, null)).toBe('stopped');
+  });
+
+  test('P4: stale JSONL mtime, no status → stopped', () => {
+    expect(resolveState(staleJsonl, null)).toBe('stopped');
   });
 });

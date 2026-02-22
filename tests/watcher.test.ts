@@ -69,6 +69,29 @@ describe('watchForChanges', () => {
     expect(called[0]).toBe(projDir);
   }, 3000);
 
+  test('JSONL file write triggers onUpdate callback', async () => {
+    const projDir = join(tmpDir, '-home-user-jsonlproj');
+    await mkdir(projDir, { recursive: true });
+    // Pre-create the JSONL so the project dir exists before watcher init
+    const jsonlFile = join(projDir, 'session.jsonl');
+    await writeFile(jsonlFile, '{"type":"user"}\n');
+
+    const called: string[] = [];
+    const watcher = watchForChanges(tmpDir, (projectDir) => {
+      called.push(projectDir);
+    });
+    stop = watcher.stop;
+
+    await Bun.sleep(50); // Let watcher settle
+
+    // Simulate Claude appending a new line to the session JSONL
+    await writeFile(jsonlFile, '{"type":"user"}\n{"type":"assistant"}\n');
+    await Bun.sleep(200); // Let fs events propagate + debounce
+
+    expect(called.length).toBeGreaterThan(0);
+    expect(called[0]).toBe(projDir);
+  }, 3000);
+
   test('debounce: multiple rapid writes produce a single callback', async () => {
     const projDir = join(tmpDir, '-home-user-debounce');
     await mkdir(projDir, { recursive: true });
@@ -83,7 +106,7 @@ describe('watchForChanges', () => {
 
     await Bun.sleep(50); // Let watcher settle
 
-    // Rapid writes within the debounce window
+    // Rapid writes within the debounce window (simulates Claude's frequent JSONL writes)
     for (let i = 0; i < 5; i++) {
       await writeFile(statusFile, makeStatusPayload());
     }

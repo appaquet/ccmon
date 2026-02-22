@@ -29,22 +29,6 @@ Configure Claude Code hooks in `~/.claude/settings.json` (or project-level `.cla
 ```json
 {
   "hooks": {
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          { "type": "command", "command": "ccmon status" }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "",
-        "hooks": [
-          { "type": "command", "command": "ccmon status" }
-        ]
-      }
-    ],
     "PermissionRequest": [
       {
         "matcher": "",
@@ -68,12 +52,28 @@ Configure Claude Code hooks in `~/.claude/settings.json` (or project-level `.cla
           { "type": "command", "command": "ccmon status" }
         ]
       }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "ccmon status" }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "ccmon status" }
+        ]
+      }
     ]
   }
 }
 ```
 
-Hook events tracked: `UserPromptSubmit`, `PostToolUse`, `PermissionRequest`, `Stop`, `SessionEnd`.
+Hook events tracked: `PermissionRequest`, `Stop`, `SessionEnd`, `Notification`, `SessionStart`.
 
 ## Development
 

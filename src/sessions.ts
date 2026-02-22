@@ -1,7 +1,12 @@
-import { readdir, stat, readlink } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 
-const STALE_THRESHOLD_MS = 5 * 60 * 1000;
+// Staleness window for waiting_for_permission signals from status.local.json.
+const PERMISSION_STALE_MS = 5 * 60 * 1000;
+
+// JSONL mtime threshold: files written within this window indicate active session.
+// Claude writes continuously during turns so 60s covers any lag.
+const JSONL_ACTIVE_THRESHOLD_MS = 60_000;
 
 const JSONL_EXT = '.jsonl';
 
@@ -28,11 +33,7 @@ const VALID_STATES: ReadonlySet<string> = new Set([
   'stopped',
 ]);
 
-// REVIEW: architecture-reviewer - Module-level mutable singletons (livenessCache, sessionsIndexCache, sessionTailCache, projectStateCache) are unscoped to a claudeDir. Two concurrent callers using different claudeDirs share the same caches, causing cross-contamination. The design also forces the exported _resetCachesForTesting to exist solely as a test escape hatch rather than proper encapsulation. Consider a class or context object constructed per claudeDir so state is isolated per instance and no test-only export is needed.
-// Caches the pgrep + /proc liveness scan result for 2.5s to avoid repeated
-// process enumeration on every poll cycle.
-let livenessCache: { result: Set<string>; ts: number } | null = null;
-
+// REVIEW: architecture-reviewer - Module-level mutable singletons (sessionsIndexCache, sessionTailCache, projectStateCache) are unscoped to a claudeDir. Two concurrent callers using different claudeDirs share the same caches, causing cross-contamination. The design also forces the exported _resetCachesForTesting to exist solely as a test escape hatch rather than proper encapsulation. Consider a class or context object constructed per claudeDir so state is isolated per instance and no test-only export is needed.
 // Keyed by projectDirPath; avoids re-parsing sessions-index.json unless mtime changed.
 const sessionsIndexCache = new Map<string, { mtime: number; data: SessionsIndex | null }>();
 
@@ -218,17 +219,14 @@ export async function readSessionsIndex(projectDirPath: string): Promise<Session
 
 /**
  * Maps a Claude hook event name to the corresponding SessionState.
- * Returns null for events that don't change state (Notification, unrecognized).
+ * Returns null for events that don't write state (Notification, unrecognized,
+ * or running-state hooks removed in R35: UserPromptSubmit, PostToolUse).
  */
 export function mapHookEventToState(hookEvent: string): SessionState | null {
   switch (hookEvent) {
-    case 'UserPromptSubmit': return 'running';
-    case 'PostToolUse':      return 'running';
     case 'PermissionRequest': return 'waiting_for_permission';
     case 'Stop':             return 'stopped';
     case 'SessionEnd':       return 'stopped';
-    // Notification events carry a message but do not change the session state.
-    case 'Notification':     return null;
     default:                 return null;
   }
 }
@@ -326,52 +324,6 @@ export async function readStatus(projectDir: string): Promise<StatusFile | null>
 
   if (!isStatusFile(parsed)) return null;
   return parsed;
-}
-
-/**
- * Returns the set of cwds from the provided list that have a live Claude
- * process running in them.
- *
- * Detection strategy:
- *   1. `pgrep -a claude` — standard installs
- *   2. `/proc/<pid>/exe` symlinks containing `.claude-wrapped` — NixOS wrapping
- *
- * The cache always stores ALL live cwds found in the scan — not just those
- * matching the caller's input list. This means concurrent calls from
- * `buildProjectState` for different projects all share the same complete
- * live set and will not miss each other due to cache priming order.
- */
-export async function checkLiveness(cwds: string[]): Promise<Set<string>> {
-  if (cwds.length === 0) return new Set();
-
-  if (livenessCache !== null && Date.now() - livenessCache.ts < 2500) {
-    return livenessCache.result;
-  }
-
-  const pids = new Set<number>();
-  await collectPgrepPids(pids);
-  await collectProcExePids(pids);
-
-  if (pids.size === 0) {
-    livenessCache = { result: new Set(), ts: Date.now() };
-    return livenessCache.result;
-  }
-
-  // Collect ALL live cwds unconditionally so the cache is complete for every
-  // concurrent caller, regardless of which project's cwd primed the scan.
-  const live = new Set<string>();
-
-  await Promise.all(
-    [...pids].map(async (pid) => {
-      const procCwd = await readProcCwd(pid);
-      if (procCwd !== null) {
-        live.add(procCwd);
-      }
-    }),
-  );
-
-  livenessCache = { result: live, ts: Date.now() };
-  return live;
 }
 
 /**
@@ -582,27 +534,9 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
  * Resets all module-level caches. Only call from tests.
  */
 export function _resetCachesForTesting(): void {
-  livenessCache = null;
   sessionsIndexCache.clear();
   sessionTailCache.clear();
   projectStateCache.clear();
-}
-
-/**
- * Parses pgrep -a output lines ("PID command ...") and returns the list of PIDs.
- * Exported for unit testing.
- */
-export function parseProcessOutput(output: string): number[] {
-  const pids: number[] = [];
-  for (const line of output.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const spaceIdx = trimmed.indexOf(' ');
-    const pidStr = spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx);
-    const pid = parseInt(pidStr, 10);
-    if (!isNaN(pid)) pids.push(pid);
-  }
-  return pids;
 }
 
 /**
@@ -991,18 +925,25 @@ function isToolUseBlock(b: unknown): b is { type: string; name: string } {
 async function buildProjectState(project: ProjectInfo, claudeDir: string): Promise<ProjectState> {
   const projectDirPath = join(claudeDir, project.projectDir);
   const status = await readStatus(projectDirPath);
-  const liveCwds = await checkLiveness([project.cwd]);
-  const state = resolveState(project.cwd, status, liveCwds);
 
-  let lastUpdated: string | null = status?.timestamp ?? null;
-  if (lastUpdated === null) {
-    try {
-      const mtimeStat = await stat(project.latestJSONL);
-      lastUpdated = new Date(mtimeStat.mtimeMs).toISOString();
-    } catch {
-      // leave as null if stat fails
-    }
+  // Stat the JSONL once: provides both the mtime for state resolution and the
+  // lastUpdated fallback without a redundant second stat call.
+  let jsonlMtimeMs: number | null = null;
+  try {
+    const s = await stat(project.latestJSONL);
+    jsonlMtimeMs = s.mtimeMs;
+  } catch {
+    // JSONL disappeared or unreadable — leave null
   }
+
+  const state = resolveState(jsonlMtimeMs, status);
+
+  // JSONL mtime is the authoritative recency signal; status timestamp only used as
+  // fallback when no JSONL mtime is available.
+  const lastUpdated: string | null =
+    jsonlMtimeMs !== null
+      ? new Date(jsonlMtimeMs).toISOString()
+      : (status?.timestamp ?? null);
 
   const base: ProjectState = { ...project, state, lastUpdated };
 
@@ -1140,73 +1081,40 @@ async function readFirstLine(filePath: string): Promise<string | null> {
   }
 }
 
-async function collectPgrepPids(pids: Set<number>): Promise<void> {
-  try {
-    const proc = Bun.spawn(['pgrep', '-a', 'claude'], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    // pgrep exits 1 when no matches — that is not an error
-    const output = await new Response(proc.stdout).text();
-    for (const pid of parseProcessOutput(output)) {
-      pids.add(pid);
-    }
-  } catch {
-    // pgrep not available — ignore
-  }
-}
-
-// Linux-only: /proc is not available on macOS. On macOS these functions return early
-// and liveness detection degrades gracefully to pgrep-only, which may miss NixOS-style
-// `.claude-wrapped` binaries not visible in pgrep output.
-async function collectProcExePids(pids: Set<number>): Promise<void> {
-  let procEntries: string[];
-  try {
-    procEntries = await readdir('/proc');
-  } catch {
-    return;
+/**
+ * Resolves session state using JSONL mtime as the primary running signal.
+ *
+ * Priority order:
+ * 1. waiting_for_permission — status says so and signal is fresh (< 5 min)
+ * 2. running — JSONL was written within 60s AND (no stopped signal OR JSONL is newer
+ *    than the stopped timestamp, meaning activity resumed after stop was recorded)
+ * 3. stopped — explicit stopped signal from status file (Stop/SessionEnd hook)
+ * 4. stopped — default (stale JSONL, no status, or any other case)
+ *
+ * Exported for unit testing only.
+ */
+export function resolveState(jsonlMtimeMs: number | null, status: StatusFile | null): SessionState {
+  // Priority 1: permission request wins when the signal is fresh.
+  if (status?.state === 'waiting_for_permission') {
+    const age = Date.now() - new Date(status.timestamp).getTime();
+    // Unparseable timestamp (NaN) treated as stale.
+    if (!isNaN(age) && age < PERMISSION_STALE_MS) return 'waiting_for_permission';
   }
 
-  await Promise.all(
-    procEntries.map(async (entry) => {
-      if (!/^\d+$/.test(entry)) return;
-      const pid = parseInt(entry, 10);
-      if (pids.has(pid)) return; // already found via pgrep
-      try {
-        const exeLink = await readlink(`/proc/${pid}/exe`);
-        if (exeLink.includes('.claude-wrapped')) {
-          pids.add(pid);
-        }
-      } catch {
-        // process may have exited or we lack permissions
-      }
-    }),
-  );
-}
-
-async function readProcCwd(pid: number): Promise<string | null> {
-  try {
-    return await readlink(`/proc/${pid}/cwd`);
-  } catch {
-    return null;
+  // Priority 2: fresh JSONL mtime signals active session.
+  if (jsonlMtimeMs !== null && jsonlMtimeMs > Date.now() - JSONL_ACTIVE_THRESHOLD_MS) {
+    if (status?.state !== 'stopped') return 'running';
+    // JSONL written after the stopped signal means activity resumed (e.g. new session start
+    // or prompt submitted after Stop hook fired). Only treat as running in that case.
+    const stoppedAtMs = new Date(status.timestamp).getTime();
+    if (isNaN(stoppedAtMs) || jsonlMtimeMs > stoppedAtMs) return 'running';
   }
-}
 
-function resolveState(
-  cwd: string,
-  status: StatusFile | null,
-  liveCwds: Set<string>,
-): SessionState {
-  if (status === null) return 'stopped';
+  // Priority 3: explicit stopped signal from hook.
+  if (status?.state === 'stopped') return 'stopped';
 
-  // An unparseable timestamp (NaN age) is treated as stale rather than perpetually fresh.
-  const age = Date.now() - new Date(status.timestamp).getTime();
-  if ((isNaN(age) || age > STALE_THRESHOLD_MS) && status.state !== 'stopped') return 'stopped';
-
-  // Status is fresh — verify a live process exists for non-stopped states
-  if (status.state !== 'stopped' && !liveCwds.has(cwd)) return 'stopped';
-
-  return status.state;
+  // Priority 4: default — no fresh JSONL and no useful status.
+  return 'stopped';
 }
 
 function isStatusFile(v: unknown): v is StatusFile {

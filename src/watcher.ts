@@ -7,13 +7,14 @@ const DEBOUNCE_MS = 100;
 
 /**
  * Watches claudeDir for project subdirectory changes and calls onUpdate when
- * a project's status.local.json is modified or created.
+ * any file in a project dir is modified or created (*.jsonl, sessions-index.json,
+ * status.local.json).
  *
- * For each existing and newly created project subdir, watches status.local.json
- * directly if it exists, or the parent dir until the file appears.
- * Debounces per projectDir with a 100ms window.
+ * For each existing and newly created project subdir, watches the directory
+ * directly so JSONL session file writes trigger enrichment refreshes.
+ * Debounces per projectDir with a 100ms window to absorb the high frequency
+ * of JSONL writes during active Claude turns.
  */
-// REVIEW: architecture-reviewer - The watcher only monitors status.local.json changes. JSONL session files (which carry enrichment: model, tokens, tasks, sub-agent data) are never watched. As a result, the server's stateMap and WS clients do not receive updates when a session writes new JSONL lines without touching status.local.json (e.g. a running session between hook events). The mtime-based caching in readSessionTail means enrichment is only refreshed when the watcher fires for a status file change. This creates a gap: UI data can be stale for the duration of a session turn. Consider also watching the JSONL file (or the project dir) to trigger enrichment refreshes, or document this staleness as an explicit design trade-off.
 export function watchForChanges(
   claudeDir: string,
   onUpdate: (projectDir: string) => void,
@@ -34,44 +35,14 @@ export function watchForChanges(
     timers.set(projectDir, timer);
   }
 
-  function watchStatusFile(projectDir: string): void {
-    if (stopped) return;
-    const key = `file:${projectDir}`;
-    if (watchers.has(key)) return;
-
-    const statusFile = join(projectDir, 'status.local.json');
-
-    try {
-      const watcher = watch(statusFile, () => {
-        scheduleUpdate(projectDir);
-      });
-      watcher.on('error', () => {
-        // File removed or inaccessible — fall back to watching the parent dir
-        watcher.close();
-        watchers.delete(key);
-        watchParentDir(projectDir);
-      });
-      watchers.set(key, watcher);
-    } catch {
-      // File doesn't exist yet — watch parent dir instead
-      watchParentDir(projectDir);
-    }
-  }
-
-  function watchParentDir(projectDir: string): void {
+  function watchProjectDir(projectDir: string): void {
     if (stopped) return;
     const key = `dir:${projectDir}`;
     if (watchers.has(key)) return;
 
     try {
-      const watcher = watch(projectDir, (eventType, filename) => {
-        if (filename === 'status.local.json') {
-          scheduleUpdate(projectDir);
-          // Switch to watching the file directly once it exists
-          watcher.close();
-          watchers.delete(key);
-          watchStatusFile(projectDir);
-        }
+      const watcher = watch(projectDir, () => {
+        scheduleUpdate(projectDir);
       });
       watcher.on('error', () => {
         watcher.close();
@@ -85,19 +56,13 @@ export function watchForChanges(
 
   async function watchProject(projectDir: string): Promise<void> {
     if (stopped) return;
-    const statusFile = join(projectDir, 'status.local.json');
-    let fileExists = false;
     try {
-      await stat(statusFile);
-      fileExists = true;
+      const s = await stat(projectDir);
+      if (s.isDirectory()) {
+        watchProjectDir(projectDir);
+      }
     } catch {
-      // not present
-    }
-
-    if (fileExists) {
-      watchStatusFile(projectDir);
-    } else {
-      watchParentDir(projectDir);
+      // Directory doesn't exist yet — will be picked up by claudeDir watcher
     }
   }
 
@@ -108,7 +73,6 @@ export function watchForChanges(
       const watcher = watch(claudeDir, (eventType, filename) => {
         if (!filename || stopped) return;
         const newProjectDir = join(claudeDir, filename);
-        // Attempt to set up a watch for the new directory (stat happens inside)
         watchProject(newProjectDir).catch((err) => console.error('ccmon: failed to watch new project dir:', err));
       });
       watcher.on('error', () => {
@@ -136,7 +100,7 @@ export function watchForChanges(
       try {
         const s = await stat(fullPath);
         if (s.isDirectory()) {
-          await watchProject(fullPath);
+          watchProjectDir(fullPath);
         }
       } catch {
         // skip

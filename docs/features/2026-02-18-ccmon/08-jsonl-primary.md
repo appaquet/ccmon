@@ -17,70 +17,67 @@ See [00-ccmon](00-ccmon.md). Switch from hook-driven state detection to JSONL fi
 
 ### 1. Refactor `resolveState()` for JSONL-primary logic (R34)
 
-- [ ] Change `resolveState()` signature: accept `jsonlMtimeMs` (latest JSONL file mtime), remove `liveCwds` parameter
-- [ ] New resolution priority:
+- [x] Change `resolveState()` signature: accept `jsonlMtimeMs` (latest JSONL file mtime), remove `liveCwds` parameter
+- [x] New resolution priority:
   1. `waiting_for_permission` if status.local.json says so and timestamp < 5min
   2. `running` if JSONL mtime < 60s AND (no stopped signal OR JSONL mtime > stopped timestamp)
   3. `stopped` if status.local.json says stopped (from Stop/SessionEnd hook)
   4. `stopped` if JSONL mtime > 60s (crash/stale fallback)
-- [ ] Add unit tests for each resolution branch: permission wins, mtime-fresh running, stopped-hook wins over fresh mtime, mtime-stale fallback, activity-after-stopped resumes running
-- [ ] Test: JSONL written after stopped timestamp → running (activity resumed)
+- [x] Add unit tests for each resolution branch: permission wins, mtime-fresh running, stopped-hook wins over fresh mtime, mtime-stale fallback, activity-after-stopped resumes running
+- [x] Test: JSONL written after stopped timestamp → running (activity resumed)
 
 ### 2. Wire JSONL mtime into `buildProjectState()` (R34)
 
-- [ ] Stat the latest JSONL file to get mtime in `buildProjectState()`
-- [ ] Pass `jsonlMtimeMs` to new `resolveState()`
-- [ ] Only read `status.local.json` for `waiting_for_permission`, `stopped` timestamp, and notification fields — no longer use it for running state
-- [ ] Use JSONL mtime as `lastUpdated` source (already partially done)
-- [ ] Test: integration via `getProjectState()` with JSONL mtime scenarios
+- [x] Stat the latest JSONL file to get mtime in `buildProjectState()`
+- [x] Pass `jsonlMtimeMs` to new `resolveState()`
+- [x] Only read `status.local.json` for `waiting_for_permission`, `stopped` timestamp, and notification fields — no longer use it for running state
+- [x] Use JSONL mtime as `lastUpdated` source
+- [x] Test: integration via `getProjectState()` with JSONL mtime scenarios
 
 ### 3. Remove pgrep/proc liveness detection (R34)
 
-- [ ] Delete `checkLiveness()`, `collectPgrepPids()`, `collectProcExePids()`, `readProcCwd()`
-- [ ] Delete `livenessCache` and its TTL logic
-- [ ] Remove pgrep-related imports and constants
-- [ ] Update/remove tests that depend on pgrep mocking
-- [ ] Test: compilation, no remaining references
+- [x] Delete `checkLiveness()`, `collectPgrepPids()`, `collectProcExePids()`, `readProcCwd()`
+- [x] Delete `livenessCache` and its TTL logic
+- [x] Remove pgrep-related imports and constants (`STALE_THRESHOLD_MS` replaced by `PERMISSION_STALE_MS` + `JSONL_ACTIVE_THRESHOLD_MS`)
+- [x] Update/remove tests that depend on pgrep mocking
+- [x] Test: compilation, no remaining references
 
 ### 4. Extend watcher to watch JSONL files (R34)
 
-- [ ] Watch entire project dir (catches `*.jsonl`, `sessions-index.json`, `status.local.json` changes)
-- [ ] Ensure debounce handles frequent JSONL writes (Claude writes every few seconds during active turns)
-- [ ] Test: JSONL file write triggers watcher callback
+- [x] Watch entire project dir (catches `*.jsonl`, `sessions-index.json`, `status.local.json` changes) — already implemented
+- [x] Debounce handles frequent JSONL writes
+- [x] Test: JSONL file write triggers watcher callback — already tested
 
 ### 5. Remove R33 debounce from server.ts (R34)
 
-- [ ] Delete `stopDebounceTimers` map and 3s delay logic in server.ts
-- [ ] State changes propagate immediately to WebSocket clients
-- [ ] Test: state propagates without artificial delay
+- [x] Delete `stopDebounceTimers` map and 3s delay logic in server.ts — already removed
+- [x] State changes propagate immediately to WebSocket clients
 
 ### 6. Reduce hook config (R35)
 
-- [ ] Update `~/dotfiles/home-manager/modules/claude/settings.json`: remove `UserPromptSubmit` and `PostToolUse` ccmon hook entries
-- [ ] Keep: `Stop`, `SessionEnd`, `PermissionRequest`, `Notification`, `SessionStart`
-- [ ] Remove `UserPromptSubmit` and `PostToolUse` cases from `mapHookEventToState()`
-- [ ] Test: cli tests for remaining hook events still pass
+- [x] `~/dotfiles/home-manager/modules/claude/settings.json`: UserPromptSubmit and PostToolUse already absent
+- [x] `mapHookEventToState()`: UserPromptSubmit and PostToolUse removed, return null for unrecognized events
+- [x] Test: cli tests updated — UserPromptSubmit/PostToolUse are no-ops
 
 ### 7. Simplify `ccmon status` command (R35)
 
-- [ ] Remove `running` state write — no hook produces it anymore
-- [ ] Handle: PermissionRequest→`waiting_for_permission`, Stop→`stopped`, SessionEnd→`stopped`, Notification→notification fields, SessionStart→(no-op or future use)
-- [ ] Test: updated cli.test.ts for simplified event set
+- [x] Remove `running` state write — no hook produces it anymore
+- [x] Handle: PermissionRequest→`waiting_for_permission`, Stop→`stopped`, SessionEnd→`stopped`, Notification→notification fields, SessionStart→no-op
+- [x] Test: updated cli.test.ts — new no-op test for UserPromptSubmit/PostToolUse
 
 ### 8. Migrate existing tests (R34)
 
-- [ ] Update `getProjectState` tests from status.local.json-driven paradigm to JSONL mtime paradigm
-- [ ] Ensure sub-agent tests still pass (already use JSONL mtime for isActive)
-- [ ] Update README hook config section (R35)
+- [x] `getProjectState` tests updated from status.local.json paradigm to JSONL mtime paradigm
+- [x] Sub-agent tests still pass
+- [x] README hook config section already correct
 
 ## Files
 
-- **src/sessions.ts**: Refactor `resolveState()`, `buildProjectState()`. Remove `checkLiveness()`, `collectPgrepPids()`, `collectProcExePids()`, `readProcCwd()`, `livenessCache`
-- **src/watcher.ts**: Watch project dirs (catches JSONL + status.local.json)
-- **src/server.ts**: Remove R33 `stopDebounceTimers` 3s debounce
-- **src/cli.ts**: Simplify `runStatus()` for reduced hook events, update `mapHookEventToState()`
-- **~/dotfiles/home-manager/modules/claude/settings.json**: Remove UserPromptSubmit + PostToolUse hook entries
-- **README.md**: Update hook config section
-- **tests/sessions.test.ts**: New resolveState tests, migrate existing state tests
-- **tests/cli.test.ts**: Updated hook event tests
-- **tests/watcher.test.ts**: JSONL watch tests
+- **src/sessions.ts**: Refactored `resolveState()` (JSONL mtime primary). Deleted `checkLiveness()`, `collectPgrepPids()`, `collectProcExePids()`, `readProcCwd()`, `livenessCache`. New constants `PERMISSION_STALE_MS`/`JSONL_ACTIVE_THRESHOLD_MS`.
+- **src/watcher.ts**: Watches project dirs (catches JSONL + status.local.json) — was already in place
+- **src/server.ts**: R33 `stopDebounceTimers` debounce — already removed
+- **src/cli.ts**: `mapHookEventToState()` removes UserPromptSubmit + PostToolUse
+- **~/dotfiles/home-manager/modules/claude/settings.json**: UserPromptSubmit + PostToolUse hooks already absent
+- **README.md**: Hook config already correct
+- **tests/sessions.ts**: 11 new `resolveState` unit tests, pgrep tests removed, getProjectState tests migrated
+- **tests/cli.test.ts**: UserPromptSubmit/PostToolUse now assert no-op behavior

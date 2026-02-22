@@ -40,12 +40,6 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
   // REVIEW: architecture-reviewer - The server maintains its own stateMap in addition to the module-level projectStateCache in sessions.ts. These two maps must be kept in sync manually (e.g. the updateProject function calls getProjectState which updates the module cache, then searches the result to update the local stateMap). This is duplicated state management: a bug in either sync path can leave the two maps inconsistent. Consider having the server be the single owner of state or having sessions.ts expose an observable/event-based interface rather than requiring the server to mirror module-level cache updates.
   const stateMap = new Map<string, ProjectState>();
 
-  // Pending running→stopped debounce timers: projectDir → timeout handle.
-  // When a watcher event computes stopped for a previously-running project, we
-  // wait 3s and re-check rather than updating the map immediately. This
-  // prevents transient flicker from brief pgrep misses or stale status files.
-  const stopDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
   function currentFilteredState(): ProjectState[] {
     return filterStaleProjects([...stateMap.values()], maxInactivityHours);
   }
@@ -71,45 +65,6 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
       // Project disappeared — remove immediately.
       stateMap.delete(changedProjectDir);
       broadcastCurrent();
-      return;
-    }
-
-    const prevState = stateMap.get(changedProjectDir);
-    const prevSessionState = prevState?.state;
-    const newSessionState = updatedState.state;
-
-    // R33: Hysteresis for running→stopped transitions.
-    // Cancel any in-flight debounce for this project on each watcher event.
-    const existing = stopDebounceTimers.get(changedProjectDir);
-    if (existing !== undefined) {
-      clearTimeout(existing);
-      stopDebounceTimers.delete(changedProjectDir);
-    }
-
-    if (prevSessionState === 'running' && newSessionState === 'stopped') {
-      // Delay the map update by 3s and re-check to avoid transient flicker.
-      const timer = setTimeout(() => {
-        stopDebounceTimers.delete(changedProjectDir);
-        getProjectState(claudeDir, changedProjectDir)
-          .then((recheckStates) => {
-            const recheckState = recheckStates.find((s) => {
-              const fullPath = join(claudeDir, s.projectDir);
-              return fullPath === changedProjectDir;
-            });
-            if (recheckState === undefined) {
-              stateMap.delete(changedProjectDir);
-            } else {
-              stateMap.set(changedProjectDir, recheckState);
-            }
-            broadcastCurrent();
-          })
-          .catch((err: unknown) => {
-            const msg = err instanceof Error ? err.message : String(err);
-            process.stderr.write(`ccmon: recheck error: ${msg}\n`);
-          });
-      }, 3000);
-      stopDebounceTimers.set(changedProjectDir, timer);
-      // Don't update the map or broadcast yet.
       return;
     }
 
@@ -188,8 +143,6 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
     port: server.port,
     ready,
     stop(): void {
-      for (const timer of stopDebounceTimers.values()) clearTimeout(timer);
-      stopDebounceTimers.clear();
       watcher?.stop();
       server.stop(true);
     },

@@ -306,7 +306,7 @@ describe('status', () => {
     const hookPayload = JSON.stringify({
       session_id: 'sess-abc',
       cwd: '/home/user/myproject',
-      hook_event_name: 'UserPromptSubmit',
+      hook_event_name: 'Stop',
     });
 
     const result = await spawnCli(['status'], {
@@ -318,7 +318,7 @@ describe('status', () => {
 
     const raw = await readFile(join(projDir, 'status.local.json'), 'utf8');
     const status = JSON.parse(raw);
-    expect(status.state).toBe('running');
+    expect(status.state).toBe('stopped');
     expect(status.session_id).toBe('sess-abc');
     expect(status.working_dir).toBe('/home/user/myproject');
     expect(typeof status.timestamp).toBe('string');
@@ -408,9 +408,9 @@ describe('status', () => {
   });
 
   test('hook event mapped to all known states', async () => {
+    // R35: UserPromptSubmit and PostToolUse no longer write state (removed hooks).
+    // Only PermissionRequest, Stop, and SessionEnd produce written state.
     const events: Array<[string, string]> = [
-      ['UserPromptSubmit', 'running'],
-      ['PostToolUse', 'running'],
       ['PermissionRequest', 'waiting_for_permission'],
       ['Stop', 'stopped'],
       ['SessionEnd', 'stopped'],
@@ -439,6 +439,40 @@ describe('status', () => {
       const raw = await readFile(join(projDir, 'status.local.json'), 'utf8');
       const status = JSON.parse(raw);
       expect(status.state).toBe(expectedState);
+    }
+  });
+
+  test('UserPromptSubmit and PostToolUse are no-ops (R35)', async () => {
+    // These hooks no longer write state — ccmon status exits 0 with {} but no file written.
+    for (const eventName of ['UserPromptSubmit', 'PostToolUse']) {
+      const projDir = join(tmpDir, `-home-user-noop-${eventName.toLowerCase()}`);
+      await mkdir(projDir, { recursive: true });
+      await writeFile(
+        join(projDir, 'session.jsonl'),
+        makeFirstLine(`/home/user/noop-${eventName.toLowerCase()}`, `sess-noop-${eventName}`) + '\n',
+      );
+
+      const hookPayload = JSON.stringify({
+        session_id: `sess-noop-${eventName}`,
+        cwd: `/home/user/noop-${eventName.toLowerCase()}`,
+        hook_event_name: eventName,
+      });
+
+      const result = await spawnCli(['status'], {
+        stdin: hookPayload,
+        env: { CLAUDE_PROJECTS_DIR: tmpDir },
+      });
+
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout);
+      expect(typeof parsed).toBe('object');
+      // No status file should have been written
+      try {
+        await readFile(join(projDir, 'status.local.json'), 'utf8');
+        throw new Error(`Expected no status file for ${eventName}`);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      }
     }
   });
 });

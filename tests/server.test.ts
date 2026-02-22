@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { utimesSync } from 'node:fs';
 import { startServer } from '../src/server';
 import { _resetCachesForTesting } from '../src/sessions';
 
@@ -101,22 +102,16 @@ describe('HTTP server with maxInactivityHours filter', () => {
       gitBranch: 'main',
       timestamp: new Date().toISOString(),
     });
-    await writeFile(join(projDir, 'session.jsonl'), firstLine + '\n');
+    const jsonlPath = join(projDir, 'session.jsonl');
+    await writeFile(jsonlPath, firstLine + '\n');
 
-    // Write an old status so lastUpdated is well in the past
-    const oldTime = new Date(Date.now() - 10 * 3600 * 1000).toISOString(); // 10 hours ago
-    await writeFile(
-      join(projDir, 'status.local.json'),
-      JSON.stringify({
-        state: 'stopped',
-        timestamp: oldTime,
-        session_id: 'stale-test',
-        working_dir: '/home/user/staleproj',
-      }),
-    );
+    // Backdate the JSONL mtime so lastUpdated is well in the past. Under JSONL-primary
+    // state detection, lastUpdated comes from the JSONL mtime rather than the status timestamp.
+    const oldMtime = new Date(Date.now() - 10 * 3600 * 1000); // 10 hours ago
+    utimesSync(jsonlPath, oldMtime, oldMtime);
 
-    // maxInactivityHours = 0.000001 → effectively filters everything older than ~3.6ms
-    const srv = startServer({ port: 0, claudeDir: tmpDir, maxInactivityHours: 0.000001 });
+    // maxInactivityHours = 1 → filters the 10-hour-old project
+    const srv = startServer({ port: 0, claudeDir: tmpDir, maxInactivityHours: 1 });
     stop = srv.stop;
     await srv.ready;
 
@@ -378,14 +373,14 @@ describe('server-side state map (R31)', () => {
   });
 });
 
-// ─── R33: running→stopped hysteresis ─────────────────────────────────────────
+// ─── R34: state propagation ───────────────────────────────────────────────────
 
-describe('running→stopped transition debounce (R33)', () => {
+describe('state propagation (R34)', () => {
   let tmpDir: string;
   let stop: (() => void) | null = null;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-server-r33');
+    tmpDir = await makeTempDir('ccmon-server-r34');
     _resetCachesForTesting();
   });
 
@@ -397,30 +392,22 @@ describe('running→stopped transition debounce (R33)', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test('R33: running→stopped transition does not broadcast immediately (3s debounce)', async () => {
-    const projDir = join(tmpDir, '-home-user-r33proj');
+  test('R34: state change propagates immediately to WebSocket clients', async () => {
+    const projDir = join(tmpDir, '-home-user-r34proj');
     await mkdir(projDir, { recursive: true });
     const firstLine = JSON.stringify({
-      sessionId: 'r33-test',
-      cwd: '/home/user/r33proj',
+      sessionId: 'r34-test',
+      cwd: '/home/user/r34proj',
       gitBranch: 'main',
       timestamp: new Date().toISOString(),
     });
     await writeFile(join(projDir, 'session.jsonl'), firstLine + '\n');
 
-    // Write a fresh running status so the map sees the project as running after startup.
-    // Since there's no live process in tests, resolveState converts running→stopped anyway.
-    // Instead, we bootstrap the map state by writing a stopped status initially, then
-    // manually testing the server's debounce logic through the watcher.
-    //
-    // Strategy: start server with running status, wait for map population.
-    // Then write a new status that would trigger a watcher event resulting in stopped.
-    // Verify that within 1s the broadcast doesn't change state (debounce not yet fired).
     await writeFile(join(projDir, 'status.local.json'), JSON.stringify({
       state: 'stopped',
       timestamp: new Date().toISOString(),
-      session_id: 'r33-test',
-      working_dir: '/home/user/r33proj',
+      session_id: 'r34-test',
+      working_dir: '/home/user/r34proj',
     }));
 
     const srv = startServer({ port: 0, claudeDir: tmpDir, maxInactivityHours: Infinity });
@@ -436,12 +423,11 @@ describe('running→stopped transition debounce (R33)', () => {
 
     // Wait for initial state delivery
     await Bun.sleep(100);
-    const initialCount = messages.length;
-    expect(initialCount).toBeGreaterThanOrEqual(1);
+    expect(messages.length).toBeGreaterThanOrEqual(1);
 
     // Initial state should be stopped
     const initialEntry = messages[0]?.find(
-      (e) => (e as Record<string, unknown>).projectName === 'r33proj',
+      (e) => (e as Record<string, unknown>).projectName === 'r34proj',
     ) as Record<string, unknown> | undefined;
     expect(initialEntry?.state).toBe('stopped');
 

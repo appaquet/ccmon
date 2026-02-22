@@ -10,10 +10,25 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 13 (Review Fixes 2) complete, 174 tests passing. 22 tasks implemented: blocking pgrep spawn converted to async, watcher/ready race fixed, readSessionTail line-boundary data loss fixed, config guard accepts host/port-only files, scanTaskCreateUpdate empty-map false positive fixed, watcher errors now logged to stderr. Style: JSONL_EXT constant, named type guards, scanTodoWrite return value, mergeEnrichment cleanup, duplicate JSDoc merged. 5 deferred architecture items remain in code as REVIEW comments (cache encapsulation, getProjectState split, dual stateMap, JSONL watcher, CLI arg parsing). Phases 11-13 pending user acceptance. No next step decided.
+Phase 08 (JSONL-Primary Detection) implemented, 181 tests passing. `resolveState()` refactored to use JSONL mtime as primary running signal; Stop/SessionEnd hooks retained for immediate stopped detection. Deleted pgrep/proc liveness code (~80 lines), removed R33 3s debounce, removed UserPromptSubmit/PostToolUse from `mapHookEventToState()`. `STALE_THRESHOLD_MS` split into `PERMISSION_STALE_MS` + `JSONL_ACTIVE_THRESHOLD_MS`. Also reverted display-host localhost translation in cli.ts (shows actual bind address). Phases 11-13 still pending user acceptance. New card UI rework planned (next).
 
 ## Inbox
 
+- [ ] New web layout
+```
+  <project name>               <status>  | 
+  💭 [#####  ] 80k             📋 12/15  | context window (nicer looking progress here), becomes orange >100k, red >120k           tasks 
+
+  * Main agent                           | * = run indicator, pulsating
+    🤖 Sonnet
+    > last user msg or cmd
+    < [last agent msg or tool]
+
+  * Sub: <description>                   | * = run indicator, pulsating
+    🤖 Opus
+    > initial instruction (like user msg)
+    < [last agent msg or tool]
+```
 
 ## Requirements
 
@@ -139,13 +154,13 @@ Phase 13 (Review Fixes 2) complete, 174 tests passing. 22 tasks implemented: blo
 
 ### JSONL-Primary Detection
 
-* R34: ⬜ JSONL mtime is the primary signal for running state; hooks retained for immediate stopped detection (Phase: JSONL-Primary Detection)
+* R34: 🔄 JSONL mtime is the primary signal for running state; hooks retained for immediate stopped detection (Phase: JSONL-Primary Detection)
   * R34.1: Watcher monitors *.jsonl files in project dirs; `running` derived from JSONL mtime < 60s
   * R34.2: `stopped` from Stop/SessionEnd hooks (immediate) or JSONL mtime > 60s (crash fallback)
   * R34.3: status.local.json read for waiting_for_permission, stopped timestamp, and notification fields
   * R34.4: pgrep/proc liveness detection removed entirely
   * R34.5: R33 debounce removed — race condition eliminated at source
-* R35: ⬜ Hook config reduced — remove UserPromptSubmit + PostToolUse only (Phase: JSONL-Primary Detection)
+* R35: 🔄 Hook config reduced — remove UserPromptSubmit + PostToolUse only (Phase: JSONL-Primary Detection)
   * R35.1: UserPromptSubmit, PostToolUse hooks removed (JSONL mtime handles running)
   * R35.2: Stop, SessionEnd, PermissionRequest, Notification, SessionStart hooks retained
 
@@ -239,10 +254,10 @@ Replace stateless 64KB tail reads with byte-offset JSONL streaming for accurate 
 
 Bug fixes and improvements from real-world usage: last activity timestamp auto-refresh, server state persistence on page reload, token usage display.
 
-### ⬜ 08 Phase: JSONL-Primary Detection
+### 🔄 08 Phase: JSONL-Primary Detection
 [08-jsonl-primary](08-jsonl-primary.md)
 
-JSONL mtime as primary running signal, Stop/SessionEnd hooks for immediate stopped. Remove pgrep liveness, R33 debounce, and UserPromptSubmit/PostToolUse hooks. 8 tasks planned.
+JSONL mtime as primary running signal, Stop/SessionEnd hooks for immediate stopped. Removed pgrep liveness, R33 debounce, UserPromptSubmit/PostToolUse hooks. 8 tasks complete, 181 tests passing.
 
 ### 🔄 09 Phase: Sub-Agent Names
 [09-sub-agent-names](09-sub-agent-names.md)
