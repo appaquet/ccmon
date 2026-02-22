@@ -70,10 +70,11 @@ export interface SessionEnrichment {
  * derived from the sub-agent's JSONL file.
  */
 export interface SubagentInfo extends SessionEnrichment {
-  agentId: string;      // extracted from filename: agent-{agentId}.jsonl
-  slug?: string;        // from first line of sub-agent JSONL
-  jsonlPath: string;    // absolute path to sub-agent JSONL
-  isActive: boolean;    // mtime within last 45 seconds
+  agentId: string;        // extracted from filename: agent-{agentId}.jsonl
+  slug?: string;          // from first line of sub-agent JSONL
+  description?: string;   // from parent session queue-operation enqueue entry
+  jsonlPath: string;      // absolute path to sub-agent JSONL
+  isActive: boolean;      // mtime within last 45 seconds
 }
 
 export interface SessionsIndexEntry {
@@ -108,8 +109,12 @@ export interface ProjectInfo {
   gitBranch?: string;
 }
 
-// SessionTailInfo satisfies the SessionEnrichment contract — same fields.
-export type SessionTailInfo = SessionEnrichment;
+// SessionTailInfo extends SessionEnrichment with agent description metadata
+// accumulated during the parent session's JSONL parse pass.
+export interface SessionTailInfo extends SessionEnrichment {
+  // Maps agentId → description, populated from queue-operation enqueue entries.
+  agentDescriptions: Map<string, string>;
+}
 
 export interface StatusFile {
   state: SessionState;
@@ -476,6 +481,10 @@ export async function getSubagentInfos(latestJSONL: string): Promise<SubagentInf
 
   const jsonlEntries = entries.filter((e) => e.name.endsWith('.jsonl'));
 
+  // Read parent session tail once to get the agentDescriptions map; zero extra I/O
+  // since readSessionTail caches by path and is called again in buildProjectState.
+  const parentTail = await readSessionTail(latestJSONL);
+
   const infos = await Promise.all(
     jsonlEntries.map(async (entry): Promise<SubagentInfo | null> => {
       const jsonlPath = join(subagentsDir, entry.name);
@@ -512,7 +521,8 @@ export async function getSubagentInfos(latestJSONL: string): Promise<SubagentInf
         // slug is optional — ignore errors
       }
 
-      return { agentId, slug, jsonlPath, isActive, ...enrichment };
+      const description = parentTail.agentDescriptions.get(agentId);
+      return { agentId, slug, description, jsonlPath, isActive, ...enrichment };
     }),
   );
 
@@ -535,7 +545,7 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     mtimeMs = s.mtimeMs;
     size = s.size;
   } catch {
-    return {};
+    return { agentDescriptions: new Map() };
   }
 
   const cached = sessionTailCache.get(jsonlPath);
@@ -553,12 +563,14 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     // Delta read: only parse the new bytes appended since last read.
     // Applies even when mtime appears unchanged (sub-second writes on fast systems).
     startOffset = cached.fileSize;
-    baseData = { ...cached.data };
+    // Copy shallow fields but share the agentDescriptions map reference so
+    // new entries are merged into it in-place below.
+    baseData = { ...cached.data, agentDescriptions: new Map(cached.data.agentDescriptions) };
     isDelta = true;
   } else {
     // Full read (first read, file shrank, or mtime changed without size growth).
     startOffset = Math.max(0, size - MAX_FIRST_READ);
-    baseData = {};
+    baseData = { agentDescriptions: new Map() };
     isDelta = false;
   }
 
@@ -567,7 +579,7 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     const file = Bun.file(jsonlPath);
     text = await file.slice(startOffset).text();
   } catch {
-    return {};
+    return { agentDescriptions: new Map() };
   }
 
   let lines = text.split('\n').filter((l) => l.trim() !== '');
@@ -580,8 +592,9 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
 
   // Scan newest-to-oldest so "first found" = most recent.
   // Token counts are accumulated across ALL assistant entries in the scanned range.
+  // agentDescriptions are accumulated across ALL queue-operation enqueue entries.
   const reversed = lines.slice().reverse();
-  const scanResult: SessionTailInfo = {};
+  const scanResult: SessionTailInfo = { agentDescriptions: new Map() };
   let foundUser = false;
   let foundAssistant = false;
   let foundModel = false;
@@ -675,6 +688,21 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
         if (scanResult.tasksTotal !== undefined) foundTasks = true;
       }
     }
+
+    // queue-operation enqueue entries map agentId → description for sub-agents.
+    if (type === 'queue-operation') {
+      const operation = entry.operation;
+      if (operation === 'enqueue' && typeof entry.content === 'string') {
+        try {
+          const parsed = JSON.parse(entry.content) as Record<string, unknown>;
+          if (typeof parsed.task_id === 'string' && typeof parsed.description === 'string') {
+            scanResult.agentDescriptions.set(parsed.task_id, parsed.description);
+          }
+        } catch {
+          // malformed content — skip
+        }
+      }
+    }
   }
 
   if (scanInputTokens > 0) scanResult.inputTokens = scanInputTokens;
@@ -683,8 +711,15 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
   // Merge: new scan results override baseData for "latest wins" fields.
   // For task counts, keep new scan result if found; otherwise fall back to baseData.
   // Token counts accumulate: delta reads add new tokens to cached totals.
+  // agentDescriptions accumulate: merge scan entries into the base map.
   const mergedInputTokens = (baseData.inputTokens ?? 0) + (scanResult.inputTokens ?? 0);
   const mergedOutputTokens = (baseData.outputTokens ?? 0) + (scanResult.outputTokens ?? 0);
+
+  const mergedDescriptions = baseData.agentDescriptions;
+  for (const [id, desc] of scanResult.agentDescriptions) {
+    mergedDescriptions.set(id, desc);
+  }
+
   const merged: SessionTailInfo = {
     latestUserMessage: scanResult.latestUserMessage ?? baseData.latestUserMessage,
     latestAssistantMessage: scanResult.latestAssistantMessage ?? baseData.latestAssistantMessage,
@@ -694,11 +729,12 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     tasksTotal: foundTasks ? scanResult.tasksTotal : baseData.tasksTotal,
     inputTokens: mergedInputTokens > 0 ? mergedInputTokens : undefined,
     outputTokens: mergedOutputTokens > 0 ? mergedOutputTokens : undefined,
+    agentDescriptions: mergedDescriptions,
   };
 
-  // Strip undefined keys to keep the object clean.
+  // Strip undefined keys to keep the object clean (except agentDescriptions which is always present).
   for (const key of Object.keys(merged) as (keyof SessionTailInfo)[]) {
-    if (merged[key] === undefined) delete merged[key];
+    if (key !== 'agentDescriptions' && merged[key] === undefined) delete merged[key];
   }
 
   sessionTailCache.set(jsonlPath, { mtime: mtimeMs, fileSize: size, data: merged });

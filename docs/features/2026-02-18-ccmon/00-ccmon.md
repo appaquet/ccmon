@@ -19,6 +19,13 @@ Phase 08 planned (JSONL-Primary Detection): switch running/stopped detection fro
 - [ ] Right now, web shows last user message, but would like to show when last message is a command
   (skill) in web ui. they should be two different thiing in json, but web should show either.
 - [ ] Same for agent, i want to know last message OR last tool use in web ui. Not both.
+- [ ] Tokens seems innacurate. We need to use the token information that we get in the stream.
+  Inputs token also include agent+tool calls+responses+etc. we can't calculate that outself. i'm
+  just interested in input tokens here as seen by the model provider (i dont care about the cached
+  tokens info)
+- [ ] Remove completed agent after  2m from web ui. We can keep for more time in backend info. We
+  need to add info about last message time in the agent info payload so ui can exclude it. backend
+  should stop returning it after 5m
 
 
 ## Requirements

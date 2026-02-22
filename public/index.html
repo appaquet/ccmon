@@ -305,8 +305,9 @@
         const shown = proj.subagents.slice(0, 3);
         for (const agent of shown) {
           const dot = agent.isActive ? '●' : '○';
+          const label = agent.description ?? agent.slug ?? agent.agentId;
           const tool = agent.lastToolUse ? ` · ${agent.lastToolUse}` : '';
-          html += `<br><span style="margin-left:8px;font-size:10px">${dot} ${esc(agent.agentId)}${esc(tool)}</span>`;
+          html += `<br><span style="margin-left:8px;font-size:10px">${dot} ${esc(label)}${esc(tool)}</span>`;
         }
         if (proj.subagents.length > 3) {
           html += `<br><span style="margin-left:8px;font-size:10px;color:var(--muted)">+${proj.subagents.length - 3} more</span>`;

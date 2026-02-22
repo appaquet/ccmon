@@ -17,14 +17,14 @@ See [00-ccmon](00-ccmon.md). Show meaningful names for sub-agents in the dashboa
 
 ## Tasks
 
-- [ ] Add `agentDescriptions: Map<string, string>` to `SessionTailInfo` and `SessionTailCache` in `sessions.ts` (R36)
-- [ ] In `readSessionTail()`, collect `type === "queue-operation"` + `operation === "enqueue"` entries: parse `content` JSON, accumulate `task_id → description` into `agentDescriptions`; delta reads merge new entries (R36)
-- [ ] Add `description?: string` to `SubagentInfo` interface (R36)
-- [ ] Update `getSubagentInfos()` to receive `agentDescriptions` from the cached `SessionTailInfo` and attach `description` to each `SubagentInfo` (no extra JSONL read) (R36)
-- [ ] In `index.html` sub-agent rendering, display `agent.description ?? agent.agentId` (R36)
-- [ ] Add test: description populated from `queue-operation` enqueue entry via `readSessionTail()` (R36)
-- [ ] Add test: delta read appends new queue-operation descriptions without losing previous ones (R36)
-- [ ] Add test: description `undefined` when no `queue-operation` in parent JSONL (R36)
+- [x] Add `agentDescriptions: Map<string, string>` to `SessionTailInfo` and `SessionTailCache` in `sessions.ts` (R36)
+- [x] In `readSessionTail()`, collect `type === "queue-operation"` + `operation === "enqueue"` entries: parse `content` JSON, accumulate `task_id → description` into `agentDescriptions`; delta reads merge new entries (R36)
+- [x] Add `description?: string` to `SubagentInfo` interface (R36)
+- [x] Update `getSubagentInfos()` to receive `agentDescriptions` from the cached `SessionTailInfo` and attach `description` to each `SubagentInfo` (no extra JSONL read) (R36)
+- [x] In `index.html` sub-agent rendering, display `agent.description ?? agent.slug ?? agent.agentId` (R36)
+- [x] Add test: description populated from `queue-operation` enqueue entry via `readSessionTail()` (R36)
+- [x] Add test: delta read appends new queue-operation descriptions without losing previous ones (R36)
+- [x] Add test: description `undefined` when no `queue-operation` in parent JSONL (R36)
 
 ## Files
 

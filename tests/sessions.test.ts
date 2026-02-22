@@ -1237,6 +1237,77 @@ describe('session enrichment', () => {
     expect(infos).toHaveLength(0);
   });
 
+  // ── queue-operation description extraction (R36) ──
+
+  function makeQueueOperationEnqueue(taskId: string, description: string): string {
+    return JSON.stringify({
+      type: 'queue-operation',
+      operation: 'enqueue',
+      content: JSON.stringify({ task_id: taskId, description, tool_use_id: 'tu-1', task_type: 'agent' }),
+    });
+  }
+
+  test('readSessionTail (R36): agentDescriptions populated from queue-operation enqueue entries', async () => {
+    _resetCachesForTesting();
+    const jsonlPath = join(tmpDir, 'r36-queue-op.jsonl');
+    const lines = [
+      makeUserEntry('do the thing'),
+      makeQueueOperationEnqueue('ae89d86', 'Implement feature X'),
+      makeQueueOperationEnqueue('bf12c45', 'Write tests for Y'),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.agentDescriptions.get('ae89d86')).toBe('Implement feature X');
+    expect(result.agentDescriptions.get('bf12c45')).toBe('Write tests for Y');
+  });
+
+  test('readSessionTail (R36): delta read merges new queue-operation entries without losing previous ones', async () => {
+    _resetCachesForTesting();
+    const jsonlPath = join(tmpDir, 'r36-queue-op-delta.jsonl');
+
+    const initialLines = [
+      makeUserEntry('start'),
+      makeQueueOperationEnqueue('agent-1', 'First agent task'),
+    ];
+    await writeFile(jsonlPath, initialLines.join('\n') + '\n');
+
+    const first = await readSessionTail(jsonlPath);
+    expect(first.agentDescriptions.get('agent-1')).toBe('First agent task');
+
+    await Bun.sleep(10);
+    const existing = await Bun.file(jsonlPath).text();
+    await Bun.write(jsonlPath, existing + makeQueueOperationEnqueue('agent-2', 'Second agent task') + '\n');
+
+    const second = await readSessionTail(jsonlPath);
+    expect(second.agentDescriptions.get('agent-1')).toBe('First agent task');
+    expect(second.agentDescriptions.get('agent-2')).toBe('Second agent task');
+  });
+
+  test('getSubagentInfos (R36): attaches description from parent session agentDescriptions', async () => {
+    _resetCachesForTesting();
+    const sessionId = 'r36-desc-session';
+    const sessionDir = join(tmpDir, sessionId);
+    const subagentsDir = join(sessionDir, 'subagents');
+    await mkdir(subagentsDir, { recursive: true });
+
+    // Write sub-agent JSONL
+    const agentPath = join(subagentsDir, 'agent-abc123.jsonl');
+    await writeFile(agentPath, makeUserEntry('agent task') + '\n');
+
+    // Write parent JSONL with a queue-operation enqueue line matching the agentId
+    const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
+    await writeFile(jsonlPath, [
+      makeUserEntry('main prompt'),
+      makeQueueOperationEnqueue('abc123', 'Review the architecture'),
+    ].join('\n') + '\n');
+
+    const infos = await getSubagentInfos(jsonlPath);
+    expect(infos).toHaveLength(1);
+    expect(infos[0].agentId).toBe('abc123');
+    expect(infos[0].description).toBe('Review the architecture');
+  });
+
   test('getProjectState includes subagents array (R29)', async () => {
     _resetCachesForTesting();
 
