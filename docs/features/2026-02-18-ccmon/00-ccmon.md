@@ -12,10 +12,6 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 Phase 16 (Inbox Bug Fixes) implemented. Four bugs fixed: (1) `scanTaskCreateUpdate()` base tasks param for delta reads; (2) `resolveState()` permission override when JSONL is newer; (3) hook safety verified; (4) re-added `UserPromptSubmit`/`PostToolUse` → `running` with `RUNNING_HOOK_TTL_MS=30s` priority in `resolveState()` for immediate slash-command detection. 194 tests passing. Pending user validation in live dashboard.
 
-## Inbox
-
-(empty)
-
 ## Requirements
 
 ### Session Detection
@@ -109,7 +105,7 @@ Phase 16 (Inbox Bug Fixes) implemented. Four bugs fixed: (1) `scanTaskCreateUpda
 
 ### UI Enhancements
 
-* R21: 🔄 Task count from JSONL — `tasksDone`/`tasksTotal` via `TodoWrite` entries; superseded by R46 which adds full `TaskCreate`/`TaskUpdate` support (Phase: UI Enhancements)
+* R21: ✅ Task count from JSONL — `tasksDone`/`tasksTotal` via `TodoWrite` entries; superseded by R46 which adds full `TaskCreate`/`TaskUpdate` support (Phase: UI Enhancements)
 * R22: ✅ Flash card when state transitions to `waiting_for_permission` (Phase: UI Enhancements)
 * R23: ✅ Flash card for 5s when state transitions from `running` → `stopped` (Phase: UI Enhancements)
 * R24: ✅ Short model names in web UI — `Opus`/`Sonnet`/`Haiku` display only; JSON unchanged (Phase: UI Enhancements)
@@ -246,42 +242,42 @@ Task count (R21 TodoWrite, R22/R23 flash animations, R24 short model names, R25 
 
 Replace stateless 64KB tail reads with byte-offset JSONL streaming for accurate task counts and full session coverage. Add notification hook support with transient UI flash. Expose structured sub-agent info and assistant message extraction.
 
-### 🔄 07 Phase: QA Pass
+### ✅ 07 Phase: QA Pass
 [07-qa-pass](07-qa-pass.md)
 
 Bug fixes and improvements from real-world usage: last activity timestamp auto-refresh, server state persistence on page reload, token usage display.
 
-### 🔄 08 Phase: JSONL-Primary Detection
+### ✅ 08 Phase: JSONL-Primary Detection
 [08-jsonl-primary](08-jsonl-primary.md)
 
 JSONL mtime as primary running signal, Stop/SessionEnd hooks for immediate stopped. Removed pgrep liveness, R33 debounce, UserPromptSubmit/PostToolUse hooks. 8 tasks complete, 181 tests passing.
 
-### 🔄 09 Phase: Sub-Agent Names
+### ✅ 09 Phase: Sub-Agent Names
 [09-sub-agent-names](09-sub-agent-names.md)
 
 Show meaningful sub-agent descriptions in the dashboard. Name sourced from `queue-operation` enqueue entries in the parent session JSONL (`task_id` → `description` map). Implemented: 128 tests passing.
 
-### 🔄 10 Phase: UI Polish
+### ✅ 10 Phase: UI Polish
 [10-ui-polish](10-ui-polish.md)
 
 Collection of UI improvements and data model fixes: slash command display (R37), sub-agent show one activity (R38), accurate token totals (R39), sub-agent auto-hide lifecycle (R40), keep info on stopped (R41), completion checkmark (R42), agent ordering (R43), sub-agent model display (R44). Implemented: 144 tests passing, all tasks complete.
 
-### 🔄 11 Phase: Dashboard Refinements
+### ✅ 11 Phase: Dashboard Refinements
 [11-dashboard-refinements](11-dashboard-refinements.md)
 
 Fixes and improvements from real-world usage: input token counting bug fix (last value, not sum), task reintroduction with modern TaskCreate/TaskUpdate parsing, last update time in card header, agents section active indicator, latestUserActivity unified field (double-slash fix + temporal ordering). Implemented: 155 tests passing, all tasks complete.
 
-### 🔄 12 Phase: Review Fixes
+### ✅ 12 Phase: Review Fixes
 [12-review-fixes](12-review-fixes.md)
 
 Correctness bug fixes, style cleanup, and architecture improvements from review pass. 32 tasks (30 planned + 2 post-review regressions): R26 notification flash, liveness cache, task fallback guards, NaN guards, readFirstLine 4096 slice, stale-index disk fallback. 168 tests passing.
 
-### 🔄 13 Phase: Review Fixes 2
+### ✅ 13 Phase: Review Fixes 2
 [13-review-fixes-2](13-review-fixes-2.md)
 
 Second review pass: 22 tasks fixing correctness bugs (blocking spawn, watcher race, line-boundary data loss, config guard, empty-map false positive), style improvements, and minor architecture docs across sessions.ts, cli.ts, config.ts, server.ts, watcher.ts.
 
-### 🔄 14 Phase: Card Rework
+### ✅ 14 Phase: Card Rework
 [14-card-rework](14-card-rework.md)
 
 Rework dashboard cards to unified agent-row layout: context window progress bar (128k max, color thresholds), main + sub-agent rows look identical (pulsing dot, model, user/assistant lines). Remove git branch, output tokens. 6 UI-only tasks complete, 181 tests passing.
@@ -291,7 +287,7 @@ Rework dashboard cards to unified agent-row layout: context window progress bar 
 
 Fix stop detection race: Claude writes post-stop `system` entry to JSONL (8ms after hook), making JSONL mtime slightly newer than stopped timestamp. Add 5s grace period to `resolveState()` comparison (R34.6).
 
-### 🔄 16 Phase: Inbox Bug Fixes
+### ✅ 16 Phase: Inbox Bug Fixes
 [16-inbox-bug-fixes](16-inbox-bug-fixes.md)
 
 Three bugs: task completions not reflected in WebSocket/sub (delta reads drop TaskUpdate for prior tasks), `waiting_for_permission` sticking after answering (resolveState Priority 1 blocks JSONL mtime), hook config safety verification (already safe, adding tests).

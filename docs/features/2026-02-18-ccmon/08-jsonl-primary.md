@@ -1,4 +1,4 @@
-# Phase 08: JSONL-Primary State Detection
+# Phase: JSONL-Primary State Detection
 
 ## Context
 

@@ -46,3 +46,12 @@ See [00-ccmon](00-ccmon.md). Second review pass fixes: correctness bugs, style, 
 - `cli.ts:14` — per-subcommand flag parsing (no current gap; extensive)
 
 ## Files
+
+- **src/sessions.ts**: Correctness bugs, style improvements — isSidechain guard, blocking spawn fix, line-boundary data loss, task fallback guards, NaN guards
+- **src/cli.ts**: `--port` missing-value guard, host display fix, exit consistency, dead returns removed
+- **src/config.ts**: `isCcmonConfig` type predicate fixed to allow partial configs
+- **src/server.ts**: Watcher start ordering fix, readFileSync try/catch
+- **src/watcher.ts**: `.catch` stderr logging
+- **tests/sessions.test.ts**: Tests for correctness fixes
+- **tests/cli.test.ts**: Tests for CLI fixes
+- **tests/config.test.ts**: Tests for config type predicate fix

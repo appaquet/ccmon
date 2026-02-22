@@ -1,4 +1,4 @@
-# Phase 09: Sub-Agent Names
+# Phase: Sub-Agent Names
 
 ## Context
 

@@ -1,4 +1,4 @@
-# Phase 07: QA Pass
+# Phase: QA Pass
 
 ## Context
 
