@@ -35,7 +35,17 @@ No code change needed. `mapHookEventToState()` already returns `null` for unreco
 - [x] Add test: `mapHookEventToState('SessionStart')` returns `null` (R35)
 - [x] Verify all hook events in settings.json are exercised by existing + new tests (R4, R35)
 
+### Bug 4: Slash commands cause 2-3s delay before running state
+
+Root cause: JSONL-only running detection has inherent latency — JSONL is written only when Claude starts responding, not when user submits. Slash commands have extra overhead (local processing + skill expansion) before JSONL write. Phase 08 removed `UserPromptSubmit` → `running` assuming immediate JSONL write, which was incorrect.
+
+- [x] Re-add `UserPromptSubmit` and `PostToolUse` → `running` in `mapHookEventToState()` (R34, R35)
+- [x] Add `RUNNING_HOOK_TTL_MS = 30_000` constant in `sessions.ts`
+- [x] Add Priority 2 in `resolveState()`: fresh `running` status (< 30s) + no newer stopped signal → `running` immediately (R34)
+- [x] Add tests: mapHookEventToState UserPromptSubmit/PostToolUse → running; resolveState hook-running scenarios (R34, R35)
+
 ## Files
 
-- **src/sessions.ts**: Bug 1 fix (`scanTaskCreateUpdate`, `mergeEnrichment`), Bug 2 fix (`resolveState`)
-- **tests/sessions.test.ts**: Tests for all 3 bugs
+- **src/sessions.ts**: Bug 1 fix (`scanTaskCreateUpdate`, `mergeEnrichment`), Bug 2 fix (`resolveState`), Bug 4 fix (`mapHookEventToState`, `resolveState`, `RUNNING_HOOK_TTL_MS`)
+- **tests/sessions.test.ts**: Tests for all bugs
+- **tests/cli.test.ts**: Updated UserPromptSubmit/PostToolUse hook tests

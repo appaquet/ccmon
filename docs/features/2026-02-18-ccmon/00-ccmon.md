@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 16 (Inbox Bug Fixes) implemented. Three bugs fixed: (1) `scanTaskCreateUpdate()` now accepts base tasks param so delta reads can resolve `TaskUpdate` for tasks created in earlier reads; (2) `resolveState()` Priority 1 now falls through to JSONL mtime when JSONL is newer than permission timestamp + grace, fixing stuck `waiting_for_permission`; (3) hook safety verified — `SessionStart` test added. 189 tests passing (7 new). Pending user validation in live dashboard.
+Phase 16 (Inbox Bug Fixes) implemented. Four bugs fixed: (1) `scanTaskCreateUpdate()` base tasks param for delta reads; (2) `resolveState()` permission override when JSONL is newer; (3) hook safety verified; (4) re-added `UserPromptSubmit`/`PostToolUse` → `running` with `RUNNING_HOOK_TTL_MS=30s` priority in `resolveState()` for immediate slash-command detection. 194 tests passing. Pending user validation in live dashboard.
 
 ## Inbox
 
@@ -148,8 +148,8 @@ Phase 16 (Inbox Bug Fixes) implemented. Three bugs fixed: (1) `scanTaskCreateUpd
   * R34.3: status.local.json read for waiting_for_permission, stopped timestamp, and notification fields
   * R34.4: pgrep/proc liveness detection removed entirely
   * R34.5: R33 debounce removed — race condition eliminated at source
-* R35: 🔄 Hook config reduced — remove UserPromptSubmit + PostToolUse only (Phase: JSONL-Primary Detection)
-  * R35.1: UserPromptSubmit, PostToolUse hooks removed (JSONL mtime handles running)
+* R35: 🔄 Hook config — UserPromptSubmit/PostToolUse re-added for immediate running detection (Phase: JSONL-Primary Detection, Inbox Bug Fixes)
+  * R35.1: UserPromptSubmit, PostToolUse → `running`; JSONL mtime remains primary for sustained running; hook provides immediate signal with 30s TTL
   * R35.2: Stop, SessionEnd, PermissionRequest, Notification, SessionStart hooks retained
 
 ### UI Polish
@@ -314,7 +314,7 @@ Three bugs: task completions not reflected in WebSocket/sub (delta reads drop Ta
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner (Phase: Session Detection, Backend, Review Fixes)
 - **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init (Phase: Backend, Review Fixes)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
-- **tests/sessions.test.ts**: 189 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes)
+- **tests/sessions.test.ts**: 194 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
 - **tests/cli.test.ts**: 18 tests for cli.ts — 4 new arg-validation cases, status, dump --watch, --project filter (Phase: Review Fixes)
 - **tests/config.test.ts**: Config loading tests; 22+ tests covering partial config, invalid types (Phase: Review Fixes 2)

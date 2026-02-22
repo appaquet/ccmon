@@ -408,9 +408,9 @@ describe('status', () => {
   });
 
   test('hook event mapped to all known states', async () => {
-    // R35: UserPromptSubmit and PostToolUse no longer write state (removed hooks).
-    // Only PermissionRequest, Stop, and SessionEnd produce written state.
     const events: Array<[string, string]> = [
+      ['UserPromptSubmit', 'running'],
+      ['PostToolUse', 'running'],
       ['PermissionRequest', 'waiting_for_permission'],
       ['Stop', 'stopped'],
       ['SessionEnd', 'stopped'],
@@ -442,19 +442,18 @@ describe('status', () => {
     }
   });
 
-  test('UserPromptSubmit and PostToolUse are no-ops (R35)', async () => {
-    // These hooks no longer write state — ccmon status exits 0 with {} but no file written.
+  test('UserPromptSubmit and PostToolUse write running state', async () => {
     for (const eventName of ['UserPromptSubmit', 'PostToolUse']) {
-      const projDir = join(tmpDir, `-home-user-noop-${eventName.toLowerCase()}`);
+      const projDir = join(tmpDir, `-home-user-running-${eventName.toLowerCase()}`);
       await mkdir(projDir, { recursive: true });
       await writeFile(
         join(projDir, 'session.jsonl'),
-        makeFirstLine(`/home/user/noop-${eventName.toLowerCase()}`, `sess-noop-${eventName}`) + '\n',
+        makeFirstLine(`/home/user/running-${eventName.toLowerCase()}`, `sess-running-${eventName}`) + '\n',
       );
 
       const hookPayload = JSON.stringify({
-        session_id: `sess-noop-${eventName}`,
-        cwd: `/home/user/noop-${eventName.toLowerCase()}`,
+        session_id: `sess-running-${eventName}`,
+        cwd: `/home/user/running-${eventName.toLowerCase()}`,
         hook_event_name: eventName,
       });
 
@@ -464,15 +463,9 @@ describe('status', () => {
       });
 
       expect(result.exitCode).toBe(0);
-      const parsed = JSON.parse(result.stdout);
-      expect(typeof parsed).toBe('object');
-      // No status file should have been written
-      try {
-        await readFile(join(projDir, 'status.local.json'), 'utf8');
-        throw new Error(`Expected no status file for ${eventName}`);
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-      }
+      const raw = await readFile(join(projDir, 'status.local.json'), 'utf8');
+      const status = JSON.parse(raw);
+      expect(status.state).toBe('running');
     }
   });
 });

@@ -14,6 +14,10 @@ const JSONL_ACTIVE_THRESHOLD_MS = 60_000;
 // would keep the session showing as running for JSONL_ACTIVE_THRESHOLD_MS.
 const STOP_GRACE_MS = 5_000;
 
+// TTL for the hook-based running signal (UserPromptSubmit / PostToolUse).
+// JSONL mtime takes over naturally within this window as Claude writes.
+const RUNNING_HOOK_TTL_MS = 30_000;
+
 const JSONL_EXT = '.jsonl';
 
 // Maximum bytes to read on first access for large files (10 MB).
@@ -225,15 +229,16 @@ export async function readSessionsIndex(projectDirPath: string): Promise<Session
 
 /**
  * Maps a Claude hook event name to the corresponding SessionState.
- * Returns null for events that don't write state (Notification, unrecognized,
- * or running-state hooks removed in R35: UserPromptSubmit, PostToolUse).
+ * Returns null for events that don't write state (Notification, unrecognized).
  */
 export function mapHookEventToState(hookEvent: string): SessionState | null {
   switch (hookEvent) {
+    case 'UserPromptSubmit':  return 'running';
+    case 'PostToolUse':       return 'running';
     case 'PermissionRequest': return 'waiting_for_permission';
-    case 'Stop':             return 'stopped';
-    case 'SessionEnd':       return 'stopped';
-    default:                 return null;
+    case 'Stop':              return 'stopped';
+    case 'SessionEnd':        return 'stopped';
+    default:                  return null;
   }
 }
 
@@ -1093,14 +1098,18 @@ async function readFirstLine(filePath: string): Promise<string | null> {
  *
  * Priority order:
  * 1. waiting_for_permission — status says so and signal is fresh (< 5 min)
- * 2. running — JSONL was written within 60s AND (no stopped signal OR JSONL is newer
+ * 2. running (hook) — status is 'running' from UserPromptSubmit/PostToolUse, within 30s TTL,
+ *    and no stopped signal newer than the running timestamp
+ * 3. running (JSONL) — JSONL was written within 60s AND (no stopped signal OR JSONL is newer
  *    than the stopped timestamp, meaning activity resumed after stop was recorded)
- * 3. stopped — explicit stopped signal from status file (Stop/SessionEnd hook)
- * 4. stopped — default (stale JSONL, no status, or any other case)
+ * 4. stopped — explicit stopped signal from status file (Stop/SessionEnd hook)
+ * 5. stopped — default (stale JSONL, no status, or any other case)
  *
  * Exported for unit testing only.
  */
 export function resolveState(jsonlMtimeMs: number | null, status: StatusFile | null): SessionState {
+  const stoppedAtMs = status?.state === 'stopped' ? new Date(status.timestamp).getTime() : null;
+
   // Priority 1: permission request wins when the signal is fresh — unless JSONL has been
   // written after the permission timestamp (+ grace), which means the user answered and
   // Claude resumed. In that case fall through to Priority 2.
@@ -1112,23 +1121,35 @@ export function resolveState(jsonlMtimeMs: number | null, status: StatusFile | n
       if (jsonlMtimeMs === null || jsonlMtimeMs <= permissionAtMs + STOP_GRACE_MS) {
         return 'waiting_for_permission';
       }
-      // Fall through to Priority 2: JSONL newer than permission signal → activity resumed.
+      // Fall through: JSONL newer than permission signal → activity resumed.
     }
   }
 
-  // Priority 2: fresh JSONL mtime signals active session.
+  // Priority 2: hook-based running signal (UserPromptSubmit / PostToolUse).
+  // Gives immediate running state before JSONL mtime catches up (e.g. slash commands).
+  if (status?.state === 'running') {
+    const runningAtMs = new Date(status.timestamp).getTime();
+    const age = Date.now() - runningAtMs;
+    if (!isNaN(age) && age < RUNNING_HOOK_TTL_MS) {
+      // Stopped signal newer than the running hook overrides it.
+      if (stoppedAtMs === null || isNaN(stoppedAtMs) || runningAtMs > stoppedAtMs) {
+        return 'running';
+      }
+    }
+  }
+
+  // Priority 3: fresh JSONL mtime signals active session.
   if (jsonlMtimeMs !== null && jsonlMtimeMs > Date.now() - JSONL_ACTIVE_THRESHOLD_MS) {
     if (status?.state !== 'stopped') return 'running';
     // JSONL written after the stopped signal means activity resumed (e.g. new session start
     // or prompt submitted after Stop hook fired). Only treat as running in that case.
-    const stoppedAtMs = new Date(status.timestamp).getTime();
-    if (isNaN(stoppedAtMs) || jsonlMtimeMs > stoppedAtMs + STOP_GRACE_MS) return 'running';
+    if (stoppedAtMs === null || isNaN(stoppedAtMs) || jsonlMtimeMs > stoppedAtMs + STOP_GRACE_MS) return 'running';
   }
 
-  // Priority 3: explicit stopped signal from hook.
+  // Priority 4: explicit stopped signal from hook.
   if (status?.state === 'stopped') return 'stopped';
 
-  // Priority 4: default — no fresh JSONL and no useful status.
+  // Priority 5: default — no fresh JSONL and no useful status.
   return 'stopped';
 }
 

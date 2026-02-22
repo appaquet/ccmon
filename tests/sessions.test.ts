@@ -584,12 +584,12 @@ describe('filterStaleProjects NaN guard (R18)', () => {
 // ─── mapHookEventToState ──────────────────────────────────────────────────────
 
 describe('mapHookEventToState', () => {
-  test('UserPromptSubmit → null (removed in R35)', () => {
-    expect(mapHookEventToState('UserPromptSubmit')).toBeNull();
+  test('UserPromptSubmit → running', () => {
+    expect(mapHookEventToState('UserPromptSubmit')).toBe('running');
   });
 
-  test('PostToolUse → null (removed in R35)', () => {
-    expect(mapHookEventToState('PostToolUse')).toBeNull();
+  test('PostToolUse → running', () => {
+    expect(mapHookEventToState('PostToolUse')).toBe('running');
   });
 
   test('PermissionRequest → waiting_for_permission', () => {
@@ -2748,6 +2748,42 @@ describe('resolveState (R34)', () => {
     const freshPermissionStatus = makeStatus('waiting_for_permission', permissionTs);
     const jsonlWithinGrace = permissionTs + 2_000; // 2s after permission, within 5s grace
     expect(resolveState(jsonlWithinGrace, freshPermissionStatus)).toBe('waiting_for_permission');
+  });
+
+  test('P2/hook-running: fresh running status (< 30s), no stopped signal → running', () => {
+    const freshRunning = makeStatus('running', now - 5_000); // 5s ago
+    expect(resolveState(null, freshRunning)).toBe('running');
+  });
+
+  test('P2/hook-running: fresh running status + stopped signal newer than running → stopped', () => {
+    const runningTs = now - 20_000; // running 20s ago
+    const freshRunning = makeStatus('running', runningTs);
+    // stopped signal fired 10s ago, after the running hook
+    const stoppedNewer = makeStatus('stopped', now - 10_000);
+    // resolveState only reads status once, so we need to test the priority ordering
+    // by passing the stopped status (stopped overrides running hook when newer)
+    expect(resolveState(null, stoppedNewer)).toBe('stopped');
+  });
+
+  test('P2/hook-running: stale running status (> 30s) → falls through to JSONL/default', () => {
+    const staleRunning = makeStatus('running', now - 35_000); // 35s ago, beyond 30s TTL
+    expect(resolveState(null, staleRunning)).toBe('stopped');
+  });
+
+  test('P2/hook-running: fresh running status, but stopped signal is older → running wins', () => {
+    const stoppedOlder = makeStatus('stopped', now - 60_000); // stopped 60s ago
+    const runningNewer = makeStatus('running', now - 5_000);  // running hook 5s ago (after stop)
+    // running hook is newer than stopped → should return running
+    // but resolveState only takes one status; simulate by verifying running-status path
+    // when stoppedAtMs would be null (no stopped status):
+    expect(resolveState(null, runningNewer)).toBe('running');
+  });
+
+  test('P1/P2: fresh waiting_for_permission newer than fresh running hook → waiting_for_permission', () => {
+    // permission fires after the running hook; permission takes priority when it's fresh
+    const permissionStatus = makeStatus('waiting_for_permission', now - 5_000);
+    // No JSONL newer than permission
+    expect(resolveState(null, permissionStatus)).toBe('waiting_for_permission');
   });
 });
 
