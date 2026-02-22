@@ -292,6 +292,11 @@ Fix stop detection race: Claude writes post-stop `system` entry to JSONL (8ms af
 
 Three bugs: task completions not reflected in WebSocket/sub (delta reads drop TaskUpdate for prior tasks), `waiting_for_permission` sticking after answering (resolveState Priority 1 blocks JSONL mtime), hook config safety verification (already safe, adding tests).
 
+### ⬜ 17 Phase: Sub-Agent Stop/Resume Fix
+[17-subagent-stop-resume](17-subagent-stop-resume.md)
+
+After session stops and resumes (same UUID), old sub-agents can appear active because `getSubagentInfos()` uses 45s mtime threshold with no awareness of session stop events. Fix: pass `stoppedAtMs` into sub-agent detection.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
