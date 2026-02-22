@@ -115,16 +115,16 @@ Next: Phase 07 (QA Pass) — R30 last-activity refresh, R31 server state persist
 
 ### Notifications & Streaming
 
-* R26: ⬜ Notification hook events produce a transient visual flash in the dashboard (Phase: Notifications & Streaming)
+* R26: ✅ Notification hook events produce a transient visual flash in the dashboard (Phase: Notifications & Streaming)
   * R26.1: `ccmon status` accepts Notification hook events and writes notificationMessage + notificationTimestamp to status file
   * R26.2: Dashboard shows a time-limited flash animation when a notification arrives (no persistent state change)
   * R26.3: permission_prompt notifications are ignored when state is already waiting_for_permission (avoid duplicate signals)
-* R27: ⬜ JSONL reading uses byte-offset tracking to avoid re-parsing and to capture full session data (Phase: Notifications & Streaming)
+* R27: ✅ JSONL reading uses byte-offset tracking to avoid re-parsing and to capture full session data (Phase: Notifications & Streaming)
   * R27.1: First read parses the entire JSONL file; subsequent reads parse only new bytes (offset-based delta)
   * R27.2: If file size shrinks (session replaced), cache resets and performs a full re-read
   * R27.3: Task counts (tasksDone/tasksTotal) reflect all TodoWrite entries in the session, not just the last 64KB
-* R28: ⬜ Session payload exposes both latestUserMessage and latestAssistantMessage as a pair, displayed in dashboard (Phase: Notifications & Streaming)
-* R29: ⬜ Sub-agent info shares a common enrichment structure with the main session (Phase: Notifications & Streaming)
+* R28: ✅ Session payload exposes both latestUserMessage and latestAssistantMessage as a pair, displayed in dashboard (Phase: Notifications & Streaming)
+* R29: ✅ Sub-agent info shares a common enrichment structure with the main session (Phase: Notifications & Streaming)
   * R29.1: A shared base type carries model, latestUserMessage, latestAssistantMessage, lastToolUse, tasksDone, tasksTotal — used by both ProjectState and SubagentInfo
   * R29.2: SubagentInfo extends the base with agentId, slug, jsonlPath; ProjectState keeps its session-level fields (cwd, state, gitBranch, etc.)
   * R29.3: Sub-agent active/stopped status is determined via parent JSONL tool_result correlation or mtime heuristic fallback
@@ -178,12 +178,12 @@ Expose ccmon as a Nix flake package via `writeShellScriptBin` wrapper with pinne
 
 Task count (R21 TodoWrite, R22/R23 flash animations, R24 short model names, R25 running dot pulse. R21 partial: TodoWrite sessions only; TaskCreate/TaskUpdate full-parse deferred.
 
-### ⬜ 06 Phase: Notifications & Streaming
+### ✅ 06 Phase: Notifications & Streaming
 [06-notifications-streaming](06-notifications-streaming.md)
 
 Replace stateless 64KB tail reads with byte-offset JSONL streaming for accurate task counts and full session coverage. Add notification hook support with transient UI flash. Expose structured sub-agent info and assistant message extraction.
 
-### ⬜ 07 Phase: QA Pass
+### 🔄 07 Phase: QA Pass
 [07-qa-pass](07-qa-pass.md)
 
 Bug fixes and improvements from real-world usage: last activity timestamp auto-refresh, server state persistence on page reload, token usage display.
