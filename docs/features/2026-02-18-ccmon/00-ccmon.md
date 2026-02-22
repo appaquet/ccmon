@@ -10,9 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 11 (Dashboard Refinements): R45–R50 implemented (160 tests). R50: unified `latestAssistantMessage` + `lastToolUse` into `latestAssistantActivity?: { text?, tool? }` — JSON carries both, UI shows text over tool for both main session and sub-agent cards. Single `foundAssistantActivity` flag mirrors R49 pattern.
-
-No inbox items. All phase 11 tasks complete. User to confirm phase acceptance.
+Phase 11 (Dashboard Refinements) complete, pending user acceptance. Phase 12 (Review Fixes) plan ready: 32 REVIEW comments triaged across sessions.ts, cli.ts, config.ts, server.ts, index.html, watcher.ts. 6 high-priority correctness bugs (notification flash broken, liveness cache scope, TaskUpdate suppresses fallback, empty-cwd status write, NaN bypasses staleness, JSON.parse unsafe). Next: user to run /implement.
 
 ## Inbox
 
@@ -257,6 +255,11 @@ Collection of UI improvements and data model fixes: slash command display (R37),
 [11-dashboard-refinements](11-dashboard-refinements.md)
 
 Fixes and improvements from real-world usage: input token counting bug fix (last value, not sum), task reintroduction with modern TaskCreate/TaskUpdate parsing, last update time in card header, agents section active indicator, latestUserActivity unified field (double-slash fix + temporal ordering). Implemented: 155 tests passing, all tasks complete.
+
+### ⬜ 12 Phase: Review Fixes
+[12-review-fixes](12-review-fixes.md)
+
+Correctness bug fixes, style cleanup, and architecture improvements from review pass. 30 tasks across sessions.ts, cli.ts, config.ts, server.ts, index.html, watcher.ts.
 
 ## Files
 
