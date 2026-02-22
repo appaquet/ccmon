@@ -180,25 +180,99 @@
       animation: flash-notification 0.5s ease-in-out 10;
     }
 
+    /* Context window progress bar */
+    .ctx-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 2px 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .ctx-bar-container {
+      width: 120px;
+      flex-shrink: 0;
+    }
+    .ctx-bar {
+      background: rgba(255,255,255,0.08);
+      border-radius: 4px;
+      height: 8px;
+      overflow: hidden;
+    }
+    .ctx-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: var(--running);
+      transition: width 0.3s ease;
+    }
+    .ctx-fill-warn  { background: #f59e0b; }
+    .ctx-fill-danger { background: var(--waiting); }
+    .ctx-label {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .ctx-tasks {
+      margin-left: auto;
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    /* Unified agent row */
+    .agent-row {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 4px 0;
+      border-top: 1px solid rgba(255,255,255,0.04);
+    }
+    .agent-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
     .agent-dot {
       display: inline-block;
-      width: 8px;
-      height: 8px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
-      vertical-align: middle;
       flex-shrink: 0;
     }
     .agent-dot-active {
       background: var(--running);
       animation: pulse-dot 1.8s ease-in-out infinite;
     }
-    .agent-dot-done {
-      width: auto;
-      height: auto;
-      border-radius: 0;
-      color: var(--muted);
-      font-size: 10px;
+    .agent-dot-idle {
+      background: var(--muted);
+      opacity: 0.5;
     }
+    .agent-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+    .agent-model {
+      margin-left: auto;
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .agent-msg {
+      font-size: 11px;
+      color: #94a3b8;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding-left: 13px;
+    }
+    .agent-msg-in  { color: #7dd3fc; }
+    .agent-msg-out { color: #94a3b8; }
   </style>
 </head>
 <body>
@@ -275,6 +349,60 @@
       return String(n);
     }
 
+    function renderContextBar(inputTokens, tasksDone, tasksTotal) {
+      const MAX_CTX = 128_000;
+      const tokens = inputTokens || 0;
+      const pct = Math.min(100, Math.round((tokens / MAX_CTX) * 100));
+      const fillClass = tokens > 120_000 ? 'ctx-fill ctx-fill-danger'
+        : tokens > 100_000 ? 'ctx-fill ctx-fill-warn'
+        : 'ctx-fill';
+      const label = tokens >= 1000 ? Math.round(tokens / 1000) + 'k' : String(tokens);
+      const tasksHtml = tasksTotal > 0
+        ? `<span class="ctx-tasks">📋 ${tasksDone}/${tasksTotal}</span>`
+        : '';
+      return `
+        <div class="ctx-row">
+          <span>💭</span>
+          <div class="ctx-bar-container">
+            <div class="ctx-bar">
+              <div class="${fillClass}" style="width:${pct}%"></div>
+            </div>
+          </div>
+          <span class="ctx-label">${esc(label)}</span>
+          ${tasksHtml}
+        </div>
+      `;
+    }
+
+    function renderAgentRow({ label, model, userActivity, assistantActivity, isActive }) {
+      const dotClass = isActive ? 'agent-dot agent-dot-active' : 'agent-dot agent-dot-idle';
+      const modelHtml = model
+        ? `<span class="agent-model">🤖 ${esc(shortModel(model))}</span>`
+        : '';
+      let userHtml = '';
+      if (userActivity && userActivity.text) {
+        userHtml = `<div class="agent-msg agent-msg-in">&gt; ${esc(truncate(userActivity.text, 80))}</div>`;
+      }
+      let assistantHtml = '';
+      if (assistantActivity) {
+        const actText = assistantActivity.text ?? assistantActivity.tool;
+        if (actText) {
+          assistantHtml = `<div class="agent-msg agent-msg-out">&lt; ${esc(truncate(actText, 80))}</div>`;
+        }
+      }
+      return `
+        <div class="agent-row">
+          <div class="agent-header">
+            <span class="${dotClass}"></span>
+            <span class="agent-label">${esc(label)}</span>
+            ${modelHtml}
+          </div>
+          ${userHtml}
+          ${assistantHtml}
+        </div>
+      `;
+    }
+
     function createCard(proj, flashStopped, flashNotification) {
       const card = document.createElement('div');
       const s = proj.state || 'stopped';
@@ -288,11 +416,18 @@
       const dotClass = stateDotClass[s] || 'dot-stopped';
       const label = stateLabel[s] || s;
 
-      const timeLabel = proj.lastUpdated ? relativeTime(proj.lastUpdated) : '—';
+      // Resolve task counts from tasks array when available, fall back to done/total fields
+      let tasksDone = proj.tasksDone || 0;
+      let tasksTotal = proj.tasksTotal || 0;
+      if (proj.tasks && proj.tasks.length > 0) {
+        const nonDeleted = proj.tasks.filter(t => t.status !== 'deleted');
+        tasksDone = nonDeleted.filter(t => t.status === 'completed').length;
+        tasksTotal = nonDeleted.length;
+      }
+
       let html = `
         <div class="card-header">
           <span class="card-name" title="${esc(proj.projectName)}">${esc(proj.projectName)}</span>
-          <span class="card-time">${esc(timeLabel)}</span>
           <span class="badge ${badgeClass}">
             <span class="dot ${dotClass}"></span>
             ${esc(label)}
@@ -300,91 +435,27 @@
         </div>
       `;
 
-      // git branch
-      if (proj.gitBranch) {
-        html += `<div class="card-meta">branch: ${esc(proj.gitBranch)}</div>`;
-      }
+      html += renderContextBar(proj.inputTokens || 0, tasksDone, tasksTotal);
 
-      // latest user activity (command or message) — single field with temporal ordering
-      if (proj.latestUserActivity) {
-        if (proj.latestUserActivity.isCommand) {
-          html += `<div class="card-message">${esc(truncate(proj.latestUserActivity.text, 80))}</div>`;
-        } else {
-          html += `<div class="card-message">▶ ${esc(truncate(proj.latestUserActivity.text, 80))}</div>`;
-        }
-      }
+      html += renderAgentRow({
+        label: 'Main agent',
+        model: proj.model,
+        userActivity: proj.latestUserActivity,
+        assistantActivity: proj.latestAssistantActivity,
+        isActive: s === 'running',
+      });
 
-      // latest assistant activity — show text when present, fall back to tool name
-      if (proj.latestAssistantActivity) {
-        const activityLabel = proj.latestAssistantActivity.text ?? proj.latestAssistantActivity.tool;
-        if (activityLabel) {
-          html += `<div class="card-message">◀ ${esc(truncate(activityLabel, 80))}</div>`;
-        }
-      }
-
-      // model
-      if (proj.model) {
-        html += `<div class="card-meta">${esc(shortModel(proj.model))}</div>`;
-      }
-
-      // sub-agents — hide completed agents older than 2 minutes (backend removes after 5m)
       if (proj.subagents && proj.subagents.length > 0) {
-        const now = Date.now();
-        const twoMin = 2 * 60 * 1000;
-        const visible = proj.subagents.filter(a =>
-          a.isActive || (now - new Date(a.lastMessageTime).getTime()) <= twoMin
-        );
-        if (visible.length > 0) {
-          const active = visible.filter(a => a.isActive).length;
-          const activeDot = active > 0 ? `<span class="agent-dot agent-dot-active" style="margin-right:4px"></span>` : '';
-          html += `<div class="card-meta">${activeDot}⬡ agents (${visible.length})`;
-          const shown = visible.slice(0, 3);
-          for (const agent of shown) {
-            const indicator = agent.isActive
-              ? `<span class="agent-dot agent-dot-active"></span>`
-              : `<span class="agent-dot agent-dot-done">✓</span>`;
-            const label = agent.description ?? agent.slug ?? agent.agentId;
-            const model = shortModel(agent.model);
-            // show latestAssistantActivity: text when present, fall back to tool name
-            const agentActivity = agent.latestAssistantActivity
-              ? (agent.latestAssistantActivity.text ?? agent.latestAssistantActivity.tool ?? '')
-              : '';
-            const parts = [model, agentActivity].filter(Boolean);
-            const extra = parts.length ? ` · ${esc(parts.join(' · '))}` : '';
-            html += `<br><span style="margin-left:8px;font-size:10px">${indicator} ${esc(label)}${extra}</span>`;
-          }
-          if (visible.length > 3) {
-            html += `<br><span style="margin-left:8px;font-size:10px;color:var(--muted)">+${visible.length - 3} more</span>`;
-          }
-          html += `</div>`;
+        for (const agent of proj.subagents) {
+          const agentLabel = 'Sub: ' + (agent.description ?? agent.agentId);
+          html += renderAgentRow({
+            label: agentLabel,
+            model: agent.model,
+            userActivity: agent.latestUserActivity,
+            assistantActivity: agent.latestAssistantActivity,
+            isActive: agent.isActive,
+          });
         }
-      }
-
-      // task display — use tasks array when available, fall back to done/total counts
-      if (proj.tasks && proj.tasks.length > 0) {
-        const nonDeleted = proj.tasks.filter(t => t.status !== 'deleted');
-        const done = nonDeleted.filter(t => t.status === 'completed').length;
-        const inProgress = nonDeleted.filter(t => t.status === 'in_progress');
-        html += `<div class="card-meta">${done}/${nonDeleted.length} tasks`;
-        const shown = inProgress.slice(0, 3);
-        for (const t of shown) {
-          const label = t.activeForm || t.subject;
-          html += `<br><span style="margin-left:8px;font-size:10px">▶ ${esc(truncate(label, 60))}</span>`;
-        }
-        if (inProgress.length > 3) {
-          html += `<br><span style="margin-left:8px;font-size:10px;color:var(--muted)">+${inProgress.length - 3} more in progress</span>`;
-        }
-        html += `</div>`;
-      } else if (proj.tasksDone !== undefined && proj.tasksTotal !== undefined && proj.tasksTotal > 0) {
-        html += `<div class="card-meta">${proj.tasksDone}/${proj.tasksTotal} tasks</div>`;
-      }
-
-      // token usage
-      if (proj.inputTokens > 0 || proj.outputTokens > 0) {
-        const parts = [];
-        if (proj.inputTokens > 0) parts.push(`${fmtTokens(proj.inputTokens)} in`);
-        if (proj.outputTokens > 0) parts.push(`${fmtTokens(proj.outputTokens)} out`);
-        html += `<div class="card-meta">${parts.join(' / ')}</div>`;
       }
 
       card.innerHTML = html;

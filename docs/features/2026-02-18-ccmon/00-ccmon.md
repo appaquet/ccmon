@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 08 (JSONL-Primary Detection) and Phase 14 plan complete. Phase 08: 181 tests passing, `resolveState()` uses JSONL mtime as primary running signal, pgrep removed, R33 debounce removed. Phase 14 (Card Rework) planned — 6 UI-only tasks in `14-card-rework.md`: context window progress bar, unified agent rows (main + sub identical), pulsing dots. Phases 11-13 pending user acceptance. Next: implement Phase 14 with `/implement`.
+Phase 14 (Card Rework) complete, 181 tests passing. New card layout: context window progress bar (128k max, green/orange/red), task count inline, unified agent rows (main + sub identical with pulsing dot, model, `>` user, `<` assistant). Git branch and output tokens removed. Phases 11-14 pending user acceptance. Next step not decided.
 
 ## Inbox
 
@@ -189,11 +189,11 @@ Phase 08 (JSONL-Primary Detection) and Phase 14 plan complete. Phase 08: 181 tes
 
 ### Card Rework
 
-* R51: ⬜ Context window progress bar — input tokens / 128k max; green default, orange >100k, red >120k; numeric "Xk" label (Phase: Card Rework)
-* R52: ⬜ Task count `📋 done/total` inline on same row as context bar (Phase: Card Rework)
-* R53: ⬜ Unified agent row format — main agent and sub-agents use identical structure: pulsing dot / checkmark, label, model, `>` user line, `<` assistant line (Phase: Card Rework)
-* R54: ⬜ Sub-agent `>` line shows `latestUserActivity.text` (initial instruction from first user message) (Phase: Card Rework)
-* R55: ⬜ Card layout: header (name + state badge) → context/tasks row → agent rows; remove git branch, output tokens, standalone model/message lines (Phase: Card Rework)
+* R51: 🔄 Context window progress bar — input tokens / 128k max; green default, orange >100k, red >120k; numeric "Xk" label (Phase: Card Rework)
+* R52: 🔄 Task count `📋 done/total` inline on same row as context bar (Phase: Card Rework)
+* R53: 🔄 Unified agent row format — main agent and sub-agents use identical structure: pulsing dot / checkmark, label, model, `>` user line, `<` assistant line (Phase: Card Rework)
+* R54: 🔄 Sub-agent `>` line shows `latestUserActivity.text` (initial instruction from first user message) (Phase: Card Rework)
+* R55: 🔄 Card layout: header (name + state badge) → context/tasks row → agent rows; remove git branch, output tokens, standalone model/message lines (Phase: Card Rework)
 
 #### Out of Scope
 
@@ -277,10 +277,10 @@ Correctness bug fixes, style cleanup, and architecture improvements from review 
 
 Second review pass: 22 tasks fixing correctness bugs (blocking spawn, watcher race, line-boundary data loss, config guard, empty-map false positive), style improvements, and minor architecture docs across sessions.ts, cli.ts, config.ts, server.ts, watcher.ts.
 
-### ⬜ 14 Phase: Card Rework
+### 🔄 14 Phase: Card Rework
 [14-card-rework](14-card-rework.md)
 
-Rework dashboard cards to unified agent-row layout: context window progress bar (128k max, color thresholds), main + sub-agent rows look identical (pulsing dot, model, user/assistant lines). Remove git branch, output tokens. 6 UI-only tasks planned.
+Rework dashboard cards to unified agent-row layout: context window progress bar (128k max, color thresholds), main + sub-agent rows look identical (pulsing dot, model, user/assistant lines). Remove git branch, output tokens. 6 UI-only tasks complete, 181 tests passing.
 
 ## Files
 
@@ -293,7 +293,7 @@ Rework dashboard cards to unified agent-row layout: context window progress bar 
 - **package.json**: Bun project config — `"type": "module"`, `@types/bun`, `dump` script (Phase: Session Detection)
 - **tsconfig.json**: IDE TypeScript support — ESNext, moduleResolution bundler (Phase: Session Detection)
 - **bun.lock**: Bun lockfile (Phase: Session Detection)
-- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; task count display, permission flash, stopped flash animations; R45 header time, R46 task display, R48 agents dot, R49 latestUserActivity display, R50 latestAssistantActivity display; JSON.parse try/catch, state Map→array, numeric esc() cleanup (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes)
+- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc() (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed (Phase: Backend, Review Fixes)
 - **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()`; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed (Phase: Session Detection, Review Fixes)

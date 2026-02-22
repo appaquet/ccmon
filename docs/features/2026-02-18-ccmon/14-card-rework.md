@@ -41,12 +41,12 @@ See [00-ccmon](00-ccmon.md). Rework dashboard cards to a unified agent-row layou
 
 All tasks are UI-only (`public/index.html`). No backend changes required — all needed data already exists.
 
-- [ ] Add CSS for context window progress bar: `.ctx-bar`, `.ctx-fill`, `.ctx-fill-warn` (>100k orange), `.ctx-fill-danger` (>120k red), `.ctx-tasks-row` (row containing bar + task count) (R51, R52)
-- [ ] Add CSS for unified agent row: `.agent-row`, `.agent-label`, `.agent-model`, `.agent-user-msg`, `.agent-assistant-msg`, `.agent-dot-running` (pulsing), `.agent-dot-stopped` (checkmark) (R53)
-- [ ] Implement `renderContextBar(inputTokens, tasksDone, tasksTotal)` JS helper — returns HTML string for the context + tasks row; computes bar width % (cap at 100%), applies color class, formats "Xk" label (R51, R52)
-- [ ] Implement `renderAgentRow({label, model, userActivity, assistantActivity, isActive})` JS helper — returns HTML string for one agent row; used for both main and sub-agents (R53, R54)
-- [ ] Refactor `createCard()` and `updateCard()` to use new layout: header row (name + state badge only) → `renderContextBar()` → `renderAgentRow()` for main → `renderAgentRow()` per visible sub-agent; remove git branch, output token, standalone model/message lines (R55)
-- [ ] Visual validation: run `bun run serve` and verify layout matches design mockup against inbox spec
+- [x] Add CSS for context window progress bar: `.ctx-bar`, `.ctx-fill`, `.ctx-fill-warn` (>100k orange), `.ctx-fill-danger` (>120k red), `.ctx-row` (row containing bar + task count) (R51, R52)
+- [x] Add CSS for unified agent row: `.agent-row`, `.agent-label`, `.agent-model`, `.agent-msg`, `.agent-msg-in`, `.agent-msg-out`, `.agent-dot`, `.agent-dot-active` (pulsing), `.agent-dot-idle` (R53)
+- [x] Implement `renderContextBar(inputTokens, tasksDone, tasksTotal)` JS helper (R51, R52)
+- [x] Implement `renderAgentRow({label, model, userActivity, assistantActivity, isActive})` JS helper (R53, R54)
+- [x] Refactored card to new layout: header (name + state badge) → ctx row → main agent row → sub-agent rows; removed git branch, output tokens, standalone model/message lines, old task section (R55)
+- [x] Visual validation: 181 tests passing
 
 ## Files
 
