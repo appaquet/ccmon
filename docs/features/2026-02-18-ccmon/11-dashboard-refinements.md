@@ -57,6 +57,23 @@ See [00-ccmon](00-ccmon.md). Fixes and improvements from real-world usage: token
 - [x] Updated all ~25 test assertions; added R49 single-winner test (R49)
 - [x] Updated ordering tests to verify single-winner behavior (R49)
 
+### R50 — Unify latestAssistantMessage + lastToolUse into latestAssistantActivity
+
+- [ ] In `SessionEnrichment`, replace `latestAssistantMessage?: string` and `lastToolUse?: string` with `latestAssistantActivity?: { text?: string; tool?: string }` (R50)
+- [ ] Remove `latestAssistantMessage` and `lastToolUse` from `ProjectState` where re-declared (R50)
+- [ ] In `readSessionTail()`, replace `foundAssistant` + `foundTool` with single `foundAssistantActivity` flag; first assistant entry encountered in reversed scan sets the field; within an entry, extract text block → `text`, tool_use block → `tool` independently (R50)
+- [ ] Update delta-read merge: `latestAssistantActivity: scanResult.latestAssistantActivity ?? baseData.latestAssistantActivity` (R50)
+- [ ] Update `buildProjectState()` to propagate `latestAssistantActivity`, remove old field references (R50)
+- [ ] Update existing tests referencing `latestAssistantMessage` or `lastToolUse` to use `latestAssistantActivity` (R50)
+- [ ] Add test: assistant entry with only text block → `{ text: "...", tool: undefined }` (R50)
+- [ ] Add test: assistant entry with only tool_use → `{ text: undefined, tool: "Bash" }` (R50)
+- [ ] Add test: assistant entry with both text + tool_use → `{ text: "...", tool: "Bash" }` (R50)
+- [ ] Add test: temporal ordering — older entry has text, newer has tool-only → tool wins (R50)
+- [ ] Add test: delta-read merge preserves latestAssistantActivity from base when scan has none (R50)
+- [ ] In `index.html`, update main session card: replace `latestAssistantMessage` display + model/lastToolUse meta line with single `latestAssistantActivity` line — show text when present, fall back to tool name (R50)
+- [ ] In `index.html`, update sub-agent card: replace `agent.lastToolUse ?? agent.latestAssistantMessage` with `latestAssistantActivity` display (R50)
+- [ ] Verify `bun test` passes, run formatting (R50)
+
 ## Files
 
 - **src/sessions.ts**: Token fix (R47), task parsing (R46), latestUserActivity refactor (R49)

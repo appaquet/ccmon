@@ -10,9 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 11 (Dashboard Refinements) fully implemented: 155 tests. All R45–R49 complete. R49: unified `latestUserActivity` field fixes double-slash and temporal ordering; commands display as `/forked /implement`, messages with `▶`.
-
-Inbox: R50 planned — distinguish last assistant text message vs last tool call in sub-agent display; show whichever is more meaningful (don't show tool call noise when there's a real message).
+Phase 11 (Dashboard Refinements): R45–R49 complete (155 tests). R50 planned — unify `latestAssistantMessage` + `lastToolUse` into `latestAssistantActivity?: { text?, tool? }`. JSON carries both when present; UI shows text over tool. Applies to main session and sub-agent cards. Next: `/implement` R50.
 
 ## Inbox
 
@@ -181,6 +179,10 @@ Inbox: R50 planned — distinguish last assistant text message vs last tool call
 * R49: 🔄 `latestUserMessage` and `latestCommand` unified into `latestUserActivity?: { text, isCommand }` — single temporal winner, no double-slash (Phase: Dashboard Refinements)
   * R49.1: Backend reversed scan uses one `found` flag; first user entry chronologically sets the field
   * R49.2: UI displays `text` as-is; uses `isCommand` to choose icon only
+* R50: ⬜ `latestAssistantMessage` and `lastToolUse` unified into `latestAssistantActivity?: { text?, tool? }` — single temporal winner, JSON carries both when present (Phase: Dashboard Refinements)
+  * R50.1: Backend reversed scan uses one `foundAssistantActivity` flag; first assistant entry sets the field; within an entry text and tool extracted independently
+  * R50.2: UI shows text when present, falls back to tool name; unified single-line display like `latestUserActivity`
+  * R50.3: Applies to both main session and sub-agent cards
 
 #### Out of Scope
 
