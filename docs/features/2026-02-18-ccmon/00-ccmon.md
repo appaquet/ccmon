@@ -12,21 +12,9 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 Phase 07 (QA Pass) implemented: 125 tests. R30: setInterval(render,5000) in UI. R31: server-owned Map<projectDir,ProjectState> as source of truth, ready promise, no on-demand rescans. R33: per-project 3s debounce on running→stopped. R32: inputTokens/outputTokens in SessionEnrichment, accumulated across all JSONL lines, displayed in dashboard.
 
-Phase 08 planned (JSONL-Primary Detection): switch running/stopped detection from hook-driven status.local.json to JSONL mtime + system:stop_hook_summary. Keep only PermissionRequest + Notification hooks. Eliminates R33 race at source.
+Phase 09 (Sub-Agent Names) implemented: 128 tests. Sub-agent descriptions extracted from `queue-operation` enqueue entries in parent JSONL during `readSessionTail()` streaming; displayed as `description ?? slug ?? agentId` in dashboard.
 
-## Inbox
-
-- [ ] Right now, web shows last user message, but would like to show when last message is a command
-  (skill) in web ui. they should be two different thiing in json, but web should show either.
-- [ ] Same for agent, i want to know last message OR last tool use in web ui. Not both.
-- [ ] Tokens seems innacurate. We need to use the token information that we get in the stream.
-  Inputs token also include agent+tool calls+responses+etc. we can't calculate that outself. i'm
-  just interested in input tokens here as seen by the model provider (i dont care about the cached
-  tokens info)
-- [ ] Remove completed agent after  2m from web ui. We can keep for more time in backend info. We
-  need to add info about last message time in the agent info payload so ui can exclude it. backend
-  should stop returning it after 5m
-
+Phase 10 planned (UI Polish): slash command display (R37), sub-agent show one activity (R38), accurate token totals (R39), sub-agent lifecycle/auto-hide (R40), keep enrichment on stopped (R41), completion checkmark (R42), agent ordering (R43), sub-agent model display (R44). Phase 08 (JSONL-Primary Detection) also planned.
 
 ## Requirements
 
@@ -159,6 +147,20 @@ Phase 08 planned (JSONL-Primary Detection): switch running/stopped detection fro
   * R35.1: UserPromptSubmit, PostToolUse, Stop, SessionEnd hooks removed from ccmon dotfiles config
   * R35.2: R33 debounce revisited — may be unnecessary once race condition is eliminated
 
+### UI Polish
+
+* R37: ⬜ Latest slash command/skill displayed in UI alongside latest user message; UI shows whichever is more recent (Phase: UI Polish)
+  * R37.1: `latestCommand?: string` added to `SessionEnrichment`; extracted from `<command-name>` user entries during `readSessionTail()` streaming
+* R38: ⬜ Sub-agent UI shows either last tool use OR last message, not both (Phase: UI Polish)
+* R39: ⬜ Input token count reflects full provider-billed total: `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` (Phase: UI Polish)
+* R40: ⬜ Completed sub-agents auto-hidden in UI after 2m; backend stops returning them after 5m (Phase: UI Polish)
+  * R40.1: `SubagentInfo` gains `lastMessageTime` (ISO 8601) from file mtime
+* R41: ⬜ Enrichment info (messages, tokens, tasks) remains visible when session transitions to stopped; only state pill updates (Phase: UI Polish)
+* R42: ⬜ Completed sub-agents show a checkmark indicator instead of active dot (Phase: UI Polish)
+* R43: ⬜ Sub-agents ordered by launch time descending in UI (Phase: UI Polish)
+  * R43.1: `SubagentInfo` gains `launchTime` (ISO 8601) from first JSONL entry or file mtime
+* R44: ⬜ Sub-agent model (Opus/Sonnet/Haiku) displayed in sub-agent rows (Phase: UI Polish)
+
 ### Sub-Agent Names
 
 * R36: ⬜ Sub-agent cards in dashboard show a meaningful description instead of raw agentId (Phase: Sub-Agent Names)
@@ -227,6 +229,11 @@ Replace hook-driven running/stopped detection with JSONL mtime + system:stop_hoo
 [09-sub-agent-names](09-sub-agent-names.md)
 
 Show meaningful sub-agent descriptions in the dashboard. Name sourced from `queue-operation` enqueue entries in the parent session JSONL (`task_id` → `description` map).
+
+### ⬜ 10 Phase: UI Polish
+[10-ui-polish](10-ui-polish.md)
+
+Collection of UI improvements and data model fixes: slash command display (R37), sub-agent show one activity (R38), accurate token totals (R39), sub-agent auto-hide lifecycle (R40), keep info on stopped (R41), completion checkmark (R42), agent ordering (R43), sub-agent model display (R44).
 
 ## Files
 
