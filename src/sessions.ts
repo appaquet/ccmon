@@ -67,8 +67,7 @@ export interface TaskInfo {
 
 export interface SessionEnrichment {
   model?: string;
-  latestUserMessage?: string;
-  latestCommand?: string;
+  latestUserActivity?: { text: string; isCommand: boolean };
   latestAssistantMessage?: string;
   lastToolUse?: string;
   tasks?: TaskInfo[];
@@ -144,8 +143,7 @@ export interface ProjectState extends ProjectInfo {
   state: SessionState;
   lastUpdated: string | null; // from status file timestamp, null if no status
   // Enrichment fields — populated for all states
-  latestUserMessage?: string;
-  latestCommand?: string;
+  latestUserActivity?: { text: string; isCommand: boolean };
   latestAssistantMessage?: string;
   model?: string;
   lastToolUse?: string;
@@ -621,8 +619,7 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
   // agentDescriptions are accumulated across ALL queue-operation enqueue entries.
   const reversed = lines.slice().reverse();
   const scanResult: SessionTailInfo = { agentDescriptions: new Map() };
-  let foundUser = false;
-  let foundCommand = false;
+  let foundUserActivity = false;
   let foundAssistant = false;
   let foundModel = false;
   let foundTool = false;
@@ -649,22 +646,18 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     const message = entry.message as Record<string, unknown> | undefined;
 
     if (type === 'user') {
-      if (!message) continue;
+      if (!message || foundUserActivity) continue;
       const content = message.content;
       if (typeof content === 'string') {
-        if (!content.startsWith('<')) {
-          // Plain user message.
-          if (!foundUser) {
-            scanResult.latestUserMessage = content.slice(0, 200);
-            foundUser = true;
-          }
-        } else if (!foundCommand) {
-          // May be a slash command — look for <command-name> tag.
-          const cmd = extractCommand(content);
-          if (cmd !== null) {
-            scanResult.latestCommand = cmd;
-            foundCommand = true;
-          }
+        // Try command first (content starting with < may carry <command-name> tag).
+        const cmd = content.startsWith('<') ? extractCommand(content) : null;
+        if (cmd !== null) {
+          scanResult.latestUserActivity = { text: cmd, isCommand: true };
+          foundUserActivity = true;
+        } else if (!content.startsWith('<')) {
+          // Plain user message — exclude <-prefixed content that isn't a command.
+          scanResult.latestUserActivity = { text: content.slice(0, 200), isCommand: false };
+          foundUserActivity = true;
         }
       }
     }
@@ -810,8 +803,7 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
   }
 
   const merged: SessionTailInfo = {
-    latestUserMessage: scanResult.latestUserMessage ?? baseData.latestUserMessage,
-    latestCommand: scanResult.latestCommand ?? baseData.latestCommand,
+    latestUserActivity: scanResult.latestUserActivity ?? baseData.latestUserActivity,
     latestAssistantMessage: scanResult.latestAssistantMessage ?? baseData.latestAssistantMessage,
     model: scanResult.model ?? baseData.model,
     lastToolUse: scanResult.lastToolUse ?? baseData.lastToolUse,
@@ -1009,8 +1001,7 @@ async function buildProjectState(project: ProjectInfo, claudeDir: string): Promi
   const subagentCount = subagents.filter((s) => s.isActive).length;
   return {
     ...base,
-    latestUserMessage: tail.latestUserMessage,
-    latestCommand: tail.latestCommand,
+    latestUserActivity: tail.latestUserActivity,
     latestAssistantMessage: tail.latestAssistantMessage,
     model: tail.model,
     lastToolUse: tail.lastToolUse,

@@ -810,7 +810,7 @@ describe('session enrichment', () => {
     });
   }
 
-  test('readSessionTail: extracts latestUserMessage, model, lastToolUse', async () => {
+  test('readSessionTail: extracts latestUserActivity, model, lastToolUse', async () => {
     const jsonlPath = join(tmpDir, 'tail-test.jsonl');
     const lines = [
       makeUserEntry('what is X'),
@@ -823,12 +823,13 @@ describe('session enrichment', () => {
     await writeFile(jsonlPath, lines.join('\n') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestUserMessage).toBe('what is X');
+    expect(result.latestUserActivity?.text).toBe('what is X');
+    expect(result.latestUserActivity?.isCommand).toBe(false);
     expect(result.model).toBe('claude-sonnet-4-6');
     expect(result.lastToolUse).toBe('Read');
   });
 
-  test('readSessionTail: slash command content is excluded from latestUserMessage', async () => {
+  test('readSessionTail: non-command <-prefixed content sets no latestUserActivity', async () => {
     const jsonlPath = join(tmpDir, 'slash-cmd-test.jsonl');
     const lines = [
       makeUserEntry('<command-message>ctx-load</command-message>'),
@@ -836,7 +837,7 @@ describe('session enrichment', () => {
     await writeFile(jsonlPath, lines.join('\n') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestUserMessage).toBeUndefined();
+    expect(result.latestUserActivity).toBeUndefined();
   });
 
   test('readSessionTail: message truncated to 200 chars', async () => {
@@ -845,12 +846,13 @@ describe('session enrichment', () => {
     await writeFile(jsonlPath, makeUserEntry(longMessage) + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestUserMessage).toBe('A'.repeat(200));
+    expect(result.latestUserActivity?.text).toBe('A'.repeat(200));
+    expect(result.latestUserActivity?.isCommand).toBe(false);
   });
 
   test('readSessionTail: missing file returns empty object', async () => {
     const result = await readSessionTail(join(tmpDir, 'nonexistent.jsonl'));
-    expect(result.latestUserMessage).toBeUndefined();
+    expect(result.latestUserActivity).toBeUndefined();
     expect(result.model).toBeUndefined();
     expect(result.lastToolUse).toBeUndefined();
   });
@@ -865,7 +867,8 @@ describe('session enrichment', () => {
     await writeFile(jsonlPath, lines.join('\n') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestUserMessage).toBe('valid message');
+    expect(result.latestUserActivity?.text).toBe('valid message');
+    expect(result.latestUserActivity?.isCommand).toBe(false);
   });
 
   test('readSessionTail: picks last tool use from assistant content array', async () => {
@@ -1057,7 +1060,8 @@ describe('session enrichment', () => {
     await writeFile(jsonlPath, initialLines.join('\n') + '\n');
 
     const first = await readSessionTail(jsonlPath);
-    expect(first.latestUserMessage).toBe('initial prompt');
+    expect(first.latestUserActivity?.text).toBe('initial prompt');
+    expect(first.latestUserActivity?.isCommand).toBe(false);
     expect(first.model).toBe('claude-opus-4-6');
     expect(first.tasksTotal).toBe(1);
     expect(first.tasksDone).toBe(1);
@@ -1079,8 +1083,8 @@ describe('session enrichment', () => {
     await Bun.write(jsonlPath, existingContent + appendedLines.join('\n') + '\n');
 
     const second = await readSessionTail(jsonlPath);
-    // Delta read: newer latestUserMessage overrides
-    expect(second.latestUserMessage).toBe('follow-up prompt');
+    // Delta read: newer latestUserActivity overrides
+    expect(second.latestUserActivity?.text).toBe('follow-up prompt');
     // Tasks updated from new delta
     expect(second.tasksTotal).toBe(2);
     expect(second.tasksDone).toBe(1);
@@ -1103,7 +1107,7 @@ describe('session enrichment', () => {
     await writeFile(jsonlPath, firstLines.join('\n') + '\n');
 
     const first = await readSessionTail(jsonlPath);
-    expect(first.latestUserMessage).toBe('old session message');
+    expect(first.latestUserActivity?.text).toBe('old session message');
     expect(first.tasksTotal).toBe(1);
 
     // Replace with a smaller new-session file (simulates session restart)
@@ -1123,7 +1127,7 @@ describe('session enrichment', () => {
 
     const second = await readSessionTail(jsonlPath);
     // Full re-read: should see only new content
-    expect(second.latestUserMessage).toBe('new session start');
+    expect(second.latestUserActivity?.text).toBe('new session start');
     expect(second.model).toBeUndefined();
     expect(second.tasksTotal).toBeUndefined();
   });
@@ -1144,7 +1148,7 @@ describe('session enrichment', () => {
     expect(result.latestAssistantMessage).toBe('A'.repeat(200));
   });
 
-  test('readSessionTail (R28): latestAssistantMessage and latestUserMessage both extracted', async () => {
+  test('readSessionTail (R28): latestAssistantMessage and latestUserActivity both extracted', async () => {
     const jsonlPath = join(tmpDir, 'r28-both-messages.jsonl');
     const lines = [
       makeUserEntry('user input here'),
@@ -1155,7 +1159,8 @@ describe('session enrichment', () => {
     await writeFile(jsonlPath, lines.join('\n') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestUserMessage).toBe('user input here');
+    expect(result.latestUserActivity?.text).toBe('user input here');
+    expect(result.latestUserActivity?.isCommand).toBe(false);
     expect(result.latestAssistantMessage).toBe('assistant reply here');
   });
 
@@ -1201,7 +1206,8 @@ describe('session enrichment', () => {
     expect(infos[0].isActive).toBe(true);
     expect(infos[0].model).toBe('claude-opus-4-6');
     expect(infos[0].lastToolUse).toBe('Read');
-    expect(infos[0].latestUserMessage).toBe('agent task');
+    expect(infos[0].latestUserActivity?.text).toBe('agent task');
+    expect(infos[0].latestUserActivity?.isCommand).toBe(false);
     expect(infos[0].latestAssistantMessage).toBe('agent response');
   });
 
@@ -1405,7 +1411,8 @@ describe('session enrichment', () => {
     expect(proj!.state).toBe('stopped');
 
     // Enrichment must be present even for stopped sessions (R41)
-    expect(proj!.latestUserMessage).toBe('hello from stopped session');
+    expect(proj!.latestUserActivity?.text).toBe('hello from stopped session');
+    expect(proj!.latestUserActivity?.isCommand).toBe(false);
     expect(proj!.model).toBe('claude-sonnet-4-6');
     expect(proj!.inputTokens).toBeGreaterThan(0);
     expect(proj!.outputTokens).toBeGreaterThan(0);
@@ -1493,7 +1500,7 @@ describe('sessionTailCache (R20.4)', () => {
     await writeFile(jsonlPath, makeUserLine('original message') + '\n');
 
     const first = await readSessionTail(jsonlPath);
-    expect(first.latestUserMessage).toBe('original message');
+    expect(first.latestUserActivity?.text).toBe('original message');
 
     // Overwrite content with same-size content, restore original mtime so cache key is unchanged.
     // "original message" and "replaced message" are the same length (16 chars each).
@@ -1504,7 +1511,7 @@ describe('sessionTailCache (R20.4)', () => {
 
     const second = await readSessionTail(jsonlPath);
     expect(second).toBe(first); // same object reference proves cache hit
-    expect(second.latestUserMessage).toBe('original message');
+    expect(second.latestUserActivity?.text).toBe('original message');
   });
 
   test('changed mtime: file replaced with smaller content triggers full re-read', async () => {
@@ -1513,14 +1520,14 @@ describe('sessionTailCache (R20.4)', () => {
     await writeFile(jsonlPath, makeUserLine('this is the first and longer message') + '\n');
 
     const first = await readSessionTail(jsonlPath);
-    expect(first.latestUserMessage).toBe('this is the first and longer message');
+    expect(first.latestUserActivity?.text).toBe('this is the first and longer message');
 
     await Bun.sleep(10);
     // Replace with shorter content (file shrinks → full re-read)
     await writeFile(jsonlPath, makeUserLine('new') + '\n');
 
     const second = await readSessionTail(jsonlPath);
-    expect(second.latestUserMessage).toBe('new');
+    expect(second.latestUserActivity?.text).toBe('new');
   });
 });
 
@@ -1760,9 +1767,9 @@ describe('readSessionTail token usage (R32)', () => {
   });
 });
 
-// ─── latestCommand extraction (R37) ──────────────────────────────────────────
+// ─── latestUserActivity extraction (R37, R49) ────────────────────────────────
 
-describe('readSessionTail latestCommand (R37)', () => {
+describe('readSessionTail latestUserActivity (R37, R49)', () => {
   let tmpDir: string;
 
   beforeEach(async () => {
@@ -1783,21 +1790,22 @@ describe('readSessionTail latestCommand (R37)', () => {
     return makeUserEntry(`<command-name>${name}</command-name>${argsTag}`);
   }
 
-  test('R37: latestCommand extracted from <command-name> user entry', async () => {
+  test('R37: command extracted from <command-name> user entry → isCommand: true', async () => {
     const jsonlPath = join(tmpDir, 'r37-basic.jsonl');
     await writeFile(jsonlPath, makeCommandEntry('/ctx-load') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestCommand).toBe('/ctx-load');
-    expect(result.latestUserMessage).toBeUndefined();
+    expect(result.latestUserActivity?.text).toBe('/ctx-load');
+    expect(result.latestUserActivity?.isCommand).toBe(true);
   });
 
-  test('R37: latestCommand includes args when <command-args> present', async () => {
+  test('R37: command includes args when <command-args> present', async () => {
     const jsonlPath = join(tmpDir, 'r37-args.jsonl');
     await writeFile(jsonlPath, makeCommandEntry('/ctx-load', 'some args') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestCommand).toBe('/ctx-load some args');
+    expect(result.latestUserActivity?.text).toBe('/ctx-load some args');
+    expect(result.latestUserActivity?.isCommand).toBe(true);
   });
 
   test('R37: <command-name> without args produces command-only string', async () => {
@@ -1805,11 +1813,12 @@ describe('readSessionTail latestCommand (R37)', () => {
     await writeFile(jsonlPath, makeCommandEntry('/implement') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestCommand).toBe('/implement');
+    expect(result.latestUserActivity?.text).toBe('/implement');
+    expect(result.latestUserActivity?.isCommand).toBe(true);
   });
 
-  test('R37 ordering: command more recent than message → latestCommand set, latestUserMessage set from older entry', async () => {
-    const jsonlPath = join(tmpDir, 'r37-cmd-newer.jsonl');
+  test('R49 single-winner ordering: command more recent than message → isCommand: true', async () => {
+    const jsonlPath = join(tmpDir, 'r49-cmd-newer.jsonl');
     const lines = [
       makeUserEntry('a plain user message'),
       makeCommandEntry('/ctx-save'),
@@ -1817,14 +1826,13 @@ describe('readSessionTail latestCommand (R37)', () => {
     await writeFile(jsonlPath, lines.join('\n') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    // Reversed scan finds the command first (it is the most recent entry)
-    expect(result.latestCommand).toBe('/ctx-save');
-    // The plain message is still extracted (it appears earlier in the file)
-    expect(result.latestUserMessage).toBe('a plain user message');
+    // Reversed scan finds the command first (most recent entry) → single winner
+    expect(result.latestUserActivity?.text).toBe('/ctx-save');
+    expect(result.latestUserActivity?.isCommand).toBe(true);
   });
 
-  test('R37 ordering: message more recent than command → latestUserMessage set, latestCommand set from older entry', async () => {
-    const jsonlPath = join(tmpDir, 'r37-msg-newer.jsonl');
+  test('R49 single-winner ordering: message more recent than command → isCommand: false', async () => {
+    const jsonlPath = join(tmpDir, 'r49-msg-newer.jsonl');
     const lines = [
       makeCommandEntry('/ctx-load'),
       makeUserEntry('a follow-up user message'),
@@ -1832,21 +1840,33 @@ describe('readSessionTail latestCommand (R37)', () => {
     await writeFile(jsonlPath, lines.join('\n') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    // Reversed scan finds the plain message first (it is the most recent entry)
-    expect(result.latestUserMessage).toBe('a follow-up user message');
-    // The command is also extracted (it appears earlier in the file)
-    expect(result.latestCommand).toBe('/ctx-load');
+    // Reversed scan finds the plain message first (most recent entry) → single winner
+    expect(result.latestUserActivity?.text).toBe('a follow-up user message');
+    expect(result.latestUserActivity?.isCommand).toBe(false);
   });
 
-  test('R37: content starting with < but no <command-name> tag is not a command', async () => {
+  test('R37: content starting with < but no <command-name> tag → no latestUserActivity', async () => {
     const jsonlPath = join(tmpDir, 'r37-xml-no-cmd.jsonl');
-    // This is the existing behaviour: content starting with < is skipped for latestUserMessage
-    // and not a command either (no <command-name> tag)
+    // Content starting with < but no <command-name> tag: excluded from plain messages, not a command
     await writeFile(jsonlPath, makeUserEntry('<some-other-tag>value</some-other-tag>') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestUserMessage).toBeUndefined();
-    expect(result.latestCommand).toBeUndefined();
+    expect(result.latestUserActivity).toBeUndefined();
+  });
+
+  test('R49 single-winner: older entries do not overwrite once latestUserActivity is set', async () => {
+    const jsonlPath = join(tmpDir, 'r49-no-overwrite.jsonl');
+    const lines = [
+      makeCommandEntry('/old-command'),
+      makeUserEntry('older message'),
+      makeUserEntry('most recent message'),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    // Reversed scan: "most recent message" is found first and wins; older entries ignored
+    expect(result.latestUserActivity?.text).toBe('most recent message');
+    expect(result.latestUserActivity?.isCommand).toBe(false);
   });
 });
 
