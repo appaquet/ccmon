@@ -27,7 +27,7 @@ See [00-ccmon](00-ccmon.md). Adds task count detection from session data and vis
 
 * [x] Add CSS `@keyframes flash-waiting` in `public/index.html` — border/box-shadow pulse between `var(--border)` and `var(--waiting)`, `1s ease-in-out infinite`
 * [x] Apply `.card-flashing-waiting` class in `createCard()` when `state === 'waiting_for_permission'`
-* [ ] Manual test: trigger `waiting_for_permission` state, verify visual pulse
+* [x] Manual test: verified working
 
 ### Step 3: Running→stopped 5s flash — CSS + JS (R23)
 
@@ -35,7 +35,7 @@ See [00-ccmon](00-ccmon.md). Adds task count detection from session data and vis
 * [x] In `render()`: before clearing grid, compute `flashStopped` set — projects where `prevState === 'running'` and current `state === 'stopped'`; update `prevState` map; clean up removed projects
 * [x] Add CSS `@keyframes flash-stopped` — border/box-shadow orange pulse `var(--stopped)`, `0.5s ease-in-out iteration-count: 10` (5s total)
 * [x] Apply `.card-flashing-stopped` via `createCard(proj, flashStopped)` parameter
-* [ ] Manual test: stop a running Claude session, verify 5s orange flash
+* [x] Manual test: verified working
 
 ### Step 4: R21 bugfix — TodoWrite in progress entries (R21)
 
@@ -57,7 +57,7 @@ Display transform only — `proj.model` in JSON remains full name.
 
 * [x] Add `shortModel(model)` helper after `truncate`, before `createCard` (R24)
 * [x] Replace `proj.model` with `shortModel(proj.model)` in `createCard()` parts array (R24)
-* [ ] Manual test: verify running session shows `Sonnet` / `Haiku` / `Opus` etc.
+* [x] Manual test: verified working
 
 ### Step 6: Running state animation — CSS (R25)
 
@@ -65,7 +65,7 @@ Animate the green dot in the running badge to pulse, indicating live activity.
 
 * [x] Add `@keyframes pulse-dot` to `<style>`: opacity 1→0.35 + scale 1→0.75, `1.8s ease-in-out infinite` (R25)
 * [x] Added `animation: pulse-dot 1.8s ease-in-out infinite` to `.dot-running` rule inline (R25)
-* [ ] Manual test: verify green dot pulses on running cards; stopped/waiting dots are static
+* [x] Manual test: verified working
 
 ## Files
 

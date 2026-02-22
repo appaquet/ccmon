@@ -10,9 +10,9 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 05 Steps 1-6 complete: 101 tests. R21 bugfix: `progress`-entry `TodoWrite` scanning fixed via `scanTodoWrite()` helper. R22/R23: flash animations. R24: `shortModel()` helper (Opus/Sonnet/Haiku display). R25: `pulse-dot` CSS animation on running badge dot.
+Phase 05 (UI Enhancements) complete and verified: 101 tests. R21: `tasksDone`/`tasksTotal` from `TodoWrite` in both `assistant` and `progress` JSONL entries via `scanTodoWrite()` helper. R22/R23: flash animations on `waiting_for_permission` and `running→stopped`. R24: `shortModel()` helper displays Opus/Sonnet/Haiku. R25: `pulse-dot` CSS animation on running badge dot.
 
-Manual verification pending for R22/R23/R24/R25. R21 only covers `TodoWrite` sessions; `TaskCreate`/`TaskUpdate` full-parse support deferred.
+R21 covers `TodoWrite` only — `TaskCreate`/`TaskUpdate` full-parse support deferred (needs architecture change beyond 64KB tail). No active work planned. Project feature-complete.
 
 ## Requirements
 
@@ -108,10 +108,10 @@ Manual verification pending for R22/R23/R24/R25. R21 only covers `TodoWrite` ses
 ### UI Enhancements
 
 * R21: 🔄 Task count from JSONL — `tasksDone`/`tasksTotal` via `TodoWrite` entries; bugfix needed for `progress`-type entries (Phase: UI Enhancements)
-* R22: 🔄 Flash card when state transitions to `waiting_for_permission` (Phase: UI Enhancements)
-* R23: 🔄 Flash card for 5s when state transitions from `running` → `stopped` (Phase: UI Enhancements)
-* R24: 🔄 Short model names in web UI — `Opus`/`Sonnet`/`Haiku` display only; JSON unchanged (Phase: UI Enhancements)
-* R25: 🔄 Animate running state badge — pulsing dot on green pill (Phase: UI Enhancements)
+* R22: ✅ Flash card when state transitions to `waiting_for_permission` (Phase: UI Enhancements)
+* R23: ✅ Flash card for 5s when state transitions from `running` → `stopped` (Phase: UI Enhancements)
+* R24: ✅ Short model names in web UI — `Opus`/`Sonnet`/`Haiku` display only; JSON unchanged (Phase: UI Enhancements)
+* R25: ✅ Animate running state badge — pulsing dot on green pill (Phase: UI Enhancements)
 
 #### Out of Scope
 
@@ -150,10 +150,10 @@ Single-page vanilla JS UI. Connects via WebSocket, renders project list, updates
 
 Expose ccmon as a Nix flake package via `writeShellScriptBin` wrapper with pinned bun. Add README with install/hook instructions for personal NixOS + home-manager setup. All 3 steps done: flake.nix, README.md, CLAUDE.md.
 
-### 🔄 05 Phase: UI Enhancements
+### ✅ 05 Phase: UI Enhancements
 [05-ui-enhancements](05-ui-enhancements.md)
 
-Task count detection from JSONL, permission flash, running→stopped flash animation. Implementation complete, manual verification pending.
+Task count (R21 TodoWrite, R22/R23 flash animations, R24 short model names, R25 running dot pulse. R21 partial: TodoWrite sessions only; TaskCreate/TaskUpdate full-parse deferred.
 
 ## Files
 
@@ -172,7 +172,7 @@ Task count detection from JSONL, permission flash, running→stopped flash anima
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection (Phase: Session Detection)
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands (Phase: Session Detection, Backend)
 - **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints (Phase: Backend)
-- **tests/sessions.test.ts**: 99 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements)
+- **tests/sessions.test.ts**: 101 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
 - **tests/cli.test.ts**: 14 tests for cli.ts — status, dump --watch, --project filter (Phase: Backend)
 - **tests/server.test.ts**: 4 tests for server.ts — HTTP endpoints, WebSocket (Phase: Backend)
