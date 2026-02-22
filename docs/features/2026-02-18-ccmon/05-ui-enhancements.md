@@ -6,8 +6,9 @@ See [00-ccmon](00-ccmon.md). Adds task count detection from session data and vis
 
 ### Key Design Decisions
 
-- `TodoWrite` tool calls exist in JSONL `assistant` entries: `message.content[].type === 'tool_use'` with `name === 'TodoWrite'`, `input.todos` is an array of `{ content, status, activeForm }`. Statuses: `completed`, `in_progress`, `pending`
-- Skip `progress` entries (different nesting); only scan `assistant` entries (already the pattern in `readSessionTail()`)
+- `TodoWrite` tool calls exist in JSONL **both** as `"type": "progress"` (34/39 times, at `data.message.message.content[]`) and `"type": "assistant"` (at `message.content[]`). Must scan both.
+- Initial R21 implementation only scanned `assistant` entries (Bug 1) and had early loop break before reaching `TodoWrite` (Bug 2). Fixed in Step 4.
+- The user's ccmon sessions use `TaskCreate`/`TaskUpdate` (not `TodoWrite`). Full support needs a different architecture (full file scan, not 64KB tail). Deferred.
 - Task counts follow existing stopped-session guard: only enriched for non-stopped sessions
 - Web UI rebuilds DOM on every render (`grid.innerHTML = ''`) — R23 needs a JS `prevState` map for transition detection
 - R22 needs no state tracking — CSS class applied directly when state is `waiting_for_permission`
@@ -36,8 +37,39 @@ See [00-ccmon](00-ccmon.md). Adds task count detection from session data and vis
 * [x] Apply `.card-flashing-stopped` via `createCard(proj, flashStopped)` parameter
 * [ ] Manual test: stop a running Claude session, verify 5s orange flash
 
+### Step 4: R21 bugfix — TodoWrite in progress entries (R21)
+
+Two bugs found after initial implementation:
+
+**Bug 1** — `TodoWrite` appears in `"type": "progress"` entries (34/39 times), not just `"assistant"`. Path: `data.message.message.content[]`. Current code skips all `progress` entries.
+
+**Bug 2** — Break condition `if (foundUser && foundModel && foundTool)` exits before reaching `TodoWrite` entries. `foundTasks` must be added to prevent premature exit.
+
+* [ ] Extend `readSessionTail()` to also scan `type === 'progress'` entries for `TodoWrite` at `data.message.message.content[]` (R21)
+* [ ] Add `foundTasks` to the break condition: `if (foundUser && foundModel && foundTool && foundTasks) break;` (R21)
+* [ ] Update/add tests for `progress`-type `TodoWrite` entries
+* [ ] Verify: `bun test` passes; `bun run dump` output shows `tasksDone`/`tasksTotal` for sessions using `TodoWrite`
+
+### Step 5: Short model names in web UI — CSS/JS (R24)
+
+Display transform only — `proj.model` in JSON remains full name.
+
+* [ ] Add `shortModel(model)` helper function in `<script>` block (after `truncate`, before `createCard`) (R24)
+  * `model.toLowerCase().includes('opus')` → `'Opus'`; same for `sonnet`/`haiku`; fallback = raw string
+  * Guard: `if (!model) return ''`
+* [ ] Replace `proj.model` with `shortModel(proj.model)` in `createCard()` parts array (R24)
+* [ ] Manual test: verify running session shows `Sonnet` / `Haiku` / `Opus` etc.
+
+### Step 6: Running state animation — CSS (R25)
+
+Animate the green dot in the running badge to pulse, indicating live activity.
+
+* [ ] Add `@keyframes pulse-dot` to `<style>`: opacity 1→0.35 + scale 1→0.75, `1.8s ease-in-out infinite` (R25)
+* [ ] Add `animation: pulse-dot ...` to `.dot-running` rule (or append second `.dot-running` block) (R25)
+* [ ] Manual test: verify green dot pulses on running cards; stopped/waiting dots are static
+
 ## Files
 
-- **src/sessions.ts**: Add `tasksDone`/`tasksTotal` to `SessionTailInfo` + `ProjectState`; extend `readSessionTail()` loop; propagate in `buildProjectState()`
-- **public/index.html**: CSS keyframes for both animations; `createCard()` applies `card-flashing-waiting` + displays task count; `render()` tracks `prevState` and applies `card-flashing-stopped`
-- **tests/sessions.test.ts**: 4 new tests for task count extraction in `readSessionTail`
+- **src/sessions.ts**: Add `tasksDone`/`tasksTotal` to `SessionTailInfo` + `ProjectState`; extend `readSessionTail()` loop to scan both `assistant` and `progress` entries; propagate in `buildProjectState()`
+- **public/index.html**: CSS keyframes for animations; `createCard()` applies flash classes, task count, `shortModel()`; `render()` tracks `prevState`; `.dot-running` animation
+- **tests/sessions.test.ts**: Tests for task count extraction in `readSessionTail`
