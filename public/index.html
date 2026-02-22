@@ -114,7 +114,7 @@
     .badge-stopped  { background: rgba(249,115,22,0.12); color: var(--stopped); }
     .badge-waiting  { background: rgba(239,68,68,0.12);  color: var(--waiting); }
 
-    .dot-running  { background: var(--running); }
+    .dot-running  { background: var(--running); animation: pulse-dot 1.8s ease-in-out infinite; }
     .dot-stopped  { background: var(--stopped); }
     .dot-waiting  { background: var(--waiting); }
 
@@ -147,6 +147,11 @@
       color: var(--muted);
       padding: 60px 20px;
       font-size: 15px;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1;    transform: scale(1); }
+      50%       { opacity: 0.35; transform: scale(0.75); }
     }
 
     @keyframes flash-waiting {
@@ -225,6 +230,15 @@
       return str.length > max ? str.slice(0, max) + '…' : str;
     }
 
+    function shortModel(model) {
+      if (!model) return '';
+      const m = model.toLowerCase();
+      if (m.includes('opus'))   return 'Opus';
+      if (m.includes('sonnet')) return 'Sonnet';
+      if (m.includes('haiku'))  return 'Haiku';
+      return model;
+    }
+
     function createCard(proj, flashStopped) {
       const card = document.createElement('div');
       const s = proj.state || 'stopped';
@@ -259,7 +273,7 @@
 
       // model + last tool use
       if (proj.model || proj.lastToolUse) {
-        const parts = [proj.model, proj.lastToolUse].filter(Boolean);
+        const parts = [shortModel(proj.model), proj.lastToolUse].filter(Boolean);
         html += `<div class="card-meta">${esc(parts.join(' · '))}</div>`;
       }
 

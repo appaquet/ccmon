@@ -691,6 +691,19 @@ describe('session enrichment', () => {
     });
   }
 
+  function makeProgressEntry(contentBlocks: object[]): string {
+    return JSON.stringify({
+      type: 'progress',
+      data: {
+        message: {
+          message: {
+            content: contentBlocks,
+          },
+        },
+      },
+    });
+  }
+
   test('readSessionTail: extracts latestUserMessage, model, lastToolUse', async () => {
     const jsonlPath = join(tmpDir, 'tail-test.jsonl');
     const lines = [
@@ -846,6 +859,53 @@ describe('session enrichment', () => {
     // Backward scan finds the newer (last in file) entry first
     expect(result.tasksTotal).toBe(3);
     expect(result.tasksDone).toBe(2);
+  });
+
+  test('readSessionTail: TodoWrite in progress-type entry → correct tasksDone and tasksTotal', async () => {
+    const jsonlPath = join(tmpDir, 'todowrite-progress.jsonl');
+    const todos = [
+      { content: 'Task A', status: 'completed' },
+      { content: 'Task B', status: 'in_progress' },
+      { content: 'Task C', status: 'pending' },
+    ];
+    const lines = [
+      makeUserEntry('implement the feature'),
+      makeProgressEntry([
+        { type: 'tool_use', name: 'TodoWrite', input: { todos } },
+      ]),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.tasksTotal).toBe(3);
+    expect(result.tasksDone).toBe(1);
+  });
+
+  test('readSessionTail: progress-type TodoWrite preferred over older assistant-type when both present', async () => {
+    const jsonlPath = join(tmpDir, 'todowrite-progress-vs-assistant.jsonl');
+    const olderTodos = [
+      { content: 'Old A', status: 'completed' },
+      { content: 'Old B', status: 'completed' },
+    ];
+    const newerTodos = [
+      { content: 'New A', status: 'completed' },
+      { content: 'New B', status: 'in_progress' },
+      { content: 'New C', status: 'pending' },
+    ];
+    const lines = [
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'tool_use', name: 'TodoWrite', input: { todos: olderTodos } },
+      ]),
+      makeProgressEntry([
+        { type: 'tool_use', name: 'TodoWrite', input: { todos: newerTodos } },
+      ]),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    // Backward scan finds the progress entry (last in file) first
+    expect(result.tasksTotal).toBe(3);
+    expect(result.tasksDone).toBe(1);
   });
 });
 

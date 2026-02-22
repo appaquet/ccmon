@@ -433,9 +433,9 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
 
     const type = entry.type;
     const message = entry.message as Record<string, unknown> | undefined;
-    if (!message) continue;
 
     if (!foundUser && type === 'user') {
+      if (!message) continue;
       const content = message.content;
       if (typeof content === 'string' && !content.startsWith('<')) {
         result.latestUserMessage = content.slice(0, 200);
@@ -443,7 +443,7 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
       }
     }
 
-    if (type === 'assistant') {
+    if (type === 'assistant' && message) {
       if (!foundModel && typeof message.model === 'string') {
         result.model = message.model;
         foundModel = true;
@@ -467,23 +467,21 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
         }
 
         if (!foundTasks) {
-          const todoWrite = contentBlocks.find(
-            (item): item is { type: string; name: string; input: Record<string, unknown> } =>
-              typeof item === 'object' &&
-              item !== null &&
-              (item as Record<string, unknown>).type === 'tool_use' &&
-              (item as Record<string, unknown>).name === 'TodoWrite',
-          );
-          if (todoWrite !== undefined) {
-            const input = (todoWrite as Record<string, unknown>).input as Record<string, unknown> | undefined;
-            if (input !== undefined && Array.isArray(input.todos)) {
-              const todos = input.todos as Array<{ status: string }>;
-              result.tasksTotal = todos.length;
-              result.tasksDone = todos.filter((t) => t.status === 'completed').length;
-              foundTasks = true;
-            }
-          }
+          scanTodoWrite(contentBlocks, result);
+          if (result.tasksTotal !== undefined) foundTasks = true;
         }
+      }
+    }
+
+    // progress entries carry TodoWrite tool calls under data.message.message.content
+    if (!foundTasks && type === 'progress') {
+      const data = entry.data as Record<string, unknown> | undefined;
+      const outerMsg = data?.message as Record<string, unknown> | undefined;
+      const innerMsg = outerMsg?.message as Record<string, unknown> | undefined;
+      const content = innerMsg?.content;
+      if (Array.isArray(content)) {
+        scanTodoWrite(content as unknown[], result);
+        if (result.tasksTotal !== undefined) foundTasks = true;
       }
     }
   }
@@ -522,6 +520,22 @@ export function parseProcessOutput(output: string): number[] {
 }
 
 // ─── Private Helpers ─────────────────────────────────────────────────────────
+
+function scanTodoWrite(contentBlocks: unknown[], result: SessionTailInfo): void {
+  const todoWrite = contentBlocks.find(
+    (item): item is { type: string; name: string; input: Record<string, unknown> } =>
+      typeof item === 'object' &&
+      item !== null &&
+      (item as Record<string, unknown>).type === 'tool_use' &&
+      (item as Record<string, unknown>).name === 'TodoWrite',
+  );
+  if (todoWrite === undefined) return;
+  const input = (todoWrite as Record<string, unknown>).input as Record<string, unknown> | undefined;
+  if (input === undefined || !Array.isArray(input.todos)) return;
+  const todos = input.todos as Array<{ status: string }>;
+  result.tasksTotal = todos.length;
+  result.tasksDone = todos.filter((t) => t.status === 'completed').length;
+}
 
 async function buildProjectState(project: ProjectInfo, claudeDir: string): Promise<ProjectState> {
   const projectDirPath = join(claudeDir, project.projectDir);
