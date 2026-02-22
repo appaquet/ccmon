@@ -10,7 +10,9 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 11 (Dashboard Refinements): R45–R49 complete (155 tests). R50 planned — unify `latestAssistantMessage` + `lastToolUse` into `latestAssistantActivity?: { text?, tool? }`. JSON carries both when present; UI shows text over tool. Applies to main session and sub-agent cards. Next: `/implement` R50.
+Phase 11 (Dashboard Refinements): R45–R50 implemented (160 tests). R50: unified `latestAssistantMessage` + `lastToolUse` into `latestAssistantActivity?: { text?, tool? }` — JSON carries both, UI shows text over tool for both main session and sub-agent cards. Single `foundAssistantActivity` flag mirrors R49 pattern.
+
+No inbox items. All phase 11 tasks complete. User to confirm phase acceptance.
 
 ## Inbox
 
@@ -179,7 +181,7 @@ Phase 11 (Dashboard Refinements): R45–R49 complete (155 tests). R50 planned �
 * R49: 🔄 `latestUserMessage` and `latestCommand` unified into `latestUserActivity?: { text, isCommand }` — single temporal winner, no double-slash (Phase: Dashboard Refinements)
   * R49.1: Backend reversed scan uses one `found` flag; first user entry chronologically sets the field
   * R49.2: UI displays `text` as-is; uses `isCommand` to choose icon only
-* R50: ⬜ `latestAssistantMessage` and `lastToolUse` unified into `latestAssistantActivity?: { text?, tool? }` — single temporal winner, JSON carries both when present (Phase: Dashboard Refinements)
+* R50: 🔄 `latestAssistantMessage` and `lastToolUse` unified into `latestAssistantActivity?: { text?, tool? }` — single temporal winner, JSON carries both when present (Phase: Dashboard Refinements)
   * R50.1: Backend reversed scan uses one `foundAssistantActivity` flag; first assistant entry sets the field; within an entry text and tool extracted independently
   * R50.2: UI shows text when present, falls back to tool name; unified single-line display like `latestUserActivity`
   * R50.3: Applies to both main session and sub-agent cards
@@ -267,14 +269,14 @@ Fixes and improvements from real-world usage: input token counting bug fix (last
 - **package.json**: Bun project config — `"type": "module"`, `@types/bun`, `dump` script (Phase: Session Detection)
 - **tsconfig.json**: IDE TypeScript support — ESNext, moduleResolution bundler (Phase: Session Detection)
 - **bun.lock**: Bun lockfile (Phase: Session Detection)
-- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; task count display, permission flash, stopped flash animations; R45 header time, R46 task display, R48 agents dot, R49 latestUserActivity display (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements)
+- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; task count display, permission flash, stopped flash animations; R45 header time, R46 task display, R48 agents dot, R49 latestUserActivity display, R50 latestAssistantActivity display (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours (Phase: Backend)
-- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()`; `latestUserActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements)
+- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()`; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection (Phase: Session Detection)
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands (Phase: Session Detection, Backend)
 - **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints (Phase: Backend)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
-- **tests/sessions.test.ts**: 155 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements)
+- **tests/sessions.test.ts**: 160 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
 - **tests/cli.test.ts**: 14 tests for cli.ts — status, dump --watch, --project filter (Phase: Backend)
 - **tests/server.test.ts**: 4 tests for server.ts — HTTP endpoints, WebSocket (Phase: Backend)
