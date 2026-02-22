@@ -10,9 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 10 (UI Polish) implemented + R41 bugfix: 145 tests. Root cause of R41: `buildProjectState()` guarded `readSessionTail()` behind `if (state !== 'stopped')`, so stopped sessions returned no enrichment data at all. Fixed by removing guard. All R37–R44 features complete: `latestCommand` display, one-activity sub-agent, provider-billed tokens, sub-agent lifecycle, checkmark indicator, ordering, model display.
-
-Phase 08 (JSONL-Primary Detection) is the next planned phase — replace hook-driven running/stopped with JSONL mtime + system:stop_hook_summary, reducing hooks to PermissionRequest + Notification only.
+Phase 11 (Dashboard Refinements) implemented: 154 tests (+9). R47 bug fix: input tokens now last-seen value (not sum) — `cache_read_input_tokens` is per-call total, not delta; output tokens still summed. R46: TaskCreate/TaskUpdate parser with `tasks[]` in payload, in-progress subjects shown in UI. R45: last update time in card header, card-footer removed. R48: pulsing dot on agents header, N/M active text removed.
 
 ## Inbox
 
@@ -110,7 +108,7 @@ Phase 08 (JSONL-Primary Detection) is the next planned phase — replace hook-dr
 
 ### UI Enhancements
 
-* R21: 🔄 Task count from JSONL — `tasksDone`/`tasksTotal` via `TodoWrite` entries; bugfix needed for `progress`-type entries (Phase: UI Enhancements)
+* R21: 🔄 Task count from JSONL — `tasksDone`/`tasksTotal` via `TodoWrite` entries; superseded by R46 which adds full `TaskCreate`/`TaskUpdate` support (Phase: UI Enhancements)
 * R22: ✅ Flash card when state transitions to `waiting_for_permission` (Phase: UI Enhancements)
 * R23: ✅ Flash card for 5s when state transitions from `running` → `stopped` (Phase: UI Enhancements)
 * R24: ✅ Short model names in web UI — `Opus`/`Sonnet`/`Haiku` display only; JSON unchanged (Phase: UI Enhancements)
@@ -171,13 +169,13 @@ Phase 08 (JSONL-Primary Detection) is the next planned phase — replace hook-dr
 
 ### Dashboard Refinements
 
-* R45: ⬜ Last update timestamp displayed in card header next to project name, left of state pill (Phase: Dashboard Refinements)
-* R46: ⬜ Task list from JSONL — individual tasks with subject and status via `TaskCreate`/`TaskUpdate` parsing; `TodoWrite` as legacy fallback (Phase: Dashboard Refinements)
+* R45: 🔄 Last update timestamp displayed in card header next to project name, left of state pill (Phase: Dashboard Refinements)
+* R46: 🔄 Task list from JSONL — individual tasks with subject and status via `TaskCreate`/`TaskUpdate` parsing; `TodoWrite` as legacy fallback (Phase: Dashboard Refinements)
   * R46.1: `tasks?: Array<{ id, subject, status, activeForm? }>` in `SessionEnrichment`; `tasksDone`/`tasksTotal` derived from it
   * R46.2: UI shows task count summary + in-progress task subjects
-* R47: ⬜ Input token count takes the last assistant entry's value (not summed) — `input_tokens + cache_creation + cache_read` are per-call totals, not deltas (Phase: Dashboard Refinements)
+* R47: 🔄 Input token count takes the last assistant entry's value (not summed) — `input_tokens + cache_creation + cache_read` are per-call totals, not deltas (Phase: Dashboard Refinements)
   * R47.1: `outputTokens` remains summed (per-call deltas, correct to accumulate)
-* R48: ⬜ Agents section header shows pulsing green dot when any sub-agent is active; "N/M active" text removed (Phase: Dashboard Refinements)
+* R48: 🔄 Agents section header shows pulsing green dot when any sub-agent is active; "N/M active" text removed (Phase: Dashboard Refinements)
 
 #### Out of Scope
 
@@ -246,7 +244,7 @@ Show meaningful sub-agent descriptions in the dashboard. Name sourced from `queu
 
 Collection of UI improvements and data model fixes: slash command display (R37), sub-agent show one activity (R38), accurate token totals (R39), sub-agent auto-hide lifecycle (R40), keep info on stopped (R41), completion checkmark (R42), agent ordering (R43), sub-agent model display (R44). Implemented: 144 tests passing, all tasks complete.
 
-### ⬜ 11 Phase: Dashboard Refinements
+### 🔄 11 Phase: Dashboard Refinements
 [11-dashboard-refinements](11-dashboard-refinements.md)
 
 Fixes and improvements from real-world usage: input token counting bug fix (last value, not sum), task reintroduction with modern TaskCreate/TaskUpdate parsing, last update time in card header, agents section active indicator.
