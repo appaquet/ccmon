@@ -135,10 +135,12 @@
       text-overflow: ellipsis;
     }
 
-    .card-footer {
-      font-size: 11px;
+    .card-time {
+      font-size: 0.75rem;
       color: var(--muted);
-      margin-top: auto;
+      margin: 0 0.5rem;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
 
     .empty-state {
@@ -286,9 +288,11 @@
       const dotClass = stateDotClass[s] || 'dot-stopped';
       const label = stateLabel[s] || s;
 
+      const timeLabel = proj.lastUpdated ? relativeTime(proj.lastUpdated) : '—';
       let html = `
         <div class="card-header">
           <span class="card-name" title="${esc(proj.projectName)}">${esc(proj.projectName)}</span>
+          <span class="card-time">${esc(timeLabel)}</span>
           <span class="badge ${badgeClass}">
             <span class="dot ${dotClass}"></span>
             ${esc(label)}
@@ -328,7 +332,8 @@
         );
         if (visible.length > 0) {
           const active = visible.filter(a => a.isActive).length;
-          html += `<div class="card-meta">⬡ agents: ${esc(active)}/${esc(visible.length)} active`;
+          const activeDot = active > 0 ? `<span class="agent-dot agent-dot-active" style="margin-right:4px"></span>` : '';
+          html += `<div class="card-meta">${activeDot}⬡ agents (${esc(visible.length)})`;
           const shown = visible.slice(0, 3);
           for (const agent of shown) {
             const indicator = agent.isActive
@@ -349,8 +354,22 @@
         }
       }
 
-      // task count
-      if (proj.tasksDone !== undefined && proj.tasksTotal !== undefined && proj.tasksTotal > 0) {
+      // task display — use tasks array when available, fall back to done/total counts
+      if (proj.tasks && proj.tasks.length > 0) {
+        const nonDeleted = proj.tasks.filter(t => t.status !== 'deleted');
+        const done = nonDeleted.filter(t => t.status === 'completed').length;
+        const inProgress = nonDeleted.filter(t => t.status === 'in_progress');
+        html += `<div class="card-meta">${esc(done)}/${esc(nonDeleted.length)} tasks`;
+        const shown = inProgress.slice(0, 3);
+        for (const t of shown) {
+          const label = t.activeForm || t.subject;
+          html += `<br><span style="margin-left:8px;font-size:10px">▶ ${esc(truncate(label, 60))}</span>`;
+        }
+        if (inProgress.length > 3) {
+          html += `<br><span style="margin-left:8px;font-size:10px;color:var(--muted)">+${inProgress.length - 3} more in progress</span>`;
+        }
+        html += `</div>`;
+      } else if (proj.tasksDone !== undefined && proj.tasksTotal !== undefined && proj.tasksTotal > 0) {
         html += `<div class="card-meta">${esc(proj.tasksDone)}/${esc(proj.tasksTotal)} tasks</div>`;
       }
 
@@ -361,10 +380,6 @@
         if (proj.outputTokens > 0) parts.push(`${esc(fmtTokens(proj.outputTokens))} out`);
         html += `<div class="card-meta">${parts.join(' / ')}</div>`;
       }
-
-      // last updated (always shown at bottom)
-      const rel = relativeTime(proj.lastUpdated);
-      html += `<div class="card-footer">${rel ? esc(rel) : '—'}</div>`;
 
       card.innerHTML = html;
       return card;

@@ -58,12 +58,20 @@ export type SessionState = 'running' | 'waiting_for_permission' | 'stopped';
  * Enrichment fields shared between main sessions and sub-agents,
  * extracted by scanning the tail of a JSONL file.
  */
+export interface TaskInfo {
+  id: string;
+  subject: string;
+  status: string;
+  activeForm?: string;
+}
+
 export interface SessionEnrichment {
   model?: string;
   latestUserMessage?: string;
   latestCommand?: string;
   latestAssistantMessage?: string;
   lastToolUse?: string;
+  tasks?: TaskInfo[];
   tasksDone?: number;
   tasksTotal?: number;
   inputTokens?: number;
@@ -604,6 +612,10 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     lines = lines.slice(1);
   }
 
+  // Forward pass: scan for TaskCreate/TaskUpdate tool calls to build task map.
+  // Must run forward (chronological order) so TaskCreate then TaskUpdate patch correctly.
+  const scannedTasks = scanTaskCreateUpdate(lines);
+
   // Scan newest-to-oldest so "first found" = most recent.
   // Token counts are accumulated across ALL assistant entries in the scanned range.
   // agentDescriptions are accumulated across ALL queue-operation enqueue entries.
@@ -614,12 +626,16 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
   let foundAssistant = false;
   let foundModel = false;
   let foundTool = false;
-  let foundTasks = false;
-  let scanInputTokens = 0;
+  // foundTasks is true when tasks came from TaskCreate/TaskUpdate (new scan or cached base).
+  // When true, skip the TodoWrite fallback in the reversed scan.
+  let foundTasks = scannedTasks !== null || baseData.tasks !== undefined;
+  // inputTokens uses last-seen value (cache_read grows monotonically per session).
+  // First assistant entry in reversed scan = last chronologically = the value to use.
+  let scanInputTokens: number | undefined;
   let scanOutputTokens = 0;
 
   for (const line of reversed) {
-    // Don't break early even when other fields are found — need to accumulate tokens.
+    // Don't break early even when other fields are found — need to accumulate output tokens.
     let entry: Record<string, unknown>;
     try {
       const parsed = JSON.parse(line);
@@ -659,14 +675,16 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
         foundModel = true;
       }
 
-      // Accumulate token usage across all assistant entries in this scan range.
-      // Provider-billed input total = input_tokens + cache_creation_input_tokens + cache_read_input_tokens.
+      // input tokens: last-seen value wins (cache_read_input_tokens is the entire cached context
+      // per call, so it grows monotonically — summing gives a wildly inflated number).
+      // output tokens: accumulate all (per-call deltas, correct to sum).
       const usage = message.usage as Record<string, unknown> | undefined;
       if (usage !== undefined) {
         const input = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
         const cacheCreate = typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0;
         const cacheRead = typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0;
-        scanInputTokens += input + cacheCreate + cacheRead;
+        // Only take the first encountered (= last chronologically) for input.
+        if (scanInputTokens === undefined) scanInputTokens = input + cacheCreate + cacheRead;
         if (typeof usage.output_tokens === 'number') scanOutputTokens += usage.output_tokens;
       }
 
@@ -687,6 +705,7 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
           }
         }
 
+        // Only fall back to TodoWrite when no TaskCreate/TaskUpdate tasks were found.
         if (!foundTasks) {
           scanTodoWrite(contentBlocks, scanResult);
           if (scanResult.tasksTotal !== undefined) foundTasks = true;
@@ -708,7 +727,7 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
       }
     }
 
-    // progress entries carry TodoWrite tool calls under data.message.message.content
+    // progress entries carry TodoWrite tool calls (legacy fallback path).
     if (!foundTasks && type === 'progress') {
       const data = entry.data as Record<string, unknown> | undefined;
       const outerMsg = data?.message as Record<string, unknown> | undefined;
@@ -736,14 +755,53 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     }
   }
 
-  if (scanInputTokens > 0) scanResult.inputTokens = scanInputTokens;
+  if (scanInputTokens !== undefined && scanInputTokens > 0) scanResult.inputTokens = scanInputTokens;
   if (scanOutputTokens > 0) scanResult.outputTokens = scanOutputTokens;
 
+  // Merge task data: start from base tasks then apply new scan's creates/updates.
+  // This ensures delta reads accumulate all tasks across the session's history.
+  let mergedTasks: TaskInfo[] | undefined;
+  let mergedTasksDone: number | undefined;
+  let mergedTasksTotal: number | undefined;
+
+  if (scannedTasks !== null || baseData.tasks !== undefined) {
+    // Build merged task map: base tasks first, then overlay new scan results.
+    const taskMap = new Map<string, TaskInfo>();
+    if (baseData.tasks) {
+      for (const t of baseData.tasks) taskMap.set(t.id, { ...t });
+    }
+    if (scannedTasks !== null) {
+      for (const [id, t] of scannedTasks) taskMap.set(id, { ...t });
+    }
+    const taskList = [...taskMap.values()].sort((a, b) => {
+      const na = parseInt(a.id, 10);
+      const nb = parseInt(b.id, 10);
+      return na - nb;
+    });
+    mergedTasks = taskList;
+    const nonDeleted = taskList.filter((t) => t.status !== 'deleted');
+    mergedTasksTotal = nonDeleted.length;
+    mergedTasksDone = nonDeleted.filter((t) => t.status === 'completed').length;
+    // Propagate to scanResult so foundTasks check works for TodoWrite fallback path.
+    scanResult.tasks = mergedTasks;
+    scanResult.tasksTotal = mergedTasksTotal;
+    scanResult.tasksDone = mergedTasksDone;
+  } else if (foundTasks) {
+    // TodoWrite path: scanResult already has tasksDone/tasksTotal set.
+    mergedTasksDone = scanResult.tasksDone;
+    mergedTasksTotal = scanResult.tasksTotal;
+  } else {
+    mergedTasksDone = baseData.tasksDone;
+    mergedTasksTotal = baseData.tasksTotal;
+    mergedTasks = baseData.tasks;
+  }
+
   // Merge: new scan results override baseData for "latest wins" fields.
-  // For task counts, keep new scan result if found; otherwise fall back to baseData.
-  // Token counts accumulate: delta reads add new tokens to cached totals.
+  // inputTokens: last-wins (new scan replaces base, not additive), since the value
+  //   represents the most-recent API call's cached context size.
+  // outputTokens: additive across delta reads (per-call deltas that should be summed).
   // agentDescriptions accumulate: merge scan entries into the base map.
-  const mergedInputTokens = (baseData.inputTokens ?? 0) + (scanResult.inputTokens ?? 0);
+  const mergedInputTokens = scanResult.inputTokens ?? baseData.inputTokens;
   const mergedOutputTokens = (baseData.outputTokens ?? 0) + (scanResult.outputTokens ?? 0);
 
   const mergedDescriptions = baseData.agentDescriptions;
@@ -757,9 +815,10 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     latestAssistantMessage: scanResult.latestAssistantMessage ?? baseData.latestAssistantMessage,
     model: scanResult.model ?? baseData.model,
     lastToolUse: scanResult.lastToolUse ?? baseData.lastToolUse,
-    tasksDone: foundTasks ? scanResult.tasksDone : baseData.tasksDone,
-    tasksTotal: foundTasks ? scanResult.tasksTotal : baseData.tasksTotal,
-    inputTokens: mergedInputTokens > 0 ? mergedInputTokens : undefined,
+    tasks: mergedTasks,
+    tasksDone: mergedTasksDone,
+    tasksTotal: mergedTasksTotal,
+    inputTokens: mergedInputTokens !== undefined && mergedInputTokens > 0 ? mergedInputTokens : undefined,
     outputTokens: mergedOutputTokens > 0 ? mergedOutputTokens : undefined,
     agentDescriptions: mergedDescriptions,
   };
@@ -815,6 +874,98 @@ function extractCommand(content: string): string | null {
   const argsMatch = content.match(/<command-args>([^<]*)<\/command-args>/);
   const args = argsMatch ? argsMatch[1].trim() : '';
   return args ? `${name} ${args}` : name;
+}
+
+/**
+ * Forward-scans JSONL lines for TaskCreate/TaskUpdate tool_use blocks.
+ * Returns a Map<taskId, TaskInfo> if any TaskCreate blocks were found, null otherwise.
+ * IDs are extracted from the tool_result response text ("Task #N created successfully").
+ * TaskUpdate patches status and optionally subject/activeForm on existing entries.
+ */
+function scanTaskCreateUpdate(lines: string[]): Map<string, TaskInfo> | null {
+  // Maps tool_use_id → { subject, activeForm } for pending TaskCreate calls awaiting tool_result.
+  const pendingCreates = new Map<string, { subject: string; activeForm?: string }>();
+  const tasks = new Map<string, TaskInfo>();
+  let foundAny = false;
+
+  for (const line of lines) {
+    let entry: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(line);
+      if (typeof parsed !== 'object' || parsed === null) continue;
+      entry = parsed as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+
+    const type = entry.type;
+    const message = entry.message as Record<string, unknown> | undefined;
+
+    if (type === 'assistant' && message && Array.isArray(message.content)) {
+      for (const block of message.content as unknown[]) {
+        if (typeof block !== 'object' || block === null) continue;
+        const b = block as Record<string, unknown>;
+        if (b.type !== 'tool_use') continue;
+        if (typeof b.id !== 'string') continue;
+        const input = b.input as Record<string, unknown> | undefined;
+        if (!input) continue;
+
+        if (b.name === 'TaskCreate' && typeof input.subject === 'string') {
+          // Record pending create keyed by tool_use_id to match tool_result later.
+          pendingCreates.set(b.id, {
+            subject: input.subject,
+            activeForm: typeof input.activeForm === 'string' ? input.activeForm : undefined,
+          });
+          foundAny = true;
+        }
+
+        if (b.name === 'TaskUpdate' && typeof input.taskId === 'string') {
+          const existing = tasks.get(input.taskId);
+          if (existing) {
+            if (typeof input.status === 'string') existing.status = input.status;
+            if (typeof input.subject === 'string') existing.subject = input.subject;
+            if (typeof input.activeForm === 'string') existing.activeForm = input.activeForm;
+          }
+          foundAny = true;
+        }
+      }
+    }
+
+    // User messages carry tool_result blocks that confirm TaskCreate with the assigned ID.
+    if (type === 'user' && message && Array.isArray(message.content)) {
+      for (const block of message.content as unknown[]) {
+        if (typeof block !== 'object' || block === null) continue;
+        const b = block as Record<string, unknown>;
+        if (b.type !== 'tool_result') continue;
+        if (typeof b.tool_use_id !== 'string') continue;
+
+        const pending = pendingCreates.get(b.tool_use_id);
+        if (!pending) continue;
+
+        // Extract task ID from result text like "Task #3 created successfully"
+        let taskId: string | undefined;
+        const content = b.content;
+        const text = typeof content === 'string'
+          ? content
+          : Array.isArray(content)
+            ? (content as unknown[])
+                .filter((c): c is { type: string; text: string } =>
+                  typeof c === 'object' && c !== null && (c as Record<string, unknown>).type === 'text')
+                .map((c) => c.text)
+                .join('')
+            : '';
+        const match = text.match(/Task #(\d+)/i);
+        if (match) taskId = match[1];
+
+        if (taskId) {
+          tasks.set(taskId, { id: taskId, subject: pending.subject, status: 'pending', activeForm: pending.activeForm });
+          pendingCreates.delete(b.tool_use_id);
+        }
+      }
+    }
+  }
+
+  return foundAny ? tasks : null;
 }
 
 function scanTodoWrite(contentBlocks: unknown[], result: SessionTailInfo): void {

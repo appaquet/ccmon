@@ -1668,7 +1668,7 @@ describe('readSessionTail token usage (R32)', () => {
     expect(result.outputTokens).toBe(250);
   });
 
-  test('R32: multiple assistant entries → tokens accumulated across all', async () => {
+  test('R32: multiple assistant entries → inputTokens is last value, outputTokens is sum', async () => {
     const jsonlPath = join(tmpDir, 'r32-multi.jsonl');
     const lines = [
       makeUserLine('first prompt'),
@@ -1679,7 +1679,9 @@ describe('readSessionTail token usage (R32)', () => {
     await writeFile(jsonlPath, lines.join('\n') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.inputTokens).toBe(1200);
+    // inputTokens: last-seen value (cache_read grows monotonically, summing inflates it)
+    expect(result.inputTokens).toBe(700);
+    // outputTokens: sum of per-call deltas
     expect(result.outputTokens).toBe(300);
   });
 
@@ -1704,7 +1706,7 @@ describe('readSessionTail token usage (R32)', () => {
     expect(result.outputTokens).toBeUndefined();
   });
 
-  test('R32: delta reads accumulate tokens (base + new)', async () => {
+  test('R32: delta reads — inputTokens last-wins, outputTokens accumulates', async () => {
     _resetCachesForTesting();
     const jsonlPath = join(tmpDir, 'r32-delta.jsonl');
 
@@ -1719,18 +1721,19 @@ describe('readSessionTail token usage (R32)', () => {
     expect(first.inputTokens).toBe(300);
     expect(first.outputTokens).toBe(80);
 
-    // Append more content
+    // Append more content (simulates growing cache_read — new value is larger)
     await Bun.sleep(10);
     const appendedLines = [
       makeUserLine('second'),
-      makeAssistantWithUsage('claude-sonnet-4-6', 200, 60),
+      makeAssistantWithUsage('claude-sonnet-4-6', 500, 60),
     ];
     const existing = await Bun.file(jsonlPath).text();
     await Bun.write(jsonlPath, existing + appendedLines.join('\n') + '\n');
 
     const second = await readSessionTail(jsonlPath);
-    // Delta adds new tokens to cached totals
+    // inputTokens: new scan value replaces base (last-wins, not additive)
     expect(second.inputTokens).toBe(500);
+    // outputTokens: additive across delta reads
     expect(second.outputTokens).toBe(140);
   });
 
@@ -1922,7 +1925,7 @@ describe('readSessionTail accurate token totals (R39)', () => {
     expect(result.outputTokens).toBe(200);
   });
 
-  test('R39: multiple entries accumulate provider-billed totals', async () => {
+  test('R39: multiple entries — inputTokens is last-seen value, outputTokens is sum', async () => {
     const jsonlPath = join(tmpDir, 'r39-multi.jsonl');
     const lines = [
       makeAssistantWithFullUsage({ inputTokens: 100, cacheCreate: 1000, cacheRead: 10000, outputTokens: 50 }),
@@ -1931,8 +1934,84 @@ describe('readSessionTail accurate token totals (R39)', () => {
     await writeFile(jsonlPath, lines.join('\n') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.inputTokens).toBe((100 + 1000 + 10000) + (200 + 2000 + 20000));
+    // inputTokens: last-seen value (second entry = 200 + 2000 + 20000)
+    expect(result.inputTokens).toBe(200 + 2000 + 20000);
+    // outputTokens: sum of per-call deltas
     expect(result.outputTokens).toBe(125);
+  });
+});
+
+// ─── input token last-value semantics (R47) ──────────────────────────────────
+
+describe('readSessionTail input token last-value semantics (R47)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-r47');
+    _resetCachesForTesting();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeAssistantWithUsage(inputTokens: number, outputTokens: number): string {
+    return JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        model: 'claude-sonnet-4-6',
+        content: [{ type: 'text', text: 'response' }],
+        usage: {
+          input_tokens: inputTokens,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          output_tokens: outputTokens,
+        },
+      },
+    });
+  }
+
+  test('R47: monotonically growing input_tokens → result equals last entry value', async () => {
+    const jsonlPath = join(tmpDir, 'r47-growing-input.jsonl');
+    // Simulate cache_read growing across calls (1000, 2000, 5000)
+    const lines = [
+      makeAssistantWithUsage(1000, 10),
+      makeAssistantWithUsage(2000, 20),
+      makeAssistantWithUsage(5000, 30),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    // inputTokens: last-seen value (5000), not sum (1000+2000+5000=8000)
+    expect(result.inputTokens).toBe(5000);
+    // outputTokens: sum of per-call deltas (10+20+30=60)
+    expect(result.outputTokens).toBe(60);
+  });
+
+  test('R47: delta merge — new scan value replaces base input, output accumulates', async () => {
+    _resetCachesForTesting();
+    const jsonlPath = join(tmpDir, 'r47-delta-merge.jsonl');
+
+    const initialLines = [
+      makeAssistantWithUsage(5000, 100),
+    ];
+    await writeFile(jsonlPath, initialLines.join('\n') + '\n');
+
+    const first = await readSessionTail(jsonlPath);
+    expect(first.inputTokens).toBe(5000);
+    expect(first.outputTokens).toBe(100);
+
+    // Append: new call with larger input (cache grew to 6000)
+    await Bun.sleep(10);
+    const existing = await Bun.file(jsonlPath).text();
+    await Bun.write(jsonlPath, existing + makeAssistantWithUsage(6000, 50) + '\n');
+
+    const second = await readSessionTail(jsonlPath);
+    // inputTokens: new value 6000 replaces base 5000 (not 11000)
+    expect(second.inputTokens).toBe(6000);
+    // outputTokens: 100 (base) + 50 (new) = 150
+    expect(second.outputTokens).toBe(150);
   });
 });
 
@@ -2066,5 +2145,203 @@ describe('getSubagentInfos ordering (R43)', () => {
     expect(infos[0].agentId).toBe('ccc');
     expect(infos[1].agentId).toBe('bbb');
     expect(infos[2].agentId).toBe('aaa');
+  });
+});
+
+// ─── TaskCreate/TaskUpdate task parsing (R46) ─────────────────────────────────
+
+describe('readSessionTail TaskCreate/TaskUpdate task parsing (R46)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-r46');
+    _resetCachesForTesting();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeTaskCreateEntry(toolUseId: string, subject: string, activeForm?: string): string {
+    const input: Record<string, string> = { subject, description: 'some description' };
+    if (activeForm) input.activeForm = activeForm;
+    return JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        model: 'claude-sonnet-4-6',
+        content: [{ type: 'tool_use', id: toolUseId, name: 'TaskCreate', input }],
+      },
+    });
+  }
+
+  function makeTaskUpdateEntry(taskId: string, status: string): string {
+    return JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        model: 'claude-sonnet-4-6',
+        content: [{ type: 'tool_use', id: `tu-update-${taskId}`, name: 'TaskUpdate', input: { taskId, status } }],
+      },
+    });
+  }
+
+  function makeToolResultEntry(toolUseId: string, resultText: string): string {
+    return JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: toolUseId, content: resultText }],
+      },
+    });
+  }
+
+  test('R46: TaskCreate tool_use blocks build task map with correct subjects and IDs', async () => {
+    const jsonlPath = join(tmpDir, 'r46-create.jsonl');
+    const lines = [
+      makeTaskCreateEntry('tu-1', 'Implement feature X', 'Implementing feature X'),
+      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
+      makeTaskCreateEntry('tu-2', 'Write tests for Y'),
+      makeToolResultEntry('tu-2', 'Task #2 created successfully'),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.tasks).toHaveLength(2);
+    expect(result.tasks![0].id).toBe('1');
+    expect(result.tasks![0].subject).toBe('Implement feature X');
+    expect(result.tasks![0].status).toBe('pending');
+    expect(result.tasks![0].activeForm).toBe('Implementing feature X');
+    expect(result.tasks![1].id).toBe('2');
+    expect(result.tasks![1].subject).toBe('Write tests for Y');
+  });
+
+  test('R46: TaskUpdate patches task status', async () => {
+    const jsonlPath = join(tmpDir, 'r46-update.jsonl');
+    const lines = [
+      makeTaskCreateEntry('tu-1', 'Task A'),
+      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
+      makeTaskCreateEntry('tu-2', 'Task B'),
+      makeToolResultEntry('tu-2', 'Task #2 created successfully'),
+      makeTaskUpdateEntry('1', 'in_progress'),
+      makeTaskUpdateEntry('2', 'completed'),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.tasks).toHaveLength(2);
+    expect(result.tasks!.find((t) => t.id === '1')?.status).toBe('in_progress');
+    expect(result.tasks!.find((t) => t.id === '2')?.status).toBe('completed');
+  });
+
+  test('R46: tasksDone and tasksTotal derived correctly from tasks array', async () => {
+    const jsonlPath = join(tmpDir, 'r46-counts.jsonl');
+    const lines = [
+      makeTaskCreateEntry('tu-1', 'Task A'),
+      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
+      makeTaskCreateEntry('tu-2', 'Task B'),
+      makeToolResultEntry('tu-2', 'Task #2 created successfully'),
+      makeTaskCreateEntry('tu-3', 'Task C'),
+      makeToolResultEntry('tu-3', 'Task #3 created successfully'),
+      makeTaskCreateEntry('tu-4', 'Task D'),
+      makeToolResultEntry('tu-4', 'Task #4 created successfully'),
+      makeTaskUpdateEntry('1', 'completed'),
+      makeTaskUpdateEntry('2', 'in_progress'),
+      makeTaskUpdateEntry('3', 'completed'),
+      // Task 4 stays pending
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.tasksTotal).toBe(4);
+    expect(result.tasksDone).toBe(2);
+  });
+
+  test('R46: deleted tasks excluded from total count', async () => {
+    const jsonlPath = join(tmpDir, 'r46-deleted.jsonl');
+    const lines = [
+      makeTaskCreateEntry('tu-1', 'Task A'),
+      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
+      makeTaskCreateEntry('tu-2', 'Task B'),
+      makeToolResultEntry('tu-2', 'Task #2 created successfully'),
+      makeTaskCreateEntry('tu-3', 'Task C'),
+      makeToolResultEntry('tu-3', 'Task #3 created successfully'),
+      makeTaskUpdateEntry('2', 'deleted'),
+      makeTaskUpdateEntry('1', 'completed'),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    // Task 2 is deleted → excluded from total
+    expect(result.tasksTotal).toBe(2);
+    expect(result.tasksDone).toBe(1);
+  });
+
+  test('R46: tasks sorted numerically by ID', async () => {
+    const jsonlPath = join(tmpDir, 'r46-sort.jsonl');
+    const lines = [
+      makeTaskCreateEntry('tu-1', 'First'),
+      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
+      makeTaskCreateEntry('tu-2', 'Second'),
+      makeToolResultEntry('tu-2', 'Task #10 created successfully'),
+      makeTaskCreateEntry('tu-3', 'Third'),
+      makeToolResultEntry('tu-3', 'Task #2 created successfully'),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.tasks!.map((t) => t.id)).toEqual(['1', '2', '10']);
+  });
+
+  test('R46: TodoWrite used as fallback when no TaskCreate blocks present', async () => {
+    const jsonlPath = join(tmpDir, 'r46-todowrite-fallback.jsonl');
+    const todos = [
+      { content: 'Old task A', status: 'completed' },
+      { content: 'Old task B', status: 'pending' },
+    ];
+    const lines = [
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'tool_use', name: 'TodoWrite', input: { todos } }],
+        },
+      }),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.tasks).toBeUndefined();
+    expect(result.tasksTotal).toBe(2);
+    expect(result.tasksDone).toBe(1);
+  });
+
+  test('R46: TaskCreate takes priority over TodoWrite when both present', async () => {
+    const jsonlPath = join(tmpDir, 'r46-priority.jsonl');
+    const todos = [
+      { content: 'Legacy A', status: 'completed' },
+      { content: 'Legacy B', status: 'completed' },
+      { content: 'Legacy C', status: 'completed' },
+    ];
+    const lines = [
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'tool_use', name: 'TodoWrite', input: { todos } }],
+        },
+      }),
+      makeTaskCreateEntry('tu-1', 'Modern Task A'),
+      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    // TaskCreate wins: 1 task, not 3 from TodoWrite
+    expect(result.tasks).toHaveLength(1);
+    expect(result.tasksTotal).toBe(1);
+    expect(result.tasksDone).toBe(0);
   });
 });
