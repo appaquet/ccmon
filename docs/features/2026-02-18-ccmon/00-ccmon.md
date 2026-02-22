@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 12 (Review Fixes) complete (168 tests). Phase 13 (Review Fixes 2) plan ready: 22 tasks (8 high, 11 medium, 3 low) across sessions.ts, cli.ts, config.ts, server.ts, watcher.ts. High-priority items include: config rejects valid host/port-only files (R18), scanTaskCreateUpdate empty-map false positive (R46), blocking pgrep spawn (R2), watcher/ready race in server (R6), readSessionTail line-boundary data loss (R27). Phases 11, 12 pending user acceptance. Next: /implement Phase 13.
+Phase 13 (Review Fixes 2) complete, 174 tests passing. 22 tasks implemented: blocking pgrep spawn converted to async, watcher/ready race fixed, readSessionTail line-boundary data loss fixed, config guard accepts host/port-only files, scanTaskCreateUpdate empty-map false positive fixed, watcher errors now logged to stderr. Style: JSONL_EXT constant, named type guards, scanTodoWrite return value, mergeEnrichment cleanup, duplicate JSDoc merged. 5 deferred architecture items remain in code as REVIEW comments (cache encapsulation, getProjectState split, dual stateMap, JSONL watcher, CLI arg parsing). Phases 11-13 pending user acceptance. No next step decided.
 
 ## Inbox
 
@@ -261,7 +261,7 @@ Fixes and improvements from real-world usage: input token counting bug fix (last
 
 Correctness bug fixes, style cleanup, and architecture improvements from review pass. 32 tasks (30 planned + 2 post-review regressions): R26 notification flash, liveness cache, task fallback guards, NaN guards, readFirstLine 4096 slice, stale-index disk fallback. 168 tests passing.
 
-### ⬜ 13 Phase: Review Fixes 2
+### 🔄 13 Phase: Review Fixes 2
 [13-review-fixes-2](13-review-fixes-2.md)
 
 Second review pass: 22 tasks fixing correctness bugs (blocking spawn, watcher race, line-boundary data loss, config guard, empty-map false positive), style improvements, and minor architecture docs across sessions.ts, cli.ts, config.ts, server.ts, watcher.ts.
@@ -284,9 +284,10 @@ Second review pass: 22 tasks fixing correctness bugs (blocking spawn, watcher ra
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner (Phase: Session Detection, Backend, Review Fixes)
 - **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init (Phase: Backend, Review Fixes)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
-- **tests/sessions.test.ts**: 168 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes)
+- **tests/sessions.test.ts**: 174 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
 - **tests/cli.test.ts**: 18 tests for cli.ts — 4 new arg-validation cases, status, dump --watch, --project filter (Phase: Review Fixes)
+- **tests/config.test.ts**: Config loading tests; 22+ tests covering partial config, invalid types (Phase: Review Fixes 2)
 - **tests/server.test.ts**: 4 tests for server.ts — HTTP endpoints, WebSocket (Phase: Backend)
 - **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)
 - **docs/features/2026-02-18-ccmon/06-notifications-streaming.md**: Phase 06 plan — notifications, JSONL streaming, sub-agent consolidation (Phase: Notifications & Streaming)
