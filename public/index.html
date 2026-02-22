@@ -247,6 +247,12 @@
       return model;
     }
 
+    function fmtTokens(n) {
+      if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+      if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+      return String(n);
+    }
+
     function createCard(proj, flashStopped, flashNotification) {
       const card = document.createElement('div');
       const s = proj.state || 'stopped';
@@ -311,6 +317,14 @@
       // task count
       if (proj.tasksDone !== undefined && proj.tasksTotal !== undefined && proj.tasksTotal > 0) {
         html += `<div class="card-meta">${esc(proj.tasksDone)}/${esc(proj.tasksTotal)} tasks</div>`;
+      }
+
+      // token usage
+      if (proj.inputTokens > 0 || proj.outputTokens > 0) {
+        const parts = [];
+        if (proj.inputTokens > 0) parts.push(`${esc(fmtTokens(proj.inputTokens))} in`);
+        if (proj.outputTokens > 0) parts.push(`${esc(fmtTokens(proj.outputTokens))} out`);
+        html += `<div class="card-meta">${parts.join(' / ')}</div>`;
       }
 
       // last updated (always shown at bottom)
@@ -403,6 +417,10 @@
     }
 
     connectWebSocket();
+
+    // Refresh relative timestamps (e.g. "2m ago") every 5 seconds without
+    // requiring a new WS message.
+    setInterval(render, 5000);
   </script>
 </body>
 </html>

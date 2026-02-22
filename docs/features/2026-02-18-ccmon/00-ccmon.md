@@ -14,6 +14,13 @@ Phase 06 (Notifications & Streaming) implemented: 117 tests. R27: byte-offset JS
 
 Next: Phase 07 (QA Pass) — R30 last-activity refresh, R31 server state persistence on reload, R32 token usage, R33 running→stopped flicker.
 
+## Inbox
+
+- [ ] Right now, web shows last user message, but would like to show when last message is a command
+  (skill) in web ui. they should be two different thiing in json, but web should show either.
+- [ ] Same for agent, i want to know last message OR last tool use in web ui. Not both.
+
+
 ## Requirements
 
 ### Session Detection

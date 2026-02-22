@@ -61,6 +61,8 @@ export interface SessionEnrichment {
   lastToolUse?: string;
   tasksDone?: number;
   tasksTotal?: number;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 /**
@@ -128,6 +130,8 @@ export interface ProjectState extends ProjectInfo {
   lastToolUse?: string;
   tasksDone?: number;
   tasksTotal?: number;
+  inputTokens?: number;
+  outputTokens?: number;
   subagents?: SubagentInfo[];
   // Derived from subagents for backward compatibility
   subagentCount?: number;
@@ -575,6 +579,7 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
   }
 
   // Scan newest-to-oldest so "first found" = most recent.
+  // Token counts are accumulated across ALL assistant entries in the scanned range.
   const reversed = lines.slice().reverse();
   const scanResult: SessionTailInfo = {};
   let foundUser = false;
@@ -582,10 +587,11 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
   let foundModel = false;
   let foundTool = false;
   let foundTasks = false;
+  let scanInputTokens = 0;
+  let scanOutputTokens = 0;
 
   for (const line of reversed) {
-    if (foundUser && foundAssistant && foundModel && foundTool && foundTasks) break;
-
+    // Don't break early even when other fields are found — need to accumulate tokens.
     let entry: Record<string, unknown>;
     try {
       const parsed = JSON.parse(line);
@@ -611,6 +617,13 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
       if (!foundModel && typeof message.model === 'string') {
         scanResult.model = message.model;
         foundModel = true;
+      }
+
+      // Accumulate token usage across all assistant entries in this scan range.
+      const usage = message.usage as Record<string, unknown> | undefined;
+      if (usage !== undefined) {
+        if (typeof usage.input_tokens === 'number') scanInputTokens += usage.input_tokens;
+        if (typeof usage.output_tokens === 'number') scanOutputTokens += usage.output_tokens;
       }
 
       if (Array.isArray(message.content)) {
@@ -664,8 +677,14 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     }
   }
 
+  if (scanInputTokens > 0) scanResult.inputTokens = scanInputTokens;
+  if (scanOutputTokens > 0) scanResult.outputTokens = scanOutputTokens;
+
   // Merge: new scan results override baseData for "latest wins" fields.
   // For task counts, keep new scan result if found; otherwise fall back to baseData.
+  // Token counts accumulate: delta reads add new tokens to cached totals.
+  const mergedInputTokens = (baseData.inputTokens ?? 0) + (scanResult.inputTokens ?? 0);
+  const mergedOutputTokens = (baseData.outputTokens ?? 0) + (scanResult.outputTokens ?? 0);
   const merged: SessionTailInfo = {
     latestUserMessage: scanResult.latestUserMessage ?? baseData.latestUserMessage,
     latestAssistantMessage: scanResult.latestAssistantMessage ?? baseData.latestAssistantMessage,
@@ -673,6 +692,8 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     lastToolUse: scanResult.lastToolUse ?? baseData.lastToolUse,
     tasksDone: foundTasks ? scanResult.tasksDone : baseData.tasksDone,
     tasksTotal: foundTasks ? scanResult.tasksTotal : baseData.tasksTotal,
+    inputTokens: mergedInputTokens > 0 ? mergedInputTokens : undefined,
+    outputTokens: mergedOutputTokens > 0 ? mergedOutputTokens : undefined,
   };
 
   // Strip undefined keys to keep the object clean.
@@ -763,6 +784,8 @@ async function buildProjectState(project: ProjectInfo, claudeDir: string): Promi
       lastToolUse: tail.lastToolUse,
       tasksDone: tail.tasksDone,
       tasksTotal: tail.tasksTotal,
+      inputTokens: tail.inputTokens,
+      outputTokens: tail.outputTokens,
       subagents,
       subagentCount,
       gitBranch: project.gitBranch,

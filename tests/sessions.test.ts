@@ -1505,3 +1505,135 @@ describe('getProjectState targeted refresh (R20.5)', () => {
     expect(second[0].projectName).toBe('stay');
   });
 });
+
+// ─── token usage (R32) ───────────────────────────────────────────────────────
+
+describe('readSessionTail token usage (R32)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-tokens');
+    _resetCachesForTesting();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeAssistantWithUsage(model: string, inputTokens: number, outputTokens: number): string {
+    return JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        model,
+        content: [{ type: 'text', text: 'response' }],
+        usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+      },
+    });
+  }
+
+  function makeUserLine(content: string): string {
+    return JSON.stringify({ type: 'user', message: { role: 'user', content } });
+  }
+
+  test('R32: single assistant entry with usage → inputTokens and outputTokens extracted', async () => {
+    const jsonlPath = join(tmpDir, 'r32-single.jsonl');
+    const lines = [
+      makeUserLine('what is X'),
+      makeAssistantWithUsage('claude-sonnet-4-6', 1000, 250),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.inputTokens).toBe(1000);
+    expect(result.outputTokens).toBe(250);
+  });
+
+  test('R32: multiple assistant entries → tokens accumulated across all', async () => {
+    const jsonlPath = join(tmpDir, 'r32-multi.jsonl');
+    const lines = [
+      makeUserLine('first prompt'),
+      makeAssistantWithUsage('claude-sonnet-4-6', 500, 100),
+      makeUserLine('second prompt'),
+      makeAssistantWithUsage('claude-sonnet-4-6', 700, 200),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.inputTokens).toBe(1200);
+    expect(result.outputTokens).toBe(300);
+  });
+
+  test('R32: no usage fields → inputTokens and outputTokens undefined', async () => {
+    const jsonlPath = join(tmpDir, 'r32-no-usage.jsonl');
+    const lines = [
+      makeUserLine('prompt'),
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'reply' }],
+          // no usage field
+        },
+      }),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.inputTokens).toBeUndefined();
+    expect(result.outputTokens).toBeUndefined();
+  });
+
+  test('R32: delta reads accumulate tokens (base + new)', async () => {
+    _resetCachesForTesting();
+    const jsonlPath = join(tmpDir, 'r32-delta.jsonl');
+
+    // Initial content
+    const initialLines = [
+      makeUserLine('first'),
+      makeAssistantWithUsage('claude-sonnet-4-6', 300, 80),
+    ];
+    await writeFile(jsonlPath, initialLines.join('\n') + '\n');
+
+    const first = await readSessionTail(jsonlPath);
+    expect(first.inputTokens).toBe(300);
+    expect(first.outputTokens).toBe(80);
+
+    // Append more content
+    await Bun.sleep(10);
+    const appendedLines = [
+      makeUserLine('second'),
+      makeAssistantWithUsage('claude-sonnet-4-6', 200, 60),
+    ];
+    const existing = await Bun.file(jsonlPath).text();
+    await Bun.write(jsonlPath, existing + appendedLines.join('\n') + '\n');
+
+    const second = await readSessionTail(jsonlPath);
+    // Delta adds new tokens to cached totals
+    expect(second.inputTokens).toBe(500);
+    expect(second.outputTokens).toBe(140);
+  });
+
+  test('R32: file shrink resets token counts to new content only', async () => {
+    _resetCachesForTesting();
+    const jsonlPath = join(tmpDir, 'r32-shrink.jsonl');
+
+    await writeFile(jsonlPath, [
+      makeUserLine('old session'),
+      makeAssistantWithUsage('claude-sonnet-4-6', 1000, 300),
+    ].join('\n') + '\n');
+
+    const first = await readSessionTail(jsonlPath);
+    expect(first.inputTokens).toBe(1000);
+
+    // Replace with shorter file (new session)
+    await Bun.sleep(10);
+    await Bun.write(jsonlPath, makeAssistantWithUsage('claude-sonnet-4-6', 50, 20) + '\n');
+
+    const second = await readSessionTail(jsonlPath);
+    // Full re-read: only sees the new content
+    expect(second.inputTokens).toBe(50);
+    expect(second.outputTokens).toBe(20);
+  });
+});
