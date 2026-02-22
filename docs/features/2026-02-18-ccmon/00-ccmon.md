@@ -10,25 +10,10 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 08 (JSONL-Primary Detection) implemented, 181 tests passing. `resolveState()` refactored to use JSONL mtime as primary running signal; Stop/SessionEnd hooks retained for immediate stopped detection. Deleted pgrep/proc liveness code (~80 lines), removed R33 3s debounce, removed UserPromptSubmit/PostToolUse from `mapHookEventToState()`. `STALE_THRESHOLD_MS` split into `PERMISSION_STALE_MS` + `JSONL_ACTIVE_THRESHOLD_MS`. Also reverted display-host localhost translation in cli.ts (shows actual bind address). Phases 11-13 still pending user acceptance. New card UI rework planned (next).
+Phase 08 (JSONL-Primary Detection) and Phase 14 plan complete. Phase 08: 181 tests passing, `resolveState()` uses JSONL mtime as primary running signal, pgrep removed, R33 debounce removed. Phase 14 (Card Rework) planned — 6 UI-only tasks in `14-card-rework.md`: context window progress bar, unified agent rows (main + sub identical), pulsing dots. Phases 11-13 pending user acceptance. Next: implement Phase 14 with `/implement`.
 
 ## Inbox
 
-- [ ] New web layout
-```
-  <project name>               <status>  | 
-  💭 [#####  ] 80k             📋 12/15  | context window (nicer looking progress here), becomes orange >100k, red >120k           tasks 
-
-  * Main agent                           | * = run indicator, pulsating
-    🤖 Sonnet
-    > last user msg or cmd
-    < [last agent msg or tool]
-
-  * Sub: <description>                   | * = run indicator, pulsating
-    🤖 Opus
-    > initial instruction (like user msg)
-    < [last agent msg or tool]
-```
 
 ## Requirements
 
@@ -202,6 +187,14 @@ Phase 08 (JSONL-Primary Detection) implemented, 181 tests passing. `resolveState
   * R50.2: UI shows text when present, falls back to tool name; unified single-line display like `latestUserActivity`
   * R50.3: Applies to both main session and sub-agent cards
 
+### Card Rework
+
+* R51: ⬜ Context window progress bar — input tokens / 128k max; green default, orange >100k, red >120k; numeric "Xk" label (Phase: Card Rework)
+* R52: ⬜ Task count `📋 done/total` inline on same row as context bar (Phase: Card Rework)
+* R53: ⬜ Unified agent row format — main agent and sub-agents use identical structure: pulsing dot / checkmark, label, model, `>` user line, `<` assistant line (Phase: Card Rework)
+* R54: ⬜ Sub-agent `>` line shows `latestUserActivity.text` (initial instruction from first user message) (Phase: Card Rework)
+* R55: ⬜ Card layout: header (name + state badge) → context/tasks row → agent rows; remove git branch, output tokens, standalone model/message lines (Phase: Card Rework)
+
 #### Out of Scope
 
 * Authentication / multi-user support
@@ -283,6 +276,11 @@ Correctness bug fixes, style cleanup, and architecture improvements from review 
 [13-review-fixes-2](13-review-fixes-2.md)
 
 Second review pass: 22 tasks fixing correctness bugs (blocking spawn, watcher race, line-boundary data loss, config guard, empty-map false positive), style improvements, and minor architecture docs across sessions.ts, cli.ts, config.ts, server.ts, watcher.ts.
+
+### ⬜ 14 Phase: Card Rework
+[14-card-rework](14-card-rework.md)
+
+Rework dashboard cards to unified agent-row layout: context window progress bar (128k max, color thresholds), main + sub-agent rows look identical (pulsing dot, model, user/assistant lines). Remove git branch, output tokens. 6 UI-only tasks planned.
 
 ## Files
 
