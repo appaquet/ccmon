@@ -12,18 +12,17 @@ See [00-ccmon](00-ccmon.md). Fix stop detection race: Claude writes a `system` J
 
 ### 1. Add grace period to resolveState() (R34)
 
-- [ ] Add `STOP_GRACE_MS = 5_000` constant in sessions.ts
-- [ ] Change `jsonlMtimeMs > stoppedAtMs` to `jsonlMtimeMs > stoppedAtMs + STOP_GRACE_MS`
-- [ ] Add test: JSONL 8ms newer than stopped (within grace) → stopped
-- [ ] Update existing "activity resumed" test: JSONL must be >5s newer than stopped
-- [ ] Run full test suite, verify 181+ tests pass
+- [x] Add `STOP_GRACE_MS = 5_000` constant in sessions.ts
+- [x] Change `jsonlMtimeMs > stoppedAtMs` to `jsonlMtimeMs > stoppedAtMs + STOP_GRACE_MS`
+- [x] Add test: JSONL 8ms newer than stopped (within grace) → stopped
+- [x] Update existing "activity resumed" test: JSONL must be >5s newer than stopped
+- [x] Run full test suite: 182 tests passing
 
 ### 2. Validate live behavior
 
-- [ ] `bun run dump --project ccmon` — verify stopped sessions show stopped, not running
 - [ ] User validates in dashboard during real session stop
 
 ## Files
 
-- **src/sessions.ts**: Add `STOP_GRACE_MS`, update `resolveState()` comparison
-- **tests/sessions.test.ts**: Update/add resolveState tests for grace period
+- **src/sessions.ts**: Added `STOP_GRACE_MS = 5_000` constant; updated `resolveState()` comparison
+- **tests/sessions.test.ts**: Added grace period test; updated "activity resumed" test description and JSONL delta

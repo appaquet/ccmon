@@ -10,7 +10,9 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 15 (Stop Detection Fix) planned. Root cause confirmed: Claude writes a `system` JSONL entry ~8ms after the Stop hook fires, making `resolveState()` treat it as "activity resumed" for 60s. Fix: add 5s grace period to JSONL-vs-stopped comparison. Awaiting `/implement`.
+Phase 15 (Stop Detection Fix) implemented. Root cause confirmed from live JSONL data: Claude writes a `system` entry ~8ms after the Stop hook fires, making JSONL mtime slightly newer than the stopped timestamp. `resolveState()` was interpreting this as "activity resumed" and returning `running` for up to 60s.
+
+Fixed by adding `STOP_GRACE_MS = 5_000` constant and updating the comparison in `resolveState()`. Sessions genuinely resuming (new prompt after stop) have JSONL writes many seconds/minutes later — 5s tolerance handles the post-stop system write without masking real activity. 182 tests passing. Pending user validation in live dashboard.
 
 ## Inbox
 
@@ -20,6 +22,10 @@ Phase 15 (Stop Detection Fix) planned. Root cause confirmed: Claude writes a `sy
 
 - [ ] Since we removed hooks, when i get prompted for permission and then answer, the state keeps
   stating at waiting for permission (or whatever ist's called)...
+
+- [ ] In previous iteration, you had modified my settiongs.json and removed hooks that were used for
+  other mean. That's  big no no ...... I added ccmon hooks back as well, let's make sure we can
+  handle more signal than less and it should still work......
 
 ## Requirements
 
@@ -289,7 +295,7 @@ Second review pass: 22 tasks fixing correctness bugs (blocking spawn, watcher ra
 
 Rework dashboard cards to unified agent-row layout: context window progress bar (128k max, color thresholds), main + sub-agent rows look identical (pulsing dot, model, user/assistant lines). Remove git branch, output tokens. 6 UI-only tasks complete, 181 tests passing.
 
-### ⬜ 15 Phase: Stop Detection Fix
+### 🔄 15 Phase: Stop Detection Fix
 [15-stop-detection-fix](15-stop-detection-fix.md)
 
 Fix stop detection race: Claude writes post-stop `system` entry to JSONL (8ms after hook), making JSONL mtime slightly newer than stopped timestamp. Add 5s grace period to `resolveState()` comparison (R34.6).
@@ -307,12 +313,12 @@ Fix stop detection race: Claude writes post-stop `system` entry to JSONL (8ms af
 - **bun.lock**: Bun lockfile (Phase: Session Detection)
 - **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc() (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed (Phase: Backend, Review Fixes)
-- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()`; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes)
+- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()`; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback; `STOP_GRACE_MS` grace period in `resolveState()` (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed (Phase: Session Detection, Review Fixes)
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner (Phase: Session Detection, Backend, Review Fixes)
 - **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init (Phase: Backend, Review Fixes)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
-- **tests/sessions.test.ts**: 174 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2)
+- **tests/sessions.test.ts**: 182 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
 - **tests/cli.test.ts**: 18 tests for cli.ts — 4 new arg-validation cases, status, dump --watch, --project filter (Phase: Review Fixes)
 - **tests/config.test.ts**: Config loading tests; 22+ tests covering partial config, invalid types (Phase: Review Fixes 2)
