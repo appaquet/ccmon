@@ -160,6 +160,47 @@ describe('dump --project', () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout.trim()).toBe('');
   });
+
+  test('--project with no value → non-zero exit with stderr message', async () => {
+    const result = await spawnCli(['dump', '--project'], {
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('--project requires a value');
+  });
+});
+
+// ─── dump --max-age ───────────────────────────────────────────────────────────
+
+describe('dump --max-age', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-cli-dump-maxage');
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('--max-age with no value → non-zero exit with stderr message', async () => {
+    const result = await spawnCli(['dump', '--max-age'], {
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('--max-age requires a valid number');
+  });
+
+  test('--max-age with non-numeric value → non-zero exit with stderr message', async () => {
+    const result = await spawnCli(['dump', '--max-age', 'notanumber'], {
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('--max-age requires a valid number');
+  });
 });
 
 // ─── dump --watch --project ────────────────────────────────────────────────────
@@ -326,6 +367,22 @@ describe('status', () => {
 
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.length).toBeGreaterThan(0);
+  });
+
+  test('empty cwd in hook JSON → non-zero exit with stderr message', async () => {
+    const hookPayload = JSON.stringify({
+      session_id: 'sess-emptycwd',
+      cwd: '',
+      hook_event_name: 'Stop',
+    });
+
+    const result = await spawnCli(['status'], {
+      stdin: hookPayload,
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('cwd is empty');
   });
 
   test('cwd not matching any known project → falls back to encoded path', async () => {

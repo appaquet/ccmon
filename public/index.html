@@ -210,8 +210,7 @@
     <div id="project-grid"></div>
   </main>
   <script>
-    // REVIEW: code-style-reviewer - `state` is declared as a Map ("source → ProjectState[]") but only ever has one key (`'local'` set in `ws.onmessage`). The Map indirection adds complexity — `state.values()` then `.flat()` — for no benefit over a simple `let projects = []`. Either remove the Map and use a plain array, or document why the multi-source Map was kept (e.g. anticipating a future multi-server feature).
-    const state = new Map(); // source → ProjectState[]
+    let projects = [];
 
     const stateLabel = {
       running: 'Running',
@@ -338,7 +337,7 @@
         if (visible.length > 0) {
           const active = visible.filter(a => a.isActive).length;
           const activeDot = active > 0 ? `<span class="agent-dot agent-dot-active" style="margin-right:4px"></span>` : '';
-          html += `<div class="card-meta">${activeDot}⬡ agents (${esc(visible.length)})`;
+          html += `<div class="card-meta">${activeDot}⬡ agents (${visible.length})`;
           const shown = visible.slice(0, 3);
           for (const agent of shown) {
             const indicator = agent.isActive
@@ -366,7 +365,7 @@
         const nonDeleted = proj.tasks.filter(t => t.status !== 'deleted');
         const done = nonDeleted.filter(t => t.status === 'completed').length;
         const inProgress = nonDeleted.filter(t => t.status === 'in_progress');
-        html += `<div class="card-meta">${esc(done)}/${esc(nonDeleted.length)} tasks`;
+        html += `<div class="card-meta">${done}/${nonDeleted.length} tasks`;
         const shown = inProgress.slice(0, 3);
         for (const t of shown) {
           const label = t.activeForm || t.subject;
@@ -377,15 +376,14 @@
         }
         html += `</div>`;
       } else if (proj.tasksDone !== undefined && proj.tasksTotal !== undefined && proj.tasksTotal > 0) {
-        html += `<div class="card-meta">${esc(proj.tasksDone)}/${esc(proj.tasksTotal)} tasks</div>`;
+        html += `<div class="card-meta">${proj.tasksDone}/${proj.tasksTotal} tasks</div>`;
       }
 
       // token usage
-      // REVIEW: code-style-reviewer - `esc(fmtTokens(...))` is redundant: `fmtTokens` returns only digits, `.`, `K`, or `M` — none of which are HTML-special characters. Same redundancy applies to `esc(visible.length)`, `esc(done)`, `esc(nonDeleted.length)`, `esc(label)` for the "+N more" suffix, and similar uses of `esc()` on numeric values elsewhere in `createCard`. Wrapping numbers in `esc()` is noise that obscures which values are actually user-supplied strings requiring escaping.
       if (proj.inputTokens > 0 || proj.outputTokens > 0) {
         const parts = [];
-        if (proj.inputTokens > 0) parts.push(`${esc(fmtTokens(proj.inputTokens))} in`);
-        if (proj.outputTokens > 0) parts.push(`${esc(fmtTokens(proj.outputTokens))} out`);
+        if (proj.inputTokens > 0) parts.push(`${fmtTokens(proj.inputTokens)} in`);
+        if (proj.outputTokens > 0) parts.push(`${fmtTokens(proj.outputTokens)} out`);
         html += `<div class="card-meta">${parts.join(' / ')}</div>`;
       }
 
@@ -398,7 +396,7 @@
 
     function render() {
       const grid = document.getElementById('project-grid');
-      const all = [...state.values()].flat();
+      const all = [...projects];
       all.sort((a, b) => a.projectName.localeCompare(b.projectName));
 
       // Compute running→stopped transitions and new notification arrivals before clearing DOM
@@ -463,9 +461,12 @@
       };
 
       ws.onmessage = (e) => {
-        // REVIEW: code-correctness-reviewer - `JSON.parse(e.data)` is not wrapped in try/catch. If the server sends malformed JSON (partial write, server bug), this throws an uncaught exception inside an event handler. In browsers this does not trigger `onerror`, leaving the UI in a broken state with no reconnect triggered. Wrap in try/catch and either skip the bad message or trigger reconnect.
-        state.set('local', JSON.parse(e.data));
-        render();
+        try {
+          projects = JSON.parse(e.data);
+          render();
+        } catch (err) {
+          console.error('Failed to parse WebSocket message:', err);
+        }
       };
 
       ws.onclose = ws.onerror = () => {

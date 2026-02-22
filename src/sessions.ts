@@ -1,10 +1,5 @@
 import { readdir, stat, readlink } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
-
-// REVIEW: code-style-reviewer - ASCII art section banners ("─── Constants ───") are discouraged: comments should describe "why" not delineate structure. The file already follows a clear top-level layout; these dividers add noise without information. Consider removing them (applies to all banner comments in this file).
-
-// ─── Constants ───────────────────────────────────────────────────────────────
 
 const STALE_THRESHOLD_MS = 5 * 60 * 1000;
 
@@ -19,7 +14,7 @@ const SUBAGENT_ACTIVE_THRESHOLD_MS = 45 * 1000;
 // to keep the state map lean.
 const SUBAGENT_EXPIRY_MS = 5 * 60 * 1000;
 
-const DEFAULT_CLAUDE_DIR = join(
+export const DEFAULT_CLAUDE_DIR = join(
   Bun.env.HOME ?? '/root',
   '.claude',
   'projects',
@@ -31,11 +26,8 @@ const VALID_STATES: ReadonlySet<string> = new Set([
   'stopped',
 ]);
 
-// ─── Module-level Caches ─────────────────────────────────────────────────────
-
 // Caches the pgrep + /proc liveness scan result for 2.5s to avoid repeated
 // process enumeration on every poll cycle.
-// REVIEW: architecture-reviewer - Module-level mutable singletons for all caches create implicit global state. The module is non-reentrant: tests must call `_resetCachesForTesting()` to isolate between runs. Consider encapsulating all caches in a class or factory (e.g., `createSessionStore()`) so each caller owns an instance and tests create fresh ones without an exported reset escape hatch. This would eliminate the `_resetCachesForTesting` test-infrastructure leak from the public API.
 let livenessCache: { result: Set<string>; ts: number } | null = null;
 
 // Keyed by projectDirPath; avoids re-parsing sessions-index.json unless mtime changed.
@@ -52,8 +44,6 @@ const sessionTailCache = new Map<string, SessionTailCache>();
 // Keyed by projectDirPath (full path); holds the most recent ProjectState for each project.
 // Populated on a full scan; updated in-place on targeted single-project rescans.
 const projectStateCache = new Map<string, ProjectState>();
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 export type SessionState = 'running' | 'waiting_for_permission' | 'stopped';
 
@@ -90,8 +80,7 @@ export interface SubagentInfo extends SessionEnrichment {
   jsonlPath: string;        // absolute path to sub-agent JSONL
   isActive: boolean;        // mtime within last 45 seconds
   lastMessageTime: string;  // ISO 8601 from file mtime
-  // REVIEW: architecture-reviewer - `launchTime` and `lastMessageTime` are both derived from the same file mtime and assigned identical values in `getSubagentInfos`. The dual fields expose misleading semantics: `launchTime` implies agent start time, but mtime only reflects last-write time. Either derive a true launch time (e.g., parse the first-line timestamp from the agent JSONL) or collapse to a single accurately named field (e.g., `lastActivityTime`) to remove the duplicated surface.
-  launchTime: string;       // ISO 8601 from file mtime (used as proxy for launch time)
+  launchTime: string;       // ISO 8601 from first JSONL entry timestamp, falls back to file mtime
 }
 
 export interface SessionsIndexEntry {
@@ -126,9 +115,10 @@ export interface ProjectInfo {
   gitBranch?: string;
 }
 
-// REVIEW: code-style-reviewer - This comment describes "what" the interface is (same as a reader can see from the code) and its relationship to SessionEnrichment (already visible from `extends`). Prefer a "why" comment or a JSDoc that documents the purpose, not the structure.
-// SessionTailInfo extends SessionEnrichment with agent description metadata
-// accumulated during the parent session's JSONL parse pass.
+/**
+ * Carries enrichment extracted from a JSONL tail scan, plus the per-session
+ * agentDescriptions map needed to annotate sub-agents without a separate parse pass.
+ */
 export interface SessionTailInfo extends SessionEnrichment {
   // Maps agentId → description, populated from queue-operation enqueue entries.
   agentDescriptions: Map<string, string>;
@@ -143,26 +133,15 @@ export interface StatusFile {
   notificationTimestamp?: string;  // ISO 8601, updated on each notification
 }
 
-export interface ProjectState extends ProjectInfo {
+export interface ProjectState extends ProjectInfo, SessionEnrichment {
   state: SessionState;
   lastUpdated: string | null; // from status file timestamp, null if no status
-  // REVIEW: code-style-reviewer - `latestUserActivity`, `latestAssistantActivity`, and `model` are already declared in `SessionEnrichment`. Re-declaring them here (even with identical types) creates a maintenance burden: changing the shape in `SessionEnrichment` also requires updating `ProjectState`. Since `ProjectState` doesn't extend `SessionEnrichment`, these are implicit duplicates. Consider extending `SessionEnrichment` or removing the re-declarations and relying on the spread in `buildProjectState`.
-  // Enrichment fields — populated for all states
-  latestUserActivity?: { text: string; isCommand: boolean };
-  latestAssistantActivity?: { text?: string; tool?: string };
-  model?: string;
-  tasksDone?: number;
-  tasksTotal?: number;
-  inputTokens?: number;
-  outputTokens?: number;
+  notificationMessage?: string;    // forwarded from StatusFile when present
+  notificationTimestamp?: string;  // forwarded from StatusFile when present
   subagents?: SubagentInfo[];
   // Derived from subagents for backward compatibility
   subagentCount?: number;
 }
-
-// REVIEW: code-style-reviewer - Section banner "─── Public API ───" marks code organization with a comment rather than letting file structure speak for itself. Per project code style, if section markers seem necessary the file should be split instead. Same issue applies to "─── Exported Test Helpers ───" and "─── Private Helpers ───" banners below.
-
-// ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
  * Reads and validates sessions-index.json from projectDirPath.
@@ -225,7 +204,9 @@ export async function readSessionsIndex(projectDirPath: string): Promise<Session
     return null;
   }
 
-  // REVIEW: code-correctness-reviewer - `entries[0].projectPath` is used as the canonical project path for the entire index, but the code does not verify that all entries share the same `projectPath`. In a malformed or corrupted index where entries have different `projectPath` values, the first non-sidechain entry's path is used as the cwd for all subsequent lookups. If the first entry has an incorrect `projectPath`, all session matching (including `resolveProjectDir` exact-match logic) will fail silently. Consider verifying consistency or reading from a top-level `originalPath` field if available.
+  // The sessions-index.json format has no top-level cwd field, so we use the first entry's
+  // projectPath as the canonical cwd without validating that all entries agree. In practice
+  // all entries in a single index file share the same project directory.
   const result: SessionsIndex = { projectPath: entries[0].projectPath, entries };
   sessionsIndexCache.set(projectDirPath, { mtime, data: result });
   return result;
@@ -351,7 +332,15 @@ export async function readStatus(projectDir: string): Promise<StatusFile | null>
  *   1. `pgrep -a claude` — standard installs
  *   2. `/proc/<pid>/exe` symlinks containing `.claude-wrapped` — NixOS wrapping
  */
-// REVIEW: code-correctness-reviewer - The liveness cache stores ONLY the cwds that were live among the `cwds` passed by the FIRST caller within the 2.5s TTL. When `buildProjectState` is called concurrently for N projects via `Promise.all`, each calls `checkLiveness([project.cwd])` with its own single cwd. The first call to miss the cache (cache cold) scans all PIDs but only records cwds matching its single-element input. All subsequent concurrent callers within the TTL receive that partial result. A project running in `/home/user/projB` will be shown as stopped if the cache was primed by `/home/user/projA`'s call first. Fix: the cache should either store ALL live cwds (scan /proc unconditionally and collect all cwds, returning the full live set), or `buildProjectState` should pass all cwds at once instead of one at a time.
+/**
+ * Returns the set of cwds from the provided list that have a live Claude
+ * process running in them.
+ *
+ * The cache always stores ALL live cwds found in the scan — not just those
+ * matching the caller's input list. This means concurrent calls from
+ * `buildProjectState` for different projects all share the same complete
+ * live set and will not miss each other due to cache priming order.
+ */
 export async function checkLiveness(cwds: string[]): Promise<Set<string>> {
   if (cwds.length === 0) return new Set();
 
@@ -368,13 +357,14 @@ export async function checkLiveness(cwds: string[]): Promise<Set<string>> {
     return livenessCache.result;
   }
 
-  const cwdSet = new Set(cwds);
+  // Collect ALL live cwds unconditionally so the cache is complete for every
+  // concurrent caller, regardless of which project's cwd primed the scan.
   const live = new Set<string>();
 
   await Promise.all(
     [...pids].map(async (pid) => {
       const procCwd = await readProcCwd(pid);
-      if (procCwd !== null && cwdSet.has(procCwd)) {
+      if (procCwd !== null) {
         live.add(procCwd);
       }
     }),
@@ -398,8 +388,7 @@ export async function getProjectState(
 ): Promise<ProjectState[]> {
   // Targeted refresh: only rescan the changed project when the cache is warm.
   if (changedProjectDir !== undefined && projectStateCache.size > 0) {
-    // REVIEW: code-correctness-reviewer - `split('/').pop()` is inconsistent with `basename()` used elsewhere; for edge-case paths (e.g. trailing slash, empty string) this can produce unexpected results (empty string or undefined). Since `basename` is already imported and handles all POSIX edge cases, prefer `basename(changedProjectDir)` here.
-    const dirName = changedProjectDir.split('/').pop() ?? '';
+    const dirName = basename(changedProjectDir);
     const info = await readProjectInfo(changedProjectDir, dirName);
     if (info !== null) {
       const updatedState = await buildProjectState(info, claudeDir);
@@ -444,46 +433,11 @@ export function filterStaleProjects(
   const cutoff = Date.now() - maxInactivityHours * 3600 * 1000;
   return projects.filter((p) => {
     if (p.lastUpdated === null) return false;
-    // REVIEW: code-correctness-reviewer - If `p.lastUpdated` is not a valid date string, `getTime()` returns NaN and `NaN >= cutoff` is false, silently filtering out the project as stale. A malformed timestamp would cause a valid active project to disappear from the dashboard. Consider validating the date or using a fallback to 0.
-    return new Date(p.lastUpdated).getTime() >= cutoff;
+    // An invalid/unparseable timestamp (NaN) is treated as non-stale (keep the project)
+    // rather than silently dropping it from the dashboard.
+    const time = new Date(p.lastUpdated).getTime();
+    return isNaN(time) || time >= cutoff;
   });
-}
-
-/**
- * Counts active sub-agent JSONL files in {sessionDir}/subagents/ where
- * mtime is within the last 5 minutes. Returns 0 if dir doesn't exist.
- */
-// REVIEW: code-style-reviewer - `countActiveSubagents` is exported but has no production callers — only tests call it. `buildProjectState` uses `getSubagentInfos` and derives `subagentCount` from that. Exporting an unused function as part of the public API adds unnecessary maintenance surface. Consider removing it (and its tests) or inlining it as a test helper if the count-only behavior is still needed for testing.
-// REVIEW: architecture-reviewer - `countActiveSubagents` duplicates the directory enumeration and mtime-threshold logic already present in `getSubagentInfos`. Since `buildProjectState` calls `getSubagentInfos` and derives `subagentCount` from the result, `countActiveSubagents` appears to be dead code (no callers in the codebase). If it is no longer called, remove it; if it still has external callers, refactor it to delegate to `getSubagentInfos` to avoid the logic duplication.
-export async function countActiveSubagents(latestJSONL: string): Promise<number> {
-  // Strip .jsonl extension to get the session dir
-  const sessionDir = latestJSONL.endsWith('.jsonl')
-    ? latestJSONL.slice(0, -'.jsonl'.length)
-    : latestJSONL;
-  const subagentsDir = join(sessionDir, 'subagents');
-  const cutoff = Date.now() - SUBAGENT_ACTIVE_THRESHOLD_MS;
-
-  let entries: Awaited<ReturnType<typeof readdir>>;
-  try {
-    entries = await readdir(subagentsDir, { withFileTypes: true });
-  } catch {
-    return 0;
-  }
-
-  let count = 0;
-  await Promise.all(
-    entries.map(async (entry) => {
-      if (!entry.name.endsWith('.jsonl')) return;
-      try {
-        const s = await stat(join(subagentsDir, entry.name));
-        if (s.mtimeMs > cutoff) count++;
-      } catch {
-        // skip unreadable files
-      }
-    }),
-  );
-
-  return count;
 }
 
 /**
@@ -492,10 +446,7 @@ export async function countActiveSubagents(latestJSONL: string): Promise<number>
  * (agentId, jsonlPath, isActive, optional slug). Returns [] if the dir is absent.
  */
 export async function getSubagentInfos(latestJSONL: string): Promise<SubagentInfo[]> {
-  // REVIEW: code-style-reviewer - The `.jsonl` extension stripping logic is identical in `countActiveSubagents` and here. Extract a private `sessionDirFromJSONL(path: string): string` helper to avoid the duplication and centralize the convention.
-  const sessionDir = latestJSONL.endsWith('.jsonl')
-    ? latestJSONL.slice(0, -'.jsonl'.length)
-    : latestJSONL;
+  const sessionDir = sessionDirFromJSONL(latestJSONL);
   const subagentsDir = join(sessionDir, 'subagents');
   const cutoff = Date.now() - SUBAGENT_ACTIVE_THRESHOLD_MS;
 
@@ -539,8 +490,11 @@ export async function getSubagentInfos(latestJSONL: string): Promise<SubagentInf
 
       const enrichment = await readSessionTail(jsonlPath);
 
-      // Optionally read slug from first line (best-effort)
+      // Read slug and launch timestamp from first line (best-effort).
+      // launchTime uses the recorded first-entry timestamp rather than mtime so that
+      // a long-running agent that finishes last doesn't sort ahead of a later-launched one.
       let slug: string | undefined;
+      let launchTime: string = new Date(mtimeMs).toISOString(); // mtime fallback
       try {
         const file = Bun.file(jsonlPath);
         const text = await file.slice(0, 512).text();
@@ -548,16 +502,15 @@ export async function getSubagentInfos(latestJSONL: string): Promise<SubagentInf
         if (firstLine) {
           const parsed = JSON.parse(firstLine) as Record<string, unknown>;
           if (typeof parsed.slug === 'string') slug = parsed.slug;
+          if (typeof parsed.timestamp === 'string') launchTime = parsed.timestamp;
         }
       } catch {
-        // slug is optional — ignore errors
+        // slug and launchTime are both optional — ignore errors
       }
 
       const lastMessageTime = new Date(mtimeMs).toISOString();
       const description = parentTail.agentDescriptions.get(agentId);
-      // REVIEW: code-style-reviewer - `launchTime` is set to the same value as `lastMessageTime` (both derived from `mtimeMs`). The comment on `SubagentInfo.launchTime` says "from file mtime (used as proxy for launch time)" — this means they will always be identical, so sorting by `launchTime` is equivalent to sorting by `lastMessageTime`. If a better launch time signal (e.g. first JSONL entry timestamp) is planned, tracking `launchTime` as a separate variable here is premature until that is implemented. If mtime is permanently the proxy, consider removing the duplicate field and using `lastMessageTime` for ordering.
-      // REVIEW: code-correctness-reviewer - `launchTime` is set to `mtimeMs` (last modification time), but R43.1 specifies "from first JSONL entry or file mtime". Using mtime as `launchTime` sorts sub-agents by when they last wrote, not when they started. A long-running agent that started early but finished last would appear first. The first-line timestamp is already read above (for `slug`) — extracting `timestamp` from that same first line and using it as `launchTime` would correctly implement R43.1.
-      return { agentId, slug, description, jsonlPath, isActive, lastMessageTime, launchTime: lastMessageTime, ...enrichment };
+      return { agentId, slug, description, jsonlPath, isActive, lastMessageTime, launchTime, ...enrichment };
     }),
   );
 
@@ -572,7 +525,6 @@ export async function getSubagentInfos(latestJSONL: string): Promise<SubagentInf
  * subsequent reads only parse bytes appended since the last read (delta mode).
  * If the file shrinks the cache is reset and the full file is re-read.
  */
-// REVIEW: code-style-reviewer - `readSessionTail` is ~250 lines long and does at least three distinct things: cache/delta management, forward scan for tasks, and reversed scan for enrichment + merge. Functions should be short and focused on one thing. Consider extracting: (1) a `computeReadRange()` helper for offset/baseData logic; (2) a `scanReversed()` helper for the reversed enrichment pass; (3) a `mergeEnrichment()` helper for the merge step. This would also make `scanTaskCreateUpdate` and `scanTodoWrite` more clearly peers at the same abstraction level.
 export async function readSessionTail(jsonlPath: string): Promise<SessionTailInfo> {
   let mtimeMs: number;
   let size: number;
@@ -585,28 +537,11 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
   }
 
   const cached = sessionTailCache.get(jsonlPath);
+  const { startOffset, baseData, isDelta } = computeReadRange(cached, mtimeMs, size);
 
-  // Determine read range and base data to merge into.
-  let startOffset: number;
-  let baseData: SessionTailInfo;
-  // isDelta tracks whether startOffset is exactly at a line boundary (append-only delta).
-  // When true, the first line at startOffset is complete and must NOT be discarded.
-  let isDelta: boolean;
-  if (cached !== undefined && cached.mtime === mtimeMs && cached.fileSize === size) {
-    // Nothing changed — return cached result immediately.
-    return cached.data;
-  } else if (cached !== undefined && size > cached.fileSize) {
-    // Delta read: only parse the new bytes appended since last read.
-    // Applies even when mtime appears unchanged (sub-second writes on fast systems).
-    startOffset = cached.fileSize;
-    // REVIEW: code-style-reviewer - The comment says "share the agentDescriptions map reference" but `new Map(...)` creates a copy, not a shared reference. The comment is misleading — the actual intent is to copy the cached data so new scan results can be accumulated independently without mutating the cached entry. Fix the comment to reflect what actually happens.
-    baseData = { ...cached.data, agentDescriptions: new Map(cached.data.agentDescriptions) };
-    isDelta = true;
-  } else {
-    // Full read (first read, file shrank, or mtime changed without size growth).
-    startOffset = Math.max(0, size - MAX_FIRST_READ);
-    baseData = { agentDescriptions: new Map() };
-    isDelta = false;
+  if (startOffset === -1) {
+    // Cache hit: nothing changed.
+    return cached!.data;
   }
 
   let text: string;
@@ -625,208 +560,9 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     lines = lines.slice(1);
   }
 
-  // Forward pass: scan for TaskCreate/TaskUpdate tool calls to build task map.
-  // Must run forward (chronological order) so TaskCreate then TaskUpdate patch correctly.
   const scannedTasks = scanTaskCreateUpdate(lines);
-
-  // Scan newest-to-oldest so "first found" = most recent.
-  // Token counts are accumulated across ALL assistant entries in the scanned range.
-  // agentDescriptions are accumulated across ALL queue-operation enqueue entries.
-  const reversed = lines.slice().reverse();
-  const scanResult: SessionTailInfo = { agentDescriptions: new Map() };
-  let foundUserActivity = false;
-  let foundAssistantActivity = false;
-  let foundModel = false;
-  // REVIEW: code-correctness-reviewer - `scannedTasks !== null` is true even when the returned Map is empty (foundAny=true because a TaskCreate tool_use was seen but its matching tool_result fell outside the scanned window, or only TaskUpdate blocks with no preceding creates were found). This suppresses the TodoWrite fallback even when zero tasks were resolved. Fix: `(scannedTasks !== null && scannedTasks.size > 0) || baseData.tasks !== undefined`.
-  // foundTasks is true when tasks came from TaskCreate/TaskUpdate (new scan or cached base).
-  // When true, skip the TodoWrite fallback in the reversed scan.
-  let foundTasks = scannedTasks !== null || baseData.tasks !== undefined;
-  // inputTokens uses last-seen value (cache_read grows monotonically per session).
-  // First assistant entry in reversed scan = last chronologically = the value to use.
-  let scanInputTokens: number | undefined;
-  let scanOutputTokens = 0;
-
-  for (const line of reversed) {
-    // Don't break early even when other fields are found — need to accumulate output tokens.
-    let entry: Record<string, unknown>;
-    try {
-      const parsed = JSON.parse(line);
-      if (typeof parsed !== 'object' || parsed === null) continue;
-      entry = parsed as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-
-    const type = entry.type;
-    const message = entry.message as Record<string, unknown> | undefined;
-
-    if (type === 'user') {
-      if (!message || foundUserActivity) continue;
-      const content = message.content;
-      if (typeof content === 'string') {
-        // Try command first (content starting with < may carry <command-name> tag).
-        const cmd = content.startsWith('<') ? extractCommand(content) : null;
-        if (cmd !== null) {
-          scanResult.latestUserActivity = { text: cmd, isCommand: true };
-          foundUserActivity = true;
-        } else if (!content.startsWith('<')) {
-          // Plain user message — exclude <-prefixed content that isn't a command.
-          scanResult.latestUserActivity = { text: content.slice(0, 200), isCommand: false };
-          foundUserActivity = true;
-        }
-      }
-    }
-
-    if (type === 'assistant' && message) {
-      if (!foundModel && typeof message.model === 'string') {
-        scanResult.model = message.model;
-        foundModel = true;
-      }
-
-      // input tokens: last-seen value wins (cache_read_input_tokens is the entire cached context
-      // per call, so it grows monotonically — summing gives a wildly inflated number).
-      // output tokens: accumulate all (per-call deltas, correct to sum).
-      const usage = message.usage as Record<string, unknown> | undefined;
-      if (usage !== undefined) {
-        const input = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
-        const cacheCreate = typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0;
-        const cacheRead = typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0;
-        // Only take the first encountered (= last chronologically) for input.
-        if (scanInputTokens === undefined) scanInputTokens = input + cacheCreate + cacheRead;
-        if (typeof usage.output_tokens === 'number') scanOutputTokens += usage.output_tokens;
-      }
-
-      if (Array.isArray(message.content)) {
-        const contentBlocks = message.content as unknown[];
-
-        // Only fall back to TodoWrite when no TaskCreate/TaskUpdate tasks were found.
-        if (!foundTasks) {
-          scanTodoWrite(contentBlocks, scanResult);
-          if (scanResult.tasksTotal !== undefined) foundTasks = true;
-        }
-
-        // First assistant entry in reversed scan (= most recent chronologically) sets
-        // latestAssistantActivity. Both text and tool are extracted independently from
-        // the same entry — an entry may have text only, tool only, or both.
-        if (!foundAssistantActivity) {
-          const textBlock = contentBlocks.find(
-            (b): b is { type: string; text: string } =>
-              typeof b === 'object' &&
-              b !== null &&
-              (b as Record<string, unknown>).type === 'text' &&
-              typeof (b as Record<string, unknown>).text === 'string',
-          );
-          const toolUse = contentBlocks.find(
-            (item): item is { type: string; name: string } =>
-              typeof item === 'object' &&
-              item !== null &&
-              (item as Record<string, unknown>).type === 'tool_use' &&
-              typeof (item as Record<string, unknown>).name === 'string',
-          );
-          if (textBlock !== undefined || toolUse !== undefined) {
-            scanResult.latestAssistantActivity = {
-              text: textBlock ? textBlock.text.slice(0, 200) : undefined,
-              tool: toolUse ? toolUse.name : undefined,
-            };
-            foundAssistantActivity = true;
-          }
-        }
-      }
-    }
-
-    // progress entries carry TodoWrite tool calls (legacy fallback path).
-    if (!foundTasks && type === 'progress') {
-      const data = entry.data as Record<string, unknown> | undefined;
-      const outerMsg = data?.message as Record<string, unknown> | undefined;
-      const innerMsg = outerMsg?.message as Record<string, unknown> | undefined;
-      const content = innerMsg?.content;
-      if (Array.isArray(content)) {
-        scanTodoWrite(content as unknown[], scanResult);
-        if (scanResult.tasksTotal !== undefined) foundTasks = true;
-      }
-    }
-
-    // queue-operation enqueue entries map agentId → description for sub-agents.
-    if (type === 'queue-operation') {
-      const operation = entry.operation;
-      if (operation === 'enqueue' && typeof entry.content === 'string') {
-        try {
-          const parsed = JSON.parse(entry.content) as Record<string, unknown>;
-          if (typeof parsed.task_id === 'string' && typeof parsed.description === 'string') {
-            scanResult.agentDescriptions.set(parsed.task_id, parsed.description);
-          }
-        } catch {
-          // malformed content — skip
-        }
-      }
-    }
-  }
-
-  if (scanInputTokens !== undefined && scanInputTokens > 0) scanResult.inputTokens = scanInputTokens;
-  if (scanOutputTokens > 0) scanResult.outputTokens = scanOutputTokens;
-
-  // Merge task data: start from base tasks then apply new scan's creates/updates.
-  // This ensures delta reads accumulate all tasks across the session's history.
-  let mergedTasks: TaskInfo[] | undefined;
-  let mergedTasksDone: number | undefined;
-  let mergedTasksTotal: number | undefined;
-
-  if (scannedTasks !== null || baseData.tasks !== undefined) {
-    // Build merged task map: base tasks first, then overlay new scan results.
-    const taskMap = new Map<string, TaskInfo>();
-    if (baseData.tasks) {
-      for (const t of baseData.tasks) taskMap.set(t.id, { ...t });
-    }
-    if (scannedTasks !== null) {
-      for (const [id, t] of scannedTasks) taskMap.set(id, { ...t });
-    }
-    const taskList = [...taskMap.values()].sort((a, b) => {
-      const na = parseInt(a.id, 10);
-      const nb = parseInt(b.id, 10);
-      return na - nb;
-    });
-    mergedTasks = taskList;
-    const nonDeleted = taskList.filter((t) => t.status !== 'deleted');
-    mergedTasksTotal = nonDeleted.length;
-    mergedTasksDone = nonDeleted.filter((t) => t.status === 'completed').length;
-    // Propagate to scanResult so foundTasks check works for TodoWrite fallback path.
-    scanResult.tasks = mergedTasks;
-    scanResult.tasksTotal = mergedTasksTotal;
-    scanResult.tasksDone = mergedTasksDone;
-  } else if (foundTasks) {
-    // TodoWrite path: scanResult already has tasksDone/tasksTotal set.
-    mergedTasksDone = scanResult.tasksDone;
-    mergedTasksTotal = scanResult.tasksTotal;
-  } else {
-    mergedTasksDone = baseData.tasksDone;
-    mergedTasksTotal = baseData.tasksTotal;
-    mergedTasks = baseData.tasks;
-  }
-
-  // Merge: new scan results override baseData for "latest wins" fields.
-  // inputTokens: last-wins (new scan replaces base, not additive), since the value
-  //   represents the most-recent API call's cached context size.
-  // outputTokens: additive across delta reads (per-call deltas that should be summed).
-  // agentDescriptions accumulate: merge scan entries into the base map.
-  const mergedInputTokens = scanResult.inputTokens ?? baseData.inputTokens;
-  const mergedOutputTokens = (baseData.outputTokens ?? 0) + (scanResult.outputTokens ?? 0);
-
-  const mergedDescriptions = baseData.agentDescriptions;
-  for (const [id, desc] of scanResult.agentDescriptions) {
-    mergedDescriptions.set(id, desc);
-  }
-
-  const merged: SessionTailInfo = {
-    latestUserActivity: scanResult.latestUserActivity ?? baseData.latestUserActivity,
-    latestAssistantActivity: scanResult.latestAssistantActivity ?? baseData.latestAssistantActivity,
-    model: scanResult.model ?? baseData.model,
-    tasks: mergedTasks,
-    tasksDone: mergedTasksDone,
-    tasksTotal: mergedTasksTotal,
-    inputTokens: mergedInputTokens !== undefined && mergedInputTokens > 0 ? mergedInputTokens : undefined,
-    outputTokens: mergedOutputTokens > 0 ? mergedOutputTokens : undefined,
-    agentDescriptions: mergedDescriptions,
-  };
+  const scanResult = scanEnrichment(lines, scannedTasks, baseData);
+  const merged = mergeEnrichment(scannedTasks, scanResult, baseData);
 
   // Strip undefined keys to keep the object clean (except agentDescriptions which is always present).
   for (const key of Object.keys(merged) as (keyof SessionTailInfo)[]) {
@@ -837,12 +573,9 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
   return merged;
 }
 
-// ─── Exported Test Helpers ───────────────────────────────────────────────────
-
 /**
  * Resets all module-level caches. Only call from tests.
  */
-// REVIEW: architecture-reviewer - Exporting test infrastructure (`_resetCachesForTesting`) through the public module API is an architectural anti-pattern. It leaks internal implementation details and makes the test surface part of the contract. The underscore prefix is a weak convention signal that this is test-only; TypeScript has no enforcement. This need disappears if caches are encapsulated in a class/factory instance (see the module-level caches comment above): tests simply instantiate a fresh store.
 export function _resetCachesForTesting(): void {
   livenessCache = null;
   sessionsIndexCache.clear();
@@ -867,8 +600,6 @@ export function parseProcessOutput(output: string): number[] {
   return pids;
 }
 
-// ─── Private Helpers ─────────────────────────────────────────────────────────
-
 /**
  * Extracts a slash command string from a user message content string.
  * Returns "/command-name [args]" if a <command-name> tag is found, null otherwise.
@@ -880,6 +611,243 @@ function extractCommand(content: string): string | null {
   const argsMatch = content.match(/<command-args>([^<]*)<\/command-args>/);
   const args = argsMatch ? argsMatch[1].trim() : '';
   return args ? `${name} ${args}` : name;
+}
+
+/**
+ * Determines the byte offset and base data for a readSessionTail read.
+ * Returns startOffset === -1 to signal a cache hit (no re-read needed).
+ */
+function computeReadRange(
+  cached: SessionTailCache | undefined,
+  mtimeMs: number,
+  size: number,
+): { startOffset: number; baseData: SessionTailInfo; isDelta: boolean } {
+  if (cached !== undefined && cached.mtime === mtimeMs && cached.fileSize === size) {
+    // Nothing changed — signal cache hit.
+    return { startOffset: -1, baseData: cached.data, isDelta: false };
+  } else if (cached !== undefined && size > cached.fileSize) {
+    // Delta read: only parse the new bytes appended since last read.
+    // Applies even when mtime appears unchanged (sub-second writes on fast systems).
+    // Copy the cached agentDescriptions so new scan entries accumulate independently.
+    return {
+      startOffset: cached.fileSize,
+      baseData: { ...cached.data, agentDescriptions: new Map(cached.data.agentDescriptions) },
+      isDelta: true,
+    };
+  } else {
+    // Full read (first read, file shrank, or mtime changed without size growth).
+    return {
+      startOffset: Math.max(0, size - MAX_FIRST_READ),
+      baseData: { agentDescriptions: new Map() },
+      isDelta: false,
+    };
+  }
+}
+
+/**
+ * Reversed-scan pass over JSONL lines (newest-to-oldest).
+ * Extracts the most-recent user activity, assistant activity, model, token counts,
+ * and agent descriptions. Uses TodoWrite as a fallback when no TaskCreate tasks exist.
+ */
+function scanEnrichment(
+  lines: string[],
+  scannedTasks: Map<string, TaskInfo> | null,
+  baseData: SessionTailInfo,
+): SessionTailInfo {
+  const reversed = lines.slice().reverse();
+  const result: SessionTailInfo = { agentDescriptions: new Map() };
+  let foundUserActivity = false;
+  let foundAssistantActivity = false;
+  let foundModel = false;
+  // Only suppress the TodoWrite fallback when at least one task was resolved via
+  // TaskCreate/TaskUpdate; an empty scannedTasks Map (creates seen but results missing)
+  // does not count.
+  let foundTasks = (scannedTasks !== null && scannedTasks.size > 0) || baseData.tasks !== undefined;
+  // inputTokens: last-seen value (cache_read grows monotonically — summing inflates it).
+  let scanInputTokens: number | undefined;
+  let scanOutputTokens = 0;
+
+  for (const line of reversed) {
+    // Don't break early even when other fields are found — need to accumulate output tokens.
+    let entry: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(line);
+      if (typeof parsed !== 'object' || parsed === null) continue;
+      entry = parsed as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+
+    const type = entry.type;
+    const message = entry.message as Record<string, unknown> | undefined;
+
+    if (type === 'user') {
+      if (!message || foundUserActivity) continue;
+      const content = message.content;
+      if (typeof content === 'string') {
+        const cmd = content.startsWith('<') ? extractCommand(content) : null;
+        if (cmd !== null) {
+          result.latestUserActivity = { text: cmd, isCommand: true };
+          foundUserActivity = true;
+        } else if (!content.startsWith('<')) {
+          // Exclude <-prefixed content that isn't a recognized command.
+          result.latestUserActivity = { text: content.slice(0, 200), isCommand: false };
+          foundUserActivity = true;
+        }
+      }
+    }
+
+    if (type === 'assistant' && message) {
+      if (!foundModel && typeof message.model === 'string') {
+        result.model = message.model;
+        foundModel = true;
+      }
+
+      // input tokens: last-seen value wins (cache_read_input_tokens grows monotonically).
+      // output tokens: accumulate all per-call deltas.
+      const usage = message.usage as Record<string, unknown> | undefined;
+      if (usage !== undefined) {
+        const input = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
+        const cacheCreate = typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0;
+        const cacheRead = typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0;
+        if (scanInputTokens === undefined) scanInputTokens = input + cacheCreate + cacheRead;
+        if (typeof usage.output_tokens === 'number') scanOutputTokens += usage.output_tokens;
+      }
+
+      if (Array.isArray(message.content)) {
+        const contentBlocks = message.content as unknown[];
+
+        if (!foundTasks) {
+          scanTodoWrite(contentBlocks, result);
+          if (result.tasksTotal !== undefined) foundTasks = true;
+        }
+
+        // First assistant entry in reversed scan (= most recent chronologically) sets
+        // latestAssistantActivity. Text and tool are extracted from the same entry.
+        if (!foundAssistantActivity) {
+          const textBlock = contentBlocks.find(
+            (b): b is { type: string; text: string } =>
+              typeof b === 'object' &&
+              b !== null &&
+              (b as Record<string, unknown>).type === 'text' &&
+              typeof (b as Record<string, unknown>).text === 'string',
+          );
+          const toolUse = contentBlocks.find(
+            (item): item is { type: string; name: string } =>
+              typeof item === 'object' &&
+              item !== null &&
+              (item as Record<string, unknown>).type === 'tool_use' &&
+              typeof (item as Record<string, unknown>).name === 'string',
+          );
+          if (textBlock !== undefined || toolUse !== undefined) {
+            result.latestAssistantActivity = {
+              text: textBlock ? textBlock.text.slice(0, 200) : undefined,
+              tool: toolUse ? toolUse.name : undefined,
+            };
+            foundAssistantActivity = true;
+          }
+        }
+      }
+    }
+
+    // progress entries carry TodoWrite tool calls (legacy fallback path).
+    if (!foundTasks && type === 'progress') {
+      const data = entry.data as Record<string, unknown> | undefined;
+      const outerMsg = data?.message as Record<string, unknown> | undefined;
+      const innerMsg = outerMsg?.message as Record<string, unknown> | undefined;
+      const content = innerMsg?.content;
+      if (Array.isArray(content)) {
+        scanTodoWrite(content as unknown[], result);
+        if (result.tasksTotal !== undefined) foundTasks = true;
+      }
+    }
+
+    // queue-operation enqueue entries map agentId → description for sub-agents.
+    if (type === 'queue-operation') {
+      const operation = entry.operation;
+      if (operation === 'enqueue' && typeof entry.content === 'string') {
+        try {
+          const parsed = JSON.parse(entry.content) as Record<string, unknown>;
+          if (typeof parsed.task_id === 'string' && typeof parsed.description === 'string') {
+            result.agentDescriptions.set(parsed.task_id, parsed.description);
+          }
+        } catch {
+          // malformed content — skip
+        }
+      }
+    }
+  }
+
+  if (scanInputTokens !== undefined && scanInputTokens > 0) result.inputTokens = scanInputTokens;
+  if (scanOutputTokens > 0) result.outputTokens = scanOutputTokens;
+  return result;
+}
+
+/**
+ * Merges a fresh scan result with the base (cached) data into a final SessionTailInfo.
+ *
+ * Task merge strategy: base tasks overlaid with new scan results so delta reads
+ * accumulate all tasks across the session's history.
+ * Token merge: inputTokens last-wins (monotonically growing cache_read — summing inflates);
+ * outputTokens additive (per-call deltas that should be summed).
+ * agentDescriptions: accumulated from both base and new scan.
+ */
+function mergeEnrichment(
+  scannedTasks: Map<string, TaskInfo> | null,
+  scanResult: SessionTailInfo,
+  baseData: SessionTailInfo,
+): SessionTailInfo {
+  let mergedTasks: TaskInfo[] | undefined;
+  let mergedTasksDone: number | undefined;
+  let mergedTasksTotal: number | undefined;
+
+  if (scannedTasks !== null || baseData.tasks !== undefined) {
+    // Build merged task map: base tasks first, then overlay new scan results.
+    const taskMap = new Map<string, TaskInfo>();
+    if (baseData.tasks) {
+      for (const t of baseData.tasks) taskMap.set(t.id, { ...t });
+    }
+    if (scannedTasks !== null) {
+      for (const [id, t] of scannedTasks) taskMap.set(id, { ...t });
+    }
+    const taskList = [...taskMap.values()].sort((a, b) => {
+      const na = parseInt(a.id, 10);
+      const nb = parseInt(b.id, 10);
+      return na - nb;
+    });
+    mergedTasks = taskList;
+    const nonDeleted = taskList.filter((t) => t.status !== 'deleted');
+    mergedTasksTotal = nonDeleted.length;
+    mergedTasksDone = nonDeleted.filter((t) => t.status === 'completed').length;
+  } else if (scanResult.tasksTotal !== undefined) {
+    // TodoWrite path: scanResult already has tasksDone/tasksTotal set.
+    mergedTasksDone = scanResult.tasksDone;
+    mergedTasksTotal = scanResult.tasksTotal;
+  } else {
+    mergedTasksDone = baseData.tasksDone;
+    mergedTasksTotal = baseData.tasksTotal;
+    mergedTasks = baseData.tasks;
+  }
+
+  const mergedInputTokens = scanResult.inputTokens ?? baseData.inputTokens;
+  const mergedOutputTokens = (baseData.outputTokens ?? 0) + (scanResult.outputTokens ?? 0);
+
+  const mergedDescriptions = baseData.agentDescriptions;
+  for (const [id, desc] of scanResult.agentDescriptions) {
+    mergedDescriptions.set(id, desc);
+  }
+
+  return {
+    latestUserActivity: scanResult.latestUserActivity ?? baseData.latestUserActivity,
+    latestAssistantActivity: scanResult.latestAssistantActivity ?? baseData.latestAssistantActivity,
+    model: scanResult.model ?? baseData.model,
+    tasks: mergedTasks,
+    tasksDone: mergedTasksDone,
+    tasksTotal: mergedTasksTotal,
+    inputTokens: mergedInputTokens !== undefined && mergedInputTokens > 0 ? mergedInputTokens : undefined,
+    outputTokens: mergedOutputTokens > 0 ? mergedOutputTokens : undefined,
+    agentDescriptions: mergedDescriptions,
+  };
 }
 
 /**
@@ -931,9 +899,11 @@ function scanTaskCreateUpdate(lines: string[]): Map<string, TaskInfo> | null {
             if (typeof input.status === 'string') existing.status = input.status;
             if (typeof input.subject === 'string') existing.subject = input.subject;
             if (typeof input.activeForm === 'string') existing.activeForm = input.activeForm;
+            // Only mark as found when the update was applied to a known task; an update
+            // for a task not yet in the map (create truncated) must not suppress the
+            // TodoWrite fallback.
+            foundAny = true;
           }
-          // REVIEW: code-correctness-reviewer - `foundAny = true` is set unconditionally for TaskUpdate, even when `existing` is undefined (the task was not found in the map, e.g. its TaskCreate tool_result was in a truncated portion of a large file). This means a TaskUpdate-only scan sets `foundAny=true` and returns a non-null empty Map, which — combined with the `foundTasks` check — suppresses the TodoWrite fallback even though no tasks were actually resolved. Only set `foundAny = true` when the update was actually applied: `if (existing) { ...; foundAny = true; }`.
-          foundAny = true;
         }
       }
     }
@@ -1014,7 +984,6 @@ async function buildProjectState(project: ProjectInfo, claudeDir: string): Promi
   const tail = await readSessionTail(project.latestJSONL);
   const subagents = state !== 'stopped' ? await getSubagentInfos(project.latestJSONL) : [];
   const subagentCount = subagents.filter((s) => s.isActive).length;
-  // REVIEW: code-correctness-reviewer - `notificationMessage` and `notificationTimestamp` from `status` (StatusFile) are never propagated to the returned `ProjectState`. `ProjectState` also doesn't declare these fields. The UI checks `proj.notificationTimestamp` to trigger the notification flash (R26), but this will always be `undefined`, making the notification flash feature completely non-functional. Fix: add `notificationMessage?: string` and `notificationTimestamp?: string` to `ProjectState` and forward them here: `notificationMessage: status?.notificationMessage, notificationTimestamp: status?.notificationTimestamp`.
   return {
     ...base,
     latestUserActivity: tail.latestUserActivity,
@@ -1024,6 +993,8 @@ async function buildProjectState(project: ProjectInfo, claudeDir: string): Promi
     tasksTotal: tail.tasksTotal,
     inputTokens: tail.inputTokens,
     outputTokens: tail.outputTokens,
+    notificationMessage: status?.notificationMessage,
+    notificationTimestamp: status?.notificationTimestamp,
     subagents: subagents.length > 0 ? subagents : undefined,
     subagentCount: subagentCount > 0 ? subagentCount : undefined,
     gitBranch: project.gitBranch,
@@ -1061,7 +1032,7 @@ async function readProjectInfo(fullPath: string, dirName: string): Promise<Proje
   const latestJSONL = await findLatestJSONL(fullPath);
   if (latestJSONL === null) return null;
 
-  const firstLine = readFirstLine(latestJSONL);
+  const firstLine = await readFirstLine(latestJSONL);
   if (firstLine === null) return null;
 
   let parsed: unknown;
@@ -1110,12 +1081,11 @@ async function findLatestJSONL(dirPath: string): Promise<string | null> {
   return latestPath;
 }
 
-// REVIEW: architecture-reviewer - `readFirstLine` uses synchronous `readFileSync` while the rest of the file uses exclusively async I/O (`Bun.file().text()`, `stat`, etc.). This blocks the event loop when reading the first line of a JSONL fallback path. The inconsistency is also a maintenance footfall — it imports `readFileSync` from `node:fs` solely for this function. Prefer an async implementation using `Bun.file(filePath).slice(0, N).text()` (same pattern used for slug reading in `getSubagentInfos`) and remove the `readFileSync` import.
-function readFirstLine(filePath: string): string | null {
+async function readFirstLine(filePath: string): Promise<string | null> {
   try {
-    const content = readFileSync(filePath, 'utf8');
-    const newline = content.indexOf('\n');
-    return newline === -1 ? content.trim() : content.slice(0, newline).trim();
+    const text = await Bun.file(filePath).slice(0, 512).text();
+    const newline = text.indexOf('\n');
+    return newline === -1 ? text.trim() : text.slice(0, newline).trim();
   } catch {
     return null;
   }
@@ -1179,9 +1149,9 @@ function resolveState(
 ): SessionState {
   if (status === null) return 'stopped';
 
-  // REVIEW: code-correctness-reviewer - If `status.timestamp` is not a valid date string, `new Date(...).getTime()` returns NaN. `Date.now() - NaN` is NaN, and `NaN > STALE_THRESHOLD_MS` is false, so the staleness check is silently bypassed and the status is treated as perpetually fresh. An invalid timestamp should be treated as stale. Fix: add `isNaN(age) || age > STALE_THRESHOLD_MS`.
+  // An unparseable timestamp (NaN age) is treated as stale rather than perpetually fresh.
   const age = Date.now() - new Date(status.timestamp).getTime();
-  if (age > STALE_THRESHOLD_MS && status.state !== 'stopped') return 'stopped';
+  if ((isNaN(age) || age > STALE_THRESHOLD_MS) && status.state !== 'stopped') return 'stopped';
 
   // Status is fresh — verify a live process exists for non-stopped states
   if (status.state !== 'stopped' && !liveCwds.has(cwd)) return 'stopped';
@@ -1234,4 +1204,10 @@ function isSessionsIndexRaw(v: unknown): v is { entries: RawIndexEntry[] } {
       typeof (e as Record<string, unknown>).projectPath === 'string' &&
       typeof (e as Record<string, unknown>).isSidechain === 'boolean',
   );
+}
+
+// Strips the .jsonl extension from a path to get the corresponding session directory.
+// Both getSubagentInfos and the former countActiveSubagents rely on this convention.
+function sessionDirFromJSONL(jsonlPath: string): string {
+  return jsonlPath.endsWith('.jsonl') ? jsonlPath.slice(0, -'.jsonl'.length) : jsonlPath;
 }

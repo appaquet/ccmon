@@ -12,7 +12,6 @@ import {
   writeStatus,
   writeNotificationStatus,
   filterStaleProjects,
-  countActiveSubagents,
   getSubagentInfos,
   readSessionTail,
   _resetCachesForTesting,
@@ -439,6 +438,79 @@ describe('getProjectState', () => {
     const results = await getProjectState(tmpDir);
     expect(results).toHaveLength(2);
   });
+
+  test('R26: notificationMessage and notificationTimestamp forwarded from StatusFile', async () => {
+    const projDir = await makeProject('-home-user-notif', '/home/user/notif', 'sid-n');
+    const payload = {
+      state: 'stopped',
+      timestamp: new Date().toISOString(),
+      session_id: 'sid-n',
+      working_dir: '/home/user/notif',
+      notificationMessage: 'You have a notification',
+      notificationTimestamp: '2026-02-22T10:00:00.000Z',
+    };
+    await writeFile(join(projDir, 'status.local.json'), JSON.stringify(payload));
+
+    const results = await getProjectState(tmpDir);
+    expect(results).toHaveLength(1);
+    expect(results[0].notificationMessage).toBe('You have a notification');
+    expect(results[0].notificationTimestamp).toBe('2026-02-22T10:00:00.000Z');
+  });
+
+  test('R26: notificationMessage absent when status has none', async () => {
+    const projDir = await makeProject('-home-user-nonotif', '/home/user/nonotif', 'sid-nn');
+    const payload = {
+      state: 'stopped',
+      timestamp: new Date().toISOString(),
+      session_id: 'sid-nn',
+      working_dir: '/home/user/nonotif',
+    };
+    await writeFile(join(projDir, 'status.local.json'), JSON.stringify(payload));
+
+    const results = await getProjectState(tmpDir);
+    expect(results).toHaveLength(1);
+    expect(results[0].notificationMessage).toBeUndefined();
+    expect(results[0].notificationTimestamp).toBeUndefined();
+  });
+
+  test('R2: invalid status.timestamp treated as stale (NaN guard)', async () => {
+    const projDir = await makeProject('-home-user-nan-ts', '/home/user/nan-ts', 'sid-nan');
+    const payload = {
+      state: 'running',
+      timestamp: 'not-a-date',
+      session_id: 'sid-nan',
+      working_dir: '/home/user/nan-ts',
+    };
+    await writeFile(join(projDir, 'status.local.json'), JSON.stringify(payload));
+
+    const results = await getProjectState(tmpDir);
+    expect(results).toHaveLength(1);
+    // Invalid timestamp produces NaN age → treated as stale → overridden to stopped
+    expect(results[0].state).toBe('stopped');
+  });
+});
+
+// ─── filterStaleProjects NaN guard ───────────────────────────────────────────
+
+describe('filterStaleProjects NaN guard (R18)', () => {
+  function makeProject(lastUpdated: string | null): import('../src/sessions').ProjectState {
+    return {
+      projectDir: 'dir',
+      cwd: '/home/user/proj',
+      projectName: 'proj',
+      sessionId: 'sid',
+      latestJSONL: '/home/user/proj/session.jsonl',
+      state: 'stopped',
+      lastUpdated,
+    };
+  }
+
+  test('R18: invalid lastUpdated string (NaN) keeps project instead of silently dropping it', () => {
+    // A malformed timestamp should not cause the project to disappear from the dashboard.
+    const projects = [makeProject('not-a-date')];
+    const result = filterStaleProjects(projects, 1);
+    expect(result).toHaveLength(1);
+  });
 });
 
 // ─── mapHookEventToState ──────────────────────────────────────────────────────
@@ -726,61 +798,6 @@ describe('session enrichment', () => {
     const results = await scanProjects(tmpDir);
     expect(results).toHaveLength(1);
     expect(results[0].gitBranch).toBeUndefined();
-  });
-
-  // ── countActiveSubagents ──
-
-  test('countActiveSubagents: 2 recent jsonl files → returns 2', async () => {
-    const sessionId = 'my-session';
-    const sessionDir = join(tmpDir, sessionId);
-    const subagentsDir = join(sessionDir, 'subagents');
-    await mkdir(subagentsDir, { recursive: true });
-    await writeFile(join(subagentsDir, 'agent-1.jsonl'), '{}');
-    await writeFile(join(subagentsDir, 'agent-2.jsonl'), '{}');
-
-    const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
-    const count = await countActiveSubagents(jsonlPath);
-    expect(count).toBe(2);
-  });
-
-  test('countActiveSubagents: old mtime files → returns 0', async () => {
-    const sessionId = 'old-session';
-    const sessionDir = join(tmpDir, sessionId);
-    const subagentsDir = join(sessionDir, 'subagents');
-    await mkdir(subagentsDir, { recursive: true });
-
-    const agent1 = join(subagentsDir, 'agent-1.jsonl');
-    const agent2 = join(subagentsDir, 'agent-2.jsonl');
-    await writeFile(agent1, '{}');
-    await writeFile(agent2, '{}');
-
-    // Backdate both files to 10 minutes ago
-    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
-    utimesSync(agent1, tenMinAgo, tenMinAgo);
-    utimesSync(agent2, tenMinAgo, tenMinAgo);
-
-    const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
-    const count = await countActiveSubagents(jsonlPath);
-    expect(count).toBe(0);
-  });
-
-  test('countActiveSubagents: missing subagents dir → returns 0', async () => {
-    const jsonlPath = join(tmpDir, 'no-subagents-session.jsonl');
-    const count = await countActiveSubagents(jsonlPath);
-    expect(count).toBe(0);
-  });
-
-  test('countActiveSubagents: non-jsonl files are not counted', async () => {
-    const sessionId = 'mixed-session';
-    const sessionDir = join(tmpDir, sessionId);
-    const subagentsDir = join(sessionDir, 'subagents');
-    await mkdir(subagentsDir, { recursive: true });
-    await writeFile(join(subagentsDir, 'agent-1.jsonl'), '{}');
-    await writeFile(join(subagentsDir, 'notes.txt'), 'some text');
-
-    const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
-    const count = await countActiveSubagents(jsonlPath);
-    expect(count).toBe(1);
   });
 
   // ── readSessionTail ──
@@ -1647,6 +1664,15 @@ describe('livenessCache (R20.2)', () => {
     // Different object even if both are empty, because cache was cleared
     expect(second).not.toBe(first);
   });
+
+  test('R2: second caller with different cwd receives same cached Set (not just matching cwds)', async () => {
+    // Prime the cache with one cwd.
+    const first = await checkLiveness(['/nonexistent/path/a']);
+    // A second call with a completely different cwd must return the same cached Set,
+    // proving the cache stores all live cwds rather than only those from the first caller's input.
+    const second = await checkLiveness(['/nonexistent/path/b']);
+    expect(second).toBe(first);
+  });
 });
 
 // ─── targeted refresh (R20.5) ──────────────────────────────────────────────────
@@ -2459,5 +2485,41 @@ describe('readSessionTail TaskCreate/TaskUpdate task parsing (R46)', () => {
     expect(result.tasks).toHaveLength(1);
     expect(result.tasksTotal).toBe(1);
     expect(result.tasksDone).toBe(0);
+  });
+
+  test('R46: TaskUpdate-only (no resolved TaskCreate) does not suppress TodoWrite fallback', async () => {
+    // A TaskUpdate block with no preceding TaskCreate tool_result in the scanned window
+    // must not set foundAny=true and block the TodoWrite fallback.
+    const jsonlPath = join(tmpDir, 'r46-update-only.jsonl');
+    const todos = [
+      { content: 'Fallback A', status: 'completed' },
+      { content: 'Fallback B', status: 'pending' },
+    ];
+    const lines = [
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'tool_use', name: 'TodoWrite', input: { todos } }],
+        },
+      }),
+      // TaskUpdate for an ID that has no TaskCreate in this window
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'tool_use', id: 'tu-upd', name: 'TaskUpdate', input: { taskId: '99', status: 'completed' } }],
+        },
+      }),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    // TaskUpdate for unknown ID must not block TodoWrite; fallback should produce 2 tasks
+    expect(result.tasksTotal).toBe(2);
+    expect(result.tasksDone).toBe(1);
+    expect(result.tasks).toBeUndefined(); // TodoWrite path never sets tasks array
   });
 });

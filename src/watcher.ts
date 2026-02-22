@@ -5,10 +5,6 @@ import { join } from 'node:path';
 
 const DEBOUNCE_MS = 100;
 
-// REVIEW: code-style-reviewer - Section banner comment "─── Public API ───" marks code organization with a visual divider rather than letting the file structure speak for itself. Per project code style guidelines, such banners are discouraged — if sections feel necessary, the file should be split instead.
-
-// ─── Public API ──────────────────────────────────────────────────────────────
-
 /**
  * Watches claudeDir for project subdirectory changes and calls onUpdate when
  * a project's status.local.json is modified or created.

@@ -1,14 +1,12 @@
 import type { ServerWebSocket } from 'bun';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { getProjectState, filterStaleProjects } from './sessions';
+import { getProjectState, filterStaleProjects, DEFAULT_CLAUDE_DIR } from './sessions';
 import type { ProjectState } from './sessions';
 import { DEFAULT_CONFIG } from './config';
 import { watchForChanges } from './watcher';
 
-// REVIEW: architecture-reviewer - `DEFAULT_CLAUDE_DIR` is defined here again as a module-level constant using a different template-literal style, while `sessions.ts` constructs the same path via `join()`. Two sources of truth for the same default path will diverge under refactoring. Extract this constant to a shared location (e.g., a `constants.ts` or export it from `sessions.ts`) and import it here.
-// REVIEW: code-style-reviewer - `DEFAULT_CLAUDE_DIR` is constructed with a template literal here while `sessions.ts` uses `join()` for the same path. Inconsistent path construction style across modules: prefer `join()` everywhere for proper cross-platform separators and consistency.
-const DEFAULT_CLAUDE_DIR = `${Bun.env.HOME ?? '/root'}/.claude/projects`;
+const html = readFileSync(join(import.meta.dir, '..', 'public', 'index.html'), 'utf8');
 
 export interface ServerOptions {
   port?: number;
@@ -27,10 +25,6 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
   const hostname = options.hostname ?? DEFAULT_CONFIG.host;
   const claudeDir = options.claudeDir ?? DEFAULT_CLAUDE_DIR;
   const maxInactivityHours = options.maxInactivityHours ?? DEFAULT_CONFIG.maxInactivityHours;
-
-  // REVIEW: architecture-reviewer - The HTML asset is loaded from a relative path using `import.meta.dir` and `readFileSync` at call time rather than being bundled or embedded. This creates a runtime dependency on the file system layout: if `startServer` is called from a different working directory or after the `public/` directory is relocated, it silently crashes. The `readFileSync` at call time also blocks the event loop during startup. Consider embedding the HTML at build time (Bun supports `Bun.file` with `import.meta.dir` at module load time), or at minimum move the read to module initialization so failures are detected early rather than mid-request.
-  const htmlPath = join(import.meta.dir, '..', 'public', 'index.html');
-  const html = readFileSync(htmlPath, 'utf8');
 
   const clients = new Set<ServerWebSocket<unknown>>();
 
