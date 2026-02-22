@@ -124,6 +124,32 @@ describe('scanProjects', () => {
     expect(results).toHaveLength(2);
   });
 
+  test('no sessions-index.json, first JSONL line >512 bytes: project is not dropped', async () => {
+    const projDir = join(tmpDir, '-home-user-longfirstline');
+    await mkdir(projDir, { recursive: true });
+
+    // Build a first-line JSON whose serialized form exceeds 512 bytes by including a long string value.
+    const longContent = 'x'.repeat(600);
+    const firstLineObj = {
+      timestamp: new Date().toISOString(),
+      sessionId: 'long-line-session',
+      cwd: '/home/user/longfirstline',
+      gitBranch: 'main',
+      message: { role: 'user', content: longContent },
+    };
+    const firstLine = JSON.stringify(firstLineObj);
+    // Sanity-check: the test is only meaningful when the line actually exceeds 512 bytes.
+    expect(firstLine.length).toBeGreaterThan(512);
+
+    await writeFile(join(projDir, 'session.jsonl'), firstLine + '\n');
+
+    const results = await scanProjects(tmpDir);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].sessionId).toBe('long-line-session');
+    expect(results[0].cwd).toBe('/home/user/longfirstline');
+  });
+
   test('sessions-index.json present: returns enriched fields, uses projectPath as cwd', async () => {
     const projDir = join(tmpDir, '-home-user-indexed');
     await mkdir(projDir, { recursive: true });
@@ -156,6 +182,57 @@ describe('scanProjects', () => {
     expect(results[0].firstPrompt).toBe('Work on feature X');
     expect(results[0].messageCount).toBe(42);
     expect(results[0].sessionModified).toBe('2026-02-01T02:00:00.000Z');
+  });
+
+  test('stale sessions-index.json: newer on-disk JSONL used as latestJSONL', async () => {
+    // Simulates the scenario where the index stops updating (e.g. Feb 3) but real
+    // JSONL files continue being written to the project dir (e.g. Feb 21).
+    const projDir = join(tmpDir, '-home-user-stale-index');
+    await mkdir(projDir, { recursive: true });
+
+    // Old JSONL referenced by the index (mtime = 20 days ago)
+    const oldJSONL = join(projDir, 'old-session.jsonl');
+    await writeFile(oldJSONL, makeFirstLine('/home/user/stale-index', 'old-sess') + '\n');
+    const staleMtime = new Date(Date.now() - 20 * 24 * 3600 * 1000);
+    utimesSync(oldJSONL, staleMtime, staleMtime);
+    const staleMtimeMs = staleMtime.getTime();
+
+    // Index records the old JSONL with its stale mtime
+    const entry = {
+      sessionId: 'old-sess',
+      fullPath: oldJSONL,
+      fileMtime: staleMtimeMs,
+      firstPrompt: 'Old prompt',
+      summary: 'Old summary',
+      messageCount: 5,
+      modified: staleMtime.toISOString(),
+      gitBranch: 'main',
+      projectPath: '/home/user/stale-index',
+      isSidechain: false,
+    };
+    await writeFile(join(projDir, 'sessions-index.json'), JSON.stringify({ version: 1, entries: [entry] }));
+
+    // Newer JSONL exists on disk (not in the index), written today
+    const newerJSONL = join(projDir, 'new-session.jsonl');
+    await writeFile(newerJSONL, makeFirstLine('/home/user/stale-index', 'new-sess') + '\n');
+    // Default mtime = now (no utimes call needed)
+
+    _resetCachesForTesting();
+    const results = await scanProjects(tmpDir);
+
+    expect(results).toHaveLength(1);
+    // latestJSONL must point to the newer file, not the index entry
+    expect(results[0].latestJSONL).toBe(newerJSONL);
+    // lastUpdated from getProjectState would reflect the newer file's mtime,
+    // so verify via filterStaleProjects that this project is NOT dropped at 3h threshold
+    const { getProjectState, filterStaleProjects } = await import('../src/sessions');
+    _resetCachesForTesting();
+    const states = await getProjectState(tmpDir);
+    expect(states).toHaveLength(1);
+    const kept = filterStaleProjects(states, 3);
+    expect(kept).toHaveLength(1);
+    // lastUpdated should be recent (within the last minute)
+    expect(new Date(kept[0].lastUpdated!).getTime()).toBeGreaterThan(Date.now() - 60_000);
   });
 });
 

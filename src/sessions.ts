@@ -1015,12 +1015,31 @@ async function readProjectInfo(fullPath: string, dirName: string): Promise<Proje
   const index = await readSessionsIndex(fullPath);
   if (index !== null) {
     const latest = index.entries.reduce((a, b) => (a.fileMtime > b.fileMtime ? a : b));
+
+    // The index can grow stale: scan direct-child .jsonl files for any with a newer
+    // mtime than what the index recorded. Subdirectory files (subagent JSONLs under
+    // {uuid}/subagents/) are excluded by limiting readdir to depth-1 entries only.
+    let latestJSONL = latest.fullPath;
+    const newerOnDisk = await findLatestJSONL(fullPath);
+    if (newerOnDisk !== null) {
+      let diskMtime = 0;
+      try {
+        const s = await stat(newerOnDisk);
+        diskMtime = s.mtimeMs;
+      } catch {
+        // ignore; keep index entry
+      }
+      if (diskMtime > latest.fileMtime) {
+        latestJSONL = newerOnDisk;
+      }
+    }
+
     return {
       projectDir: dirName,
       cwd: index.projectPath,
       projectName: basename(index.projectPath),
       sessionId: latest.sessionId,
-      latestJSONL: latest.fullPath,
+      latestJSONL,
       summary: latest.summary,
       firstPrompt: latest.firstPrompt,
       messageCount: latest.messageCount,
@@ -1083,7 +1102,7 @@ async function findLatestJSONL(dirPath: string): Promise<string | null> {
 
 async function readFirstLine(filePath: string): Promise<string | null> {
   try {
-    const text = await Bun.file(filePath).slice(0, 512).text();
+    const text = await Bun.file(filePath).slice(0, 4096).text();
     const newline = text.indexOf('\n');
     return newline === -1 ? text.trim() : text.slice(0, newline).trim();
   } catch {
