@@ -10,9 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 12 (Review Fixes) complete, 168 tests passing. 32 tasks done (30 planned + 2 post-review bugs): R26 notification flash now functional, liveness cache fixed, TaskUpdate/TodoWrite fallback guards fixed, NaN timestamp guards, launchTime from JSONL entry, readSessionTail refactored. Two post-review regressions also fixed: `readFirstLine` 512→4096 byte slice (ccmon itself was invisible in its own dump output) and stale `sessions-index.json` fallback to disk scan. CLAUDE.md updated with integration check procedure. Watcher REVIEW comment moved to Phase 08 doc.
-
-Phase 11 and Phase 12 both pending user acceptance. No inbox items. Next: user to confirm both phases, then Phase 08 (JSONL-Primary Detection) or other work.
+Phase 12 (Review Fixes) complete (168 tests). Phase 13 (Review Fixes 2) plan ready: 22 tasks (8 high, 11 medium, 3 low) across sessions.ts, cli.ts, config.ts, server.ts, watcher.ts. High-priority items include: config rejects valid host/port-only files (R18), scanTaskCreateUpdate empty-map false positive (R46), blocking pgrep spawn (R2), watcher/ready race in server (R6), readSessionTail line-boundary data loss (R27). Phases 11, 12 pending user acceptance. Next: /implement Phase 13.
 
 ## Inbox
 
@@ -262,6 +260,11 @@ Fixes and improvements from real-world usage: input token counting bug fix (last
 [12-review-fixes](12-review-fixes.md)
 
 Correctness bug fixes, style cleanup, and architecture improvements from review pass. 32 tasks (30 planned + 2 post-review regressions): R26 notification flash, liveness cache, task fallback guards, NaN guards, readFirstLine 4096 slice, stale-index disk fallback. 168 tests passing.
+
+### ⬜ 13 Phase: Review Fixes 2
+[13-review-fixes-2](13-review-fixes-2.md)
+
+Second review pass: 22 tasks fixing correctness bugs (blocking spawn, watcher race, line-boundary data loss, config guard, empty-map false positive), style improvements, and minor architecture docs across sessions.ts, cli.ts, config.ts, server.ts, watcher.ts.
 
 ## Files
 
