@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 16 (Inbox Bug Fixes) implemented. Four bugs fixed: (1) `scanTaskCreateUpdate()` base tasks param for delta reads; (2) `resolveState()` permission override when JSONL is newer; (3) hook safety verified; (4) re-added `UserPromptSubmit`/`PostToolUse` → `running` with `RUNNING_HOOK_TTL_MS=30s` priority in `resolveState()` for immediate slash-command detection. 194 tests passing. Pending user validation in live dashboard.
+Phase 17 (Sub-Agent Stop/Resume Fix) implemented. `getSubagentInfos()` now accepts `stoppedAtMs`; sub-agents with mtime ≤ stoppedAtMs + STOP_GRACE_MS are never considered active on resume. `buildProjectState()` passes stopped timestamp from status. 197 tests passing. Pending user validation.
 
 ## Requirements
 
@@ -292,7 +292,7 @@ Fix stop detection race: Claude writes post-stop `system` entry to JSONL (8ms af
 
 Three bugs: task completions not reflected in WebSocket/sub (delta reads drop TaskUpdate for prior tasks), `waiting_for_permission` sticking after answering (resolveState Priority 1 blocks JSONL mtime), hook config safety verification (already safe, adding tests).
 
-### ⬜ 17 Phase: Sub-Agent Stop/Resume Fix
+### 🔄 17 Phase: Sub-Agent Stop/Resume Fix
 [17-subagent-stop-resume](17-subagent-stop-resume.md)
 
 After session stops and resumes (same UUID), old sub-agents can appear active because `getSubagentInfos()` uses 45s mtime threshold with no awareness of session stop events. Fix: pass `stoppedAtMs` into sub-agent detection.
@@ -315,7 +315,7 @@ After session stops and resumes (same UUID), old sub-agents can appear active be
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner (Phase: Session Detection, Backend, Review Fixes)
 - **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init (Phase: Backend, Review Fixes)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
-- **tests/sessions.test.ts**: 194 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes)
+- **tests/sessions.test.ts**: 197 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
 - **tests/cli.test.ts**: 18 tests for cli.ts — 4 new arg-validation cases, status, dump --watch, --project filter (Phase: Review Fixes)
 - **tests/config.test.ts**: Config loading tests; 22+ tests covering partial config, invalid types (Phase: Review Fixes 2)

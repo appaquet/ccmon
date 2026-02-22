@@ -409,7 +409,7 @@ export function filterStaleProjects(
  * Each entry includes enrichment data from readSessionTail plus identity fields
  * (agentId, jsonlPath, isActive, optional slug). Returns [] if the dir is absent.
  */
-export async function getSubagentInfos(latestJSONL: string): Promise<SubagentInfo[]> {
+export async function getSubagentInfos(latestJSONL: string, stoppedAtMs: number | null = null): Promise<SubagentInfo[]> {
   const sessionDir = sessionDirFromJSONL(latestJSONL);
   const subagentsDir = join(sessionDir, 'subagents');
   const cutoff = Date.now() - SUBAGENT_ACTIVE_THRESHOLD_MS;
@@ -450,7 +450,8 @@ export async function getSubagentInfos(latestJSONL: string): Promise<SubagentInf
         ? nameWithout.slice('agent-'.length)
         : nameWithout;
 
-      const isActive = mtimeMs > cutoff;
+      const stoppedRecently = stoppedAtMs !== null && mtimeMs <= stoppedAtMs + STOP_GRACE_MS;
+      const isActive = !stoppedRecently && mtimeMs > cutoff;
 
       // Exclude completed agents older than 5 minutes to keep payload lean.
       if (!isActive && mtimeMs < expiryCutoff) return null;
@@ -962,7 +963,8 @@ async function buildProjectState(project: ProjectInfo, claudeDir: string): Promi
   // Fetch enrichment for all states so stopped sessions still show messages/tokens/tasks.
   // Sub-agents are only relevant for active sessions.
   const tail = await readSessionTail(project.latestJSONL);
-  const subagents = state !== 'stopped' ? await getSubagentInfos(project.latestJSONL) : [];
+  const stoppedAtMs = status?.state === 'stopped' ? new Date(status.timestamp).getTime() : null;
+  const subagents = state !== 'stopped' ? await getSubagentInfos(project.latestJSONL, stoppedAtMs) : [];
   const subagentCount = subagents.filter((s) => s.isActive).length;
   return {
     ...base,

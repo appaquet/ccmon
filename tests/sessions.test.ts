@@ -2281,6 +2281,55 @@ describe('getSubagentInfos lifecycle (R40)', () => {
     expect(agent).toBeDefined();
     expect(agent!.isActive).toBe(true);
   });
+
+  test('R40: sub-agent mtime before stop (mtime 30s ago, stopped 10s ago) → isActive false', async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-stopped-before');
+    const agentPath = join(subagentsDir, 'agent-pre.jsonl');
+    await writeFile(agentPath, '{}');
+
+    const now = Date.now();
+    const thirtySecAgo = new Date(now - 30_000);
+    utimesSync(agentPath, thirtySecAgo, thirtySecAgo);
+
+    const stoppedAtMs = now - 10_000;
+    const infos = await getSubagentInfos(jsonlPath, stoppedAtMs);
+    const agent = infos.find((i) => i.agentId === 'pre');
+    expect(agent).toBeDefined();
+    expect(agent!.isActive).toBe(false);
+  });
+
+  test('R40: sub-agent mtime after stop (mtime 5s ago, stopped 20s ago) → isActive true', async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-stopped-after');
+    const agentPath = join(subagentsDir, 'agent-post.jsonl');
+    await writeFile(agentPath, '{}');
+
+    const now = Date.now();
+    const fiveSecAgo = new Date(now - 5_000);
+    utimesSync(agentPath, fiveSecAgo, fiveSecAgo);
+
+    const stoppedAtMs = now - 20_000;
+    const infos = await getSubagentInfos(jsonlPath, stoppedAtMs);
+    const agent = infos.find((i) => i.agentId === 'post');
+    expect(agent).toBeDefined();
+    expect(agent!.isActive).toBe(true);
+  });
+
+  test('R40: stoppedAtMs null → existing 45s threshold behavior unchanged', async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-no-stop');
+    const activeAgent = join(subagentsDir, 'agent-now.jsonl');
+    const staleAgent = join(subagentsDir, 'agent-old.jsonl');
+    await writeFile(activeAgent, '{}');
+    await writeFile(staleAgent, '{}');
+
+    const sixtySecAgo = new Date(Date.now() - 60_000);
+    utimesSync(staleAgent, sixtySecAgo, sixtySecAgo);
+
+    const infos = await getSubagentInfos(jsonlPath, null);
+    const active = infos.find((i) => i.agentId === 'now');
+    const stale = infos.find((i) => i.agentId === 'old');
+    expect(active?.isActive).toBe(true);
+    expect(stale?.isActive).toBe(false);
+  });
 });
 
 // ─── SubagentInfo ordering (R43) ─────────────────────────────────────────────
