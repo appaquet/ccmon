@@ -10,9 +10,9 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 05 (UI Enhancements) complete and verified: 101 tests. R21: `tasksDone`/`tasksTotal` from `TodoWrite` in both `assistant` and `progress` JSONL entries via `scanTodoWrite()` helper. R22/R23: flash animations on `waiting_for_permission` and `running→stopped`. R24: `shortModel()` helper displays Opus/Sonnet/Haiku. R25: `pulse-dot` CSS animation on running badge dot.
+Phase 06 (Notifications & Streaming) implemented: 117 tests. R27: byte-offset JSONL streaming with 10MB cap and delta reads — `isDelta` flag correctly avoids discarding first appended line. R28: `latestAssistantMessage` extracted alongside `latestUserMessage`, both displayed in UI (▶/◀). R26: `writeNotificationStatus` function handles Notification hook, amber flash in dashboard, `permission_prompt` suppressed when already `waiting_for_permission`. R29: `SessionEnrichment` base type shared by `ProjectState` and `SubagentInfo`; `getSubagentInfos` applies streaming to sub-agent JSONL files; `subagentCount` kept for backward compat.
 
-R21 covers `TodoWrite` only — `TaskCreate`/`TaskUpdate` full-parse support deferred (needs architecture change beyond 64KB tail). No active work planned. Project feature-complete.
+Next: Phase 07 (QA Pass) — R30 last-activity refresh, R31 server state persistence on reload, R32 token usage, R33 running→stopped flicker.
 
 ## Requirements
 
@@ -134,6 +134,7 @@ R21 covers `TodoWrite` only — `TaskCreate`/`TaskUpdate` full-parse support def
 * R30: ⬜ Last activity timestamp in web UI updates periodically without page reload (Phase: QA Pass)
 * R31: ⬜ Server persists current project state in memory so page refresh returns correct state (Phase: QA Pass)
 * R32: ⬜ Token usage from JSONL included in session payload and displayed in dashboard (Phase: QA Pass)
+* R33: ⬜ Running session does not flicker to stopped then back to running during active work (Phase: QA Pass)
 
 #### Out of Scope
 

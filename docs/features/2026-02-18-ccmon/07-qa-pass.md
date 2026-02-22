@@ -10,7 +10,7 @@ See [00-ccmon](00-ccmon.md). Bug fixes and improvements identified during real-w
 
 - [ ] Last activity timestamp in web UI never updates after initial render — should refresh periodically (R30)
 - [ ] Session shown as stopped on page refresh even when actually running — server may not be persisting current state per project, only streaming new status events (R31)
-- [ ] While progressing, sometimes it becomes Stopped, and then it becomes Running again. 
+- [ ] Running session flickers to stopped then back to running during active work (R33)
 
 ### Improvements
 
