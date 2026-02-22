@@ -10,11 +10,15 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 07 (QA Pass) implemented: 125 tests. R30: setInterval(render,5000) in UI. R31: server-owned Map<projectDir,ProjectState> as source of truth, ready promise, no on-demand rescans. R33: per-project 3s debounce on running→stopped. R32: inputTokens/outputTokens in SessionEnrichment, accumulated across all JSONL lines, displayed in dashboard.
+Phase 10 (UI Polish) implemented: 144 tests (128 → +16). All R37–R44 tasks complete. `latestCommand` extracted from `<command-name>` XML user entries, shown in UI with `/ ` prefix (fallback to `latestUserMessage`). Token totals now provider-billed: `input + cache_creation + cache_read`. Sub-agents have `lastMessageTime`/`launchTime` fields; backend filters >5m inactive; UI hides >2m; active dot vs `✓` checkmark; model shown in sub-agent rows; descending launch-time sort. R41 confirmed no change needed (enrichment already preserved on stopped).
 
-Phase 09 (Sub-Agent Names) implemented: 128 tests. Sub-agent descriptions extracted from `queue-operation` enqueue entries in parent JSONL during `readSessionTail()` streaming; displayed as `description ?? slug ?? agentId` in dashboard.
+Phase 08 (JSONL-Primary Detection) is the next planned phase — replace hook-driven running/stopped with JSONL mtime + system:stop_hook_summary, reducing hooks to PermissionRequest + Notification only.
 
-Phase 10 planned (UI Polish): slash command display (R37), sub-agent show one activity (R38), accurate token totals (R39), sub-agent lifecycle/auto-hide (R40), keep enrichment on stopped (R41), completion checkmark (R42), agent ordering (R43), sub-agent model display (R44). Phase 08 (JSONL-Primary Detection) also planned.
+## Inbox
+
+- [ ] Show last update time left of the pill, next to name
+- [ ] Let's plan reintroducing tasks. Would love to see # tasks and currently active ones in web ui.
+  In json payload, would be nice to see the tasks + status for each.
 
 ## Requirements
 
@@ -149,21 +153,21 @@ Phase 10 planned (UI Polish): slash command display (R37), sub-agent show one ac
 
 ### UI Polish
 
-* R37: ⬜ Latest slash command/skill displayed in UI alongside latest user message; UI shows whichever is more recent (Phase: UI Polish)
+* R37: 🔄 Latest slash command/skill displayed in UI alongside latest user message; UI shows whichever is more recent (Phase: UI Polish)
   * R37.1: `latestCommand?: string` added to `SessionEnrichment`; extracted from `<command-name>` user entries during `readSessionTail()` streaming
-* R38: ⬜ Sub-agent UI shows either last tool use OR last message, not both (Phase: UI Polish)
-* R39: ⬜ Input token count reflects full provider-billed total: `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` (Phase: UI Polish)
-* R40: ⬜ Completed sub-agents auto-hidden in UI after 2m; backend stops returning them after 5m (Phase: UI Polish)
+* R38: 🔄 Sub-agent UI shows either last tool use OR last message, not both (Phase: UI Polish)
+* R39: 🔄 Input token count reflects full provider-billed total: `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` (Phase: UI Polish)
+* R40: 🔄 Completed sub-agents auto-hidden in UI after 2m; backend stops returning them after 5m (Phase: UI Polish)
   * R40.1: `SubagentInfo` gains `lastMessageTime` (ISO 8601) from file mtime
-* R41: ⬜ Enrichment info (messages, tokens, tasks) remains visible when session transitions to stopped; only state pill updates (Phase: UI Polish)
-* R42: ⬜ Completed sub-agents show a checkmark indicator instead of active dot (Phase: UI Polish)
-* R43: ⬜ Sub-agents ordered by launch time descending in UI (Phase: UI Polish)
+* R41: 🔄 Enrichment info (messages, tokens, tasks) remains visible when session transitions to stopped; only state pill updates (Phase: UI Polish)
+* R42: 🔄 Completed sub-agents show a checkmark indicator instead of active dot (Phase: UI Polish)
+* R43: 🔄 Sub-agents ordered by launch time descending in UI (Phase: UI Polish)
   * R43.1: `SubagentInfo` gains `launchTime` (ISO 8601) from first JSONL entry or file mtime
-* R44: ⬜ Sub-agent model (Opus/Sonnet/Haiku) displayed in sub-agent rows (Phase: UI Polish)
+* R44: 🔄 Sub-agent model (Opus/Sonnet/Haiku) displayed in sub-agent rows (Phase: UI Polish)
 
 ### Sub-Agent Names
 
-* R36: ⬜ Sub-agent cards in dashboard show a meaningful description instead of raw agentId (Phase: Sub-Agent Names)
+* R36: 🔄 Sub-agent cards in dashboard show a meaningful description instead of raw agentId (Phase: Sub-Agent Names)
   * R36.1: Parent JSONL `queue-operation` enqueue entries carry `{ task_id, description }` — `task_id` maps 1:1 to `agentId`
   * R36.2: `SubagentInfo` gains `description?: string`; `getSubagentInfos()` builds a description map from parent JSONL once per call
   * R36.3: UI displays `description ?? agentId` as fallback
@@ -225,15 +229,15 @@ Bug fixes and improvements from real-world usage: last activity timestamp auto-r
 
 Replace hook-driven running/stopped detection with JSONL mtime + system:stop_hook_summary watching. Reduce hook config to PermissionRequest + Notification only. Eliminates the R33 race condition at its source.
 
-### ⬜ 09 Phase: Sub-Agent Names
+### 🔄 09 Phase: Sub-Agent Names
 [09-sub-agent-names](09-sub-agent-names.md)
 
-Show meaningful sub-agent descriptions in the dashboard. Name sourced from `queue-operation` enqueue entries in the parent session JSONL (`task_id` → `description` map).
+Show meaningful sub-agent descriptions in the dashboard. Name sourced from `queue-operation` enqueue entries in the parent session JSONL (`task_id` → `description` map). Implemented: 128 tests passing.
 
-### ⬜ 10 Phase: UI Polish
+### 🔄 10 Phase: UI Polish
 [10-ui-polish](10-ui-polish.md)
 
-Collection of UI improvements and data model fixes: slash command display (R37), sub-agent show one activity (R38), accurate token totals (R39), sub-agent auto-hide lifecycle (R40), keep info on stopped (R41), completion checkmark (R42), agent ordering (R43), sub-agent model display (R44).
+Collection of UI improvements and data model fixes: slash command display (R37), sub-agent show one activity (R38), accurate token totals (R39), sub-agent auto-hide lifecycle (R40), keep info on stopped (R41), completion checkmark (R42), agent ordering (R43), sub-agent model display (R44). Implemented: 144 tests passing, all tasks complete.
 
 ## Files
 
@@ -246,14 +250,14 @@ Collection of UI improvements and data model fixes: slash command display (R37),
 - **package.json**: Bun project config — `"type": "module"`, `@types/bun`, `dump` script (Phase: Session Detection)
 - **tsconfig.json**: IDE TypeScript support — ESNext, moduleResolution bundler (Phase: Session Detection)
 - **bun.lock**: Bun lockfile (Phase: Session Detection)
-- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; task count display, permission flash, stopped flash animations (Phase: Web UI, UI Enhancements)
+- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; task count display, permission flash, stopped flash animations; R37 command display, R38 one activity, R40 2m hide, R42 checkmark, R44 model (Phase: Web UI, UI Enhancements, UI Polish)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours (Phase: Backend)
-- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()` (Phase: Session Detection, Backend, UI Enhancements)
+- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()`; `latestCommand`, `lastMessageTime`, `launchTime`; provider-billed token totals; sub-agent 5m expiry; sub-agent descriptions from queue-operation (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection (Phase: Session Detection)
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands (Phase: Session Detection, Backend)
 - **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints (Phase: Backend)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
-- **tests/sessions.test.ts**: 101 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements)
+- **tests/sessions.test.ts**: 144 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
 - **tests/cli.test.ts**: 14 tests for cli.ts — status, dump --watch, --project filter (Phase: Backend)
 - **tests/server.test.ts**: 4 tests for server.ts — HTTP endpoints, WebSocket (Phase: Backend)
