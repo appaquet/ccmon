@@ -135,7 +135,7 @@ export interface StatusFile {
 export interface ProjectState extends ProjectInfo {
   state: SessionState;
   lastUpdated: string | null; // from status file timestamp, null if no status
-  // Enrichment fields — only populated for non-stopped sessions
+  // Enrichment fields — populated for all states
   latestUserMessage?: string;
   latestCommand?: string;
   latestAssistantMessage?: string;
@@ -851,30 +851,26 @@ async function buildProjectState(project: ProjectInfo, claudeDir: string): Promi
 
   const base: ProjectState = { ...project, state, lastUpdated };
 
-  if (state !== 'stopped') {
-    const [tail, subagents] = await Promise.all([
-      readSessionTail(project.latestJSONL),
-      getSubagentInfos(project.latestJSONL),
-    ]);
-    const subagentCount = subagents.filter((s) => s.isActive).length;
-    return {
-      ...base,
-      latestUserMessage: tail.latestUserMessage,
-      latestCommand: tail.latestCommand,
-      latestAssistantMessage: tail.latestAssistantMessage,
-      model: tail.model,
-      lastToolUse: tail.lastToolUse,
-      tasksDone: tail.tasksDone,
-      tasksTotal: tail.tasksTotal,
-      inputTokens: tail.inputTokens,
-      outputTokens: tail.outputTokens,
-      subagents,
-      subagentCount,
-      gitBranch: project.gitBranch,
-    };
-  }
-
-  return base;
+  // Fetch enrichment for all states so stopped sessions still show messages/tokens/tasks.
+  // Sub-agents are only relevant for active sessions.
+  const tail = await readSessionTail(project.latestJSONL);
+  const subagents = state !== 'stopped' ? await getSubagentInfos(project.latestJSONL) : [];
+  const subagentCount = subagents.filter((s) => s.isActive).length;
+  return {
+    ...base,
+    latestUserMessage: tail.latestUserMessage,
+    latestCommand: tail.latestCommand,
+    latestAssistantMessage: tail.latestAssistantMessage,
+    model: tail.model,
+    lastToolUse: tail.lastToolUse,
+    tasksDone: tail.tasksDone,
+    tasksTotal: tail.tasksTotal,
+    inputTokens: tail.inputTokens,
+    outputTokens: tail.outputTokens,
+    subagents: subagents.length > 0 ? subagents : undefined,
+    subagentCount: subagentCount > 0 ? subagentCount : undefined,
+    gitBranch: project.gitBranch,
+  };
 }
 
 async function readProjectInfo(fullPath: string, dirName: string): Promise<ProjectInfo | null> {

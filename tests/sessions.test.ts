@@ -1350,11 +1350,8 @@ describe('session enrichment', () => {
     const proj = results.find((p) => p.projectName === 'r29-proj');
     expect(proj).toBeDefined();
 
-    // subagents field is present on the result (may be empty if process check fails)
-    // The key thing is the field exists and is an array when state is non-stopped
-    // In test env, liveness check returns false → state becomes 'stopped' → no enrichment
-    // So we verify the field type: undefined for stopped is expected behaviour
-    // Verify subagentCount is also derived correctly (0 when no subagents enrichment)
+    // In test env liveness check returns false → state resolves to 'stopped'.
+    // Sub-agents are only populated for non-stopped sessions; verify accordingly.
     if (proj!.state === 'stopped') {
       expect(proj!.subagents).toBeUndefined();
       expect(proj!.subagentCount).toBeUndefined();
@@ -1362,6 +1359,57 @@ describe('session enrichment', () => {
       expect(Array.isArray(proj!.subagents)).toBe(true);
       expect(typeof proj!.subagentCount).toBe('number');
     }
+  });
+
+  test('R41: stopped session still exposes enrichment fields (messages, model, tokens)', async () => {
+    _resetCachesForTesting();
+
+    const projDir = join(tmpDir, '-home-user-r41-stopped');
+    await mkdir(projDir, { recursive: true });
+
+    const sessionId = 'r41-stopped-session';
+    const jsonlFile = join(projDir, `${sessionId}.jsonl`);
+
+    const userEntry = JSON.stringify({ type: 'user', message: { role: 'user', content: 'hello from stopped session' } });
+    const assistantEntry = JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        model: 'claude-sonnet-4-6',
+        content: [{ type: 'text', text: 'response text' }],
+        usage: { input_tokens: 100, output_tokens: 50 },
+      },
+    });
+    await writeFile(jsonlFile, makeFirstLine('/home/user/r41-stopped', sessionId) + '\n' + userEntry + '\n' + assistantEntry + '\n');
+
+    const indexEntry = {
+      sessionId,
+      fullPath: jsonlFile,
+      fileMtime: Date.now(),
+      projectPath: '/home/user/r41-stopped',
+      isSidechain: false,
+    };
+    await writeFile(join(projDir, 'sessions-index.json'), JSON.stringify({ version: 1, entries: [indexEntry] }));
+
+    // Explicitly stopped state (stale timestamp so liveness check doesn't matter)
+    await writeFile(join(projDir, 'status.local.json'), JSON.stringify({
+      state: 'stopped',
+      timestamp: new Date().toISOString(),
+      session_id: sessionId,
+      working_dir: '/home/user/r41-stopped',
+    }));
+
+    const results = await getProjectState(tmpDir);
+    const proj = results.find((p) => p.projectName === 'r41-stopped');
+    expect(proj).toBeDefined();
+    expect(proj!.state).toBe('stopped');
+
+    // Enrichment must be present even for stopped sessions (R41)
+    expect(proj!.latestUserMessage).toBe('hello from stopped session');
+    expect(proj!.model).toBe('claude-sonnet-4-6');
+    expect(proj!.inputTokens).toBeGreaterThan(0);
+    expect(proj!.outputTokens).toBeGreaterThan(0);
+    expect(proj!.latestAssistantMessage).toBe('response text');
   });
 });
 
