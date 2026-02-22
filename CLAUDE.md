@@ -45,6 +45,14 @@ WebSocket client that connects to a running `ccmon serve` and prints each state 
 bun test                       # Run tests
 ```
 
+### integration check
+```bash
+bun run dump --no-filter   # must return ≥ 1 project; 0 = session scanning broken
+bun run dump               # apply stale filter; verify projects within activity window appear
+```
+
+After any change to `src/sessions.ts` (especially `readProjectInfo`, `readFirstLine`, `findLatestJSONL`, `filterStaleProjects`, `buildProjectState`), run the integration check to verify real project data is returned.
+
 ## Architecture
 
 **Sessions index**: `sessions-index.json` in each project dir contains session metadata
