@@ -14,6 +14,10 @@ Phase 11 (Dashboard Refinements) R45-R48 implemented: 154 tests. R47 token fix, 
 
 ## Inbox
 
+- [ ] We need to do the same for agent msg. We need to distinguish between last msg vs last tool
+  call and show them interchangly in the ui. I don't care about last agent msg if it's actually
+  calling tools...
+ 
 
 ## Requirements
 

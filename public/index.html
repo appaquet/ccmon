@@ -305,11 +305,13 @@
         html += `<div class="card-meta">branch: ${esc(proj.gitBranch)}</div>`;
       }
 
-      // latest command or user message — prefer command if available
-      if (proj.latestCommand) {
-        html += `<div class="card-message">/ ${esc(truncate(proj.latestCommand, 80))}</div>`;
-      } else if (proj.latestUserMessage) {
-        html += `<div class="card-message">▶ ${esc(truncate(proj.latestUserMessage, 80))}</div>`;
+      // latest user activity (command or message) — single field with temporal ordering
+      if (proj.latestUserActivity) {
+        if (proj.latestUserActivity.isCommand) {
+          html += `<div class="card-message">${esc(truncate(proj.latestUserActivity.text, 80))}</div>`;
+        } else {
+          html += `<div class="card-message">▶ ${esc(truncate(proj.latestUserActivity.text, 80))}</div>`;
+        }
       }
 
       // latest assistant message
