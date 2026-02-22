@@ -70,8 +70,7 @@ if (subcommand === 'dump') {
     hostname: serveConfig.host,
     maxInactivityHours: serveConfig.maxInactivityHours,
   });
-  const displayHost = serveConfig.host === '0.0.0.0' ? 'localhost' : serveConfig.host;
-  process.stdout.write(`ccmon server listening on http://${displayHost}:${resolvedPort}\n`);
+  process.stdout.write(`ccmon server listening on http://${serveConfig.host}:${resolvedPort}\n`);
 
   process.on('SIGINT', () => {
     stop();

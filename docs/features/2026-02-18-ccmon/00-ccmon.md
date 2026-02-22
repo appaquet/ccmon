@@ -14,10 +14,6 @@ Phase 13 (Review Fixes 2) complete, 174 tests passing. 22 tasks implemented: blo
 
 ## Inbox
 
-- [ ] We removed the listen to 0.0.0.0 and have weird logic showing localhost when it's listening to
-  it. I still want the server to listen to 0.0.0.0 by default. This is meant to be running on a
-  remote computer as well, and it's internal only anyway, no security risk. Let's put that back
-  ASAP.
 
 ## Requirements
 
