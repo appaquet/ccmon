@@ -113,6 +113,21 @@ R21 covers `TodoWrite` only — `TaskCreate`/`TaskUpdate` full-parse support def
 * R24: ✅ Short model names in web UI — `Opus`/`Sonnet`/`Haiku` display only; JSON unchanged (Phase: UI Enhancements)
 * R25: ✅ Animate running state badge — pulsing dot on green pill (Phase: UI Enhancements)
 
+### Notifications & Streaming
+
+* R26: ⬜ Notification hook events produce a transient visual flash in the dashboard (Phase: Notifications & Streaming)
+  * R26.1: `ccmon status` accepts Notification hook events and writes notificationMessage + notificationTimestamp to status file
+  * R26.2: Dashboard shows a time-limited flash animation when a notification arrives (no persistent state change)
+  * R26.3: permission_prompt notifications are ignored when state is already waiting_for_permission (avoid duplicate signals)
+* R27: ⬜ JSONL reading uses byte-offset tracking to avoid re-parsing and to capture full session data (Phase: Notifications & Streaming)
+  * R27.1: First read parses the entire JSONL file; subsequent reads parse only new bytes (offset-based delta)
+  * R27.2: If file size shrinks (session replaced), cache resets and performs a full re-read
+  * R27.3: Task counts (tasksDone/tasksTotal) reflect all TodoWrite entries in the session, not just the last 64KB
+* R28: ⬜ ProjectState includes latestAssistantMessage extracted from JSONL (Phase: Notifications & Streaming)
+* R29: ⬜ Sub-agent info is exposed as structured SubagentInfo objects instead of a bare count (Phase: Notifications & Streaming)
+  * R29.1: Each sub-agent entry includes agentId, model, initial prompt, last tool use, and task counts
+  * R29.2: Sub-agent active/stopped status is determined via parent JSONL tool_result correlation or mtime heuristic fallback
+
 #### Out of Scope
 
 * Authentication / multi-user support
@@ -155,6 +170,11 @@ Expose ccmon as a Nix flake package via `writeShellScriptBin` wrapper with pinne
 
 Task count (R21 TodoWrite, R22/R23 flash animations, R24 short model names, R25 running dot pulse. R21 partial: TodoWrite sessions only; TaskCreate/TaskUpdate full-parse deferred.
 
+### ⬜ 06 Phase: Notifications & Streaming
+[06-notifications-streaming](06-notifications-streaming.md)
+
+Replace stateless 64KB tail reads with byte-offset JSONL streaming for accurate task counts and full session coverage. Add notification hook support with transient UI flash. Expose structured sub-agent info and assistant message extraction.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
@@ -177,3 +197,4 @@ Task count (R21 TodoWrite, R22/R23 flash animations, R24 short model names, R25 
 - **tests/cli.test.ts**: 14 tests for cli.ts — status, dump --watch, --project filter (Phase: Backend)
 - **tests/server.test.ts**: 4 tests for server.ts — HTTP endpoints, WebSocket (Phase: Backend)
 - **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)
+- **docs/features/2026-02-18-ccmon/06-notifications-streaming.md**: Phase 06 plan — notifications, JSONL streaming, sub-agent consolidation (Phase: Notifications & Streaming)
