@@ -49,13 +49,13 @@ See [00-ccmon](00-ccmon.md). Fixes and improvements from real-world usage: token
 
 ### R49 — Unify latestUserMessage + latestCommand into single latestUserActivity field
 
-- [ ] In `SessionEnrichment`, replace `latestUserMessage?: string` and `latestCommand?: string` with `latestUserActivity?: { text: string; isCommand: boolean }` (R49)
-- [ ] Remove `latestUserMessage`/`latestCommand` from `ProjectState` where re-declared (R49)
-- [ ] In `readSessionTail()`, replace two independent `found*` flags with a single `foundUserActivity` flag; first user entry encountered in the reversed scan (= most recent chronologically) sets `latestUserActivity`; stop searching after it's set (R49)
-- [ ] Fix merge step: single `latestUserActivity: scanResult.latestUserActivity ?? baseData.latestUserActivity` instead of two separate merges (R49)
-- [ ] In `index.html`, replace the two-branch `if (latestCommand) / else if (latestUserMessage)` with a single block on `latestUserActivity`: display `text` as-is (no prefix — commands already have `/`); use `isCommand` to choose icon (`/` vs `▶`) (R49)
-- [ ] Update all ~25 test assertions referencing `latestUserMessage`/`latestCommand` to use `latestUserActivity.text`/`latestUserActivity.isCommand` (R49)
-- [ ] Update ordering tests to verify single-winner behavior (R49)
+- [x] In `SessionEnrichment`, replace `latestUserMessage?: string` and `latestCommand?: string` with `latestUserActivity?: { text: string; isCommand: boolean }` (R49)
+- [x] Remove `latestUserMessage`/`latestCommand` from `ProjectState` where re-declared (R49)
+- [x] In `readSessionTail()`, replace two independent `found*` flags with a single `foundUserActivity` flag; first user entry encountered in the reversed scan sets `latestUserActivity`; stop searching after it's set (R49)
+- [x] Fix merge step: single `latestUserActivity: scanResult.latestUserActivity ?? baseData.latestUserActivity` (R49)
+- [x] In `index.html`, single block on `latestUserActivity`: commands display as-is (e.g. `/forked /implement`), messages with `▶ ` prefix; no double-slash (R49)
+- [x] Updated all ~25 test assertions; added R49 single-winner test (R49)
+- [x] Updated ordering tests to verify single-winner behavior (R49)
 
 ## Files
 

@@ -10,14 +10,12 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 11 (Dashboard Refinements) R45-R48 implemented: 154 tests. R47 token fix, R46 task parsing, R45 header time, R48 agents dot. R49 planned: unify `latestUserMessage`/`latestCommand` into single `latestUserActivity` field — fixes double-slash bug and temporal ordering. Awaiting /implement for R49.
+Phase 11 (Dashboard Refinements) fully implemented: 155 tests. All R45–R49 complete. R49: unified `latestUserActivity` field fixes double-slash and temporal ordering; commands display as `/forked /implement`, messages with `▶`.
+
+Inbox: R50 planned — distinguish last assistant text message vs last tool call in sub-agent display; show whichever is more meaningful (don't show tool call noise when there's a real message).
 
 ## Inbox
 
-- [ ] We need to do the same for agent msg. We need to distinguish between last msg vs last tool
-  call and show them interchangly in the ui. I don't care about last agent msg if it's actually
-  calling tools...
- 
 
 ## Requirements
 
@@ -180,7 +178,7 @@ Phase 11 (Dashboard Refinements) R45-R48 implemented: 154 tests. R47 token fix, 
 * R47: 🔄 Input token count takes the last assistant entry's value (not summed) — `input_tokens + cache_creation + cache_read` are per-call totals, not deltas (Phase: Dashboard Refinements)
   * R47.1: `outputTokens` remains summed (per-call deltas, correct to accumulate)
 * R48: 🔄 Agents section header shows pulsing green dot when any sub-agent is active; "N/M active" text removed (Phase: Dashboard Refinements)
-* R49: ⬜ `latestUserMessage` and `latestCommand` unified into `latestUserActivity?: { text, isCommand }` — single temporal winner, no double-slash (Phase: Dashboard Refinements)
+* R49: 🔄 `latestUserMessage` and `latestCommand` unified into `latestUserActivity?: { text, isCommand }` — single temporal winner, no double-slash (Phase: Dashboard Refinements)
   * R49.1: Backend reversed scan uses one `found` flag; first user entry chronologically sets the field
   * R49.2: UI displays `text` as-is; uses `isCommand` to choose icon only
 
