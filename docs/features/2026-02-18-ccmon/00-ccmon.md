@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 11 (Dashboard Refinements) complete, pending user acceptance. Phase 12 (Review Fixes) plan ready: 32 REVIEW comments triaged across sessions.ts, cli.ts, config.ts, server.ts, index.html, watcher.ts. 6 high-priority correctness bugs (notification flash broken, liveness cache scope, TaskUpdate suppresses fallback, empty-cwd status write, NaN bypasses staleness, JSON.parse unsafe). Next: user to run /implement.
+Phase 12 (Review Fixes) complete. 30 tasks implemented across sessions.ts, cli.ts, config.ts, server.ts, index.html, watcher.ts. 166 tests passing. Key fixes: R26 notification flash now functional, liveness cache fixed, TaskUpdate/TodoWrite fallback guards fixed, NaN timestamp guards added, launchTime uses JSONL entry, readSessionTail refactored. One deferred REVIEW comment remains in watcher.ts (R34/R35 scope, Phase 08). User to confirm phase acceptance.
 
 ## Inbox
 
@@ -256,7 +256,7 @@ Collection of UI improvements and data model fixes: slash command display (R37),
 
 Fixes and improvements from real-world usage: input token counting bug fix (last value, not sum), task reintroduction with modern TaskCreate/TaskUpdate parsing, last update time in card header, agents section active indicator, latestUserActivity unified field (double-slash fix + temporal ordering). Implemented: 155 tests passing, all tasks complete.
 
-### ⬜ 12 Phase: Review Fixes
+### 🔄 12 Phase: Review Fixes
 [12-review-fixes](12-review-fixes.md)
 
 Correctness bug fixes, style cleanup, and architecture improvements from review pass. 30 tasks across sessions.ts, cli.ts, config.ts, server.ts, index.html, watcher.ts.
@@ -281,7 +281,7 @@ Correctness bug fixes, style cleanup, and architecture improvements from review 
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
 - **tests/sessions.test.ts**: 160 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
-- **tests/cli.test.ts**: 14 tests for cli.ts — status, dump --watch, --project filter (Phase: Backend)
+- **tests/cli.test.ts**: 18 tests for cli.ts — 4 new arg-validation cases, status, dump --watch, --project filter (Phase: Review Fixes)
 - **tests/server.test.ts**: 4 tests for server.ts — HTTP endpoints, WebSocket (Phase: Backend)
 - **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)
 - **docs/features/2026-02-18-ccmon/06-notifications-streaming.md**: Phase 06 plan — notifications, JSONL streaming, sub-agent consolidation (Phase: Notifications & Streaming)
