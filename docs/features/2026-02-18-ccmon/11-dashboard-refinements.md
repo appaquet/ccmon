@@ -11,6 +11,8 @@ See [00-ccmon](00-ccmon.md). Fixes and improvements from real-world usage: token
 * Q3: Does `TodoWrite` still appear in modern sessions? → No. Modern Claude Code uses `TaskCreate`/`TaskUpdate`/`TaskList` exclusively. `TodoWrite` is legacy dead path.
 * Q4: `TaskCreate` input shape? → `{ subject: string, description: string, activeForm: string }`. IDs assigned sequentially as strings ("1", "2", ...).
 * Q5: `TaskUpdate` input shape? → `{ taskId: string, status: "pending" | "in_progress" | "completed" | "deleted" }`. May also carry `subject`, `description`, `activeForm` updates.
+* Q6: Root cause of double-slash in command display? → `extractCommand()` stores the full command text including the leading `/` (e.g., `/forked /implement`). The UI additionally prepends `/ `, producing `/ /forked /implement`. Fix: replace two-field approach with single `latestUserActivity` field and let UI display text as-is.
+* Q7: How does temporal ordering work for latestUserMessage vs latestCommand? → Two independent `found*` flags in the reversed scan — each field captures its category's most recent entry independently. No single temporal winner: if a plain message occurs after a command, `latestCommand` still holds the earlier command. Fix: single flag, first match wins chronologically.
 
 ## Tasks
 
@@ -45,8 +47,18 @@ See [00-ccmon](00-ccmon.md). Fixes and improvements from real-world usage: token
 - [x] Removed "N/M active" count text; shows `⬡ agents (N)` total count instead (R48)
 - [x] Reused `agent-dot agent-dot-active` CSS class (R48)
 
+### R49 — Unify latestUserMessage + latestCommand into single latestUserActivity field
+
+- [ ] In `SessionEnrichment`, replace `latestUserMessage?: string` and `latestCommand?: string` with `latestUserActivity?: { text: string; isCommand: boolean }` (R49)
+- [ ] Remove `latestUserMessage`/`latestCommand` from `ProjectState` where re-declared (R49)
+- [ ] In `readSessionTail()`, replace two independent `found*` flags with a single `foundUserActivity` flag; first user entry encountered in the reversed scan (= most recent chronologically) sets `latestUserActivity`; stop searching after it's set (R49)
+- [ ] Fix merge step: single `latestUserActivity: scanResult.latestUserActivity ?? baseData.latestUserActivity` instead of two separate merges (R49)
+- [ ] In `index.html`, replace the two-branch `if (latestCommand) / else if (latestUserMessage)` with a single block on `latestUserActivity`: display `text` as-is (no prefix — commands already have `/`); use `isCommand` to choose icon (`/` vs `▶`) (R49)
+- [ ] Update all ~25 test assertions referencing `latestUserMessage`/`latestCommand` to use `latestUserActivity.text`/`latestUserActivity.isCommand` (R49)
+- [ ] Update ordering tests to verify single-winner behavior (R49)
+
 ## Files
 
-- **src/sessions.ts**: Token fix (R47), task parsing (R46)
-- **public/index.html**: Last update time (R45), task display (R46), agents active dot (R48)
-- **tests/sessions.test.ts**: Token fix tests (R47), task parsing tests (R46)
+- **src/sessions.ts**: Token fix (R47), task parsing (R46), latestUserActivity refactor (R49)
+- **public/index.html**: Last update time (R45), task display (R46), agents active dot (R48), latestUserActivity display (R49)
+- **tests/sessions.test.ts**: Token fix tests (R47), task parsing tests (R46), latestUserActivity tests (R49)

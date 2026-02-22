@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 11 (Dashboard Refinements) implemented: 154 tests (+9). R47 bug fix: input tokens now last-seen value (not sum) — `cache_read_input_tokens` is per-call total, not delta; output tokens still summed. R46: TaskCreate/TaskUpdate parser with `tasks[]` in payload, in-progress subjects shown in UI. R45: last update time in card header, card-footer removed. R48: pulsing dot on agents header, N/M active text removed.
+Phase 11 (Dashboard Refinements) R45-R48 implemented: 154 tests. R47 token fix, R46 task parsing, R45 header time, R48 agents dot. R49 planned: unify `latestUserMessage`/`latestCommand` into single `latestUserActivity` field — fixes double-slash bug and temporal ordering. Awaiting /implement for R49.
 
 ## Inbox
 
@@ -176,6 +176,9 @@ Phase 11 (Dashboard Refinements) implemented: 154 tests (+9). R47 bug fix: input
 * R47: 🔄 Input token count takes the last assistant entry's value (not summed) — `input_tokens + cache_creation + cache_read` are per-call totals, not deltas (Phase: Dashboard Refinements)
   * R47.1: `outputTokens` remains summed (per-call deltas, correct to accumulate)
 * R48: 🔄 Agents section header shows pulsing green dot when any sub-agent is active; "N/M active" text removed (Phase: Dashboard Refinements)
+* R49: ⬜ `latestUserMessage` and `latestCommand` unified into `latestUserActivity?: { text, isCommand }` — single temporal winner, no double-slash (Phase: Dashboard Refinements)
+  * R49.1: Backend reversed scan uses one `found` flag; first user entry chronologically sets the field
+  * R49.2: UI displays `text` as-is; uses `isCommand` to choose icon only
 
 #### Out of Scope
 
