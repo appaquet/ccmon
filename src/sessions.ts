@@ -8,6 +8,12 @@ const PERMISSION_STALE_MS = 5 * 60 * 1000;
 // Claude writes continuously during turns so 60s covers any lag.
 const JSONL_ACTIVE_THRESHOLD_MS = 60_000;
 
+// Grace period for the JSONL-vs-stopped comparison. Claude writes a system entry to
+// JSONL ~8ms after the Stop hook fires, making the JSONL mtime slightly newer than
+// the stopped timestamp. Treating a gap smaller than this as "activity resumed"
+// would keep the session showing as running for JSONL_ACTIVE_THRESHOLD_MS.
+const STOP_GRACE_MS = 5_000;
+
 const JSONL_EXT = '.jsonl';
 
 // Maximum bytes to read on first access for large files (10 MB).
@@ -1107,7 +1113,7 @@ export function resolveState(jsonlMtimeMs: number | null, status: StatusFile | n
     // JSONL written after the stopped signal means activity resumed (e.g. new session start
     // or prompt submitted after Stop hook fired). Only treat as running in that case.
     const stoppedAtMs = new Date(status.timestamp).getTime();
-    if (isNaN(stoppedAtMs) || jsonlMtimeMs > stoppedAtMs) return 'running';
+    if (isNaN(stoppedAtMs) || jsonlMtimeMs > stoppedAtMs + STOP_GRACE_MS) return 'running';
   }
 
   // Priority 3: explicit stopped signal from hook.

@@ -2680,10 +2680,18 @@ describe('resolveState (R34)', () => {
     expect(resolveState(freshJsonl, runningStatus)).toBe('running');
   });
 
-  test('P2: fresh JSONL mtime, status stopped but JSONL is newer → running (activity resumed)', () => {
-    // JSONL mtime (now - 10s) is after stopped timestamp (now - 30s): activity resumed
+  test('P2: fresh JSONL mtime, status stopped but JSONL is much newer (>5s grace) → running (activity resumed)', () => {
+    // JSONL mtime (now - 10s) is 20s after stopped timestamp (now - 30s): activity resumed
     const stoppedEarlier = makeStatus('stopped', now - 30_000);
     expect(resolveState(freshJsonl, stoppedEarlier)).toBe('running');
+  });
+
+  test('P2+P3: fresh JSONL mtime, status stopped, JSONL only slightly newer (within 5s grace) → stopped', () => {
+    // Claude writes a system entry ~8ms after Stop hook fires; the tiny gap must not
+    // keep the session showing as running for 60s.
+    const stoppedJustNow = makeStatus('stopped', now - 100);   // stopped 100ms ago
+    const jsonlSlightlyNewer = now - 100 + 8;                  // JSONL 8ms after stop
+    expect(resolveState(jsonlSlightlyNewer, stoppedJustNow)).toBe('stopped');
   });
 
   test('P2+P3: fresh JSONL mtime, status stopped and stopped is newer than JSONL → stopped', () => {
