@@ -10,10 +10,16 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 14 (Card Rework) complete, 181 tests passing. New card layout: context window progress bar (128k max, green/orange/red), task count inline, unified agent rows (main + sub identical with pulsing dot, model, `>` user, `<` assistant). Git branch and output tokens removed. Phases 11-14 pending user acceptance. Next step not decided.
+Phase 15 (Stop Detection Fix) planned. Root cause confirmed: Claude writes a `system` JSONL entry ~8ms after the Stop hook fires, making `resolveState()` treat it as "activity resumed" for 60s. Fix: add 5s grace period to JSONL-vs-stopped comparison. Awaiting `/implement`.
 
 ## Inbox
 
+
+- [ ] Completed tasks don't seem to get updated in websocket mode (ui doesn't show them completed),
+  but if i dump i see them done correctly. I used `sub`, shows tasks done 0 while we had 2 done. 
+
+- [ ] Since we removed hooks, when i get prompted for permission and then answer, the state keeps
+  stating at waiting for permission (or whatever ist's called)...
 
 ## Requirements
 
@@ -139,9 +145,10 @@ Phase 14 (Card Rework) complete, 181 tests passing. New card layout: context win
 
 ### JSONL-Primary Detection
 
-* R34: 🔄 JSONL mtime is the primary signal for running state; hooks retained for immediate stopped detection (Phase: JSONL-Primary Detection)
+* R34: 🔄 JSONL mtime is the primary signal for running state; hooks retained for immediate stopped detection (Phase: JSONL-Primary Detection, Stop Detection Fix)
   * R34.1: Watcher monitors *.jsonl files in project dirs; `running` derived from JSONL mtime < 60s
   * R34.2: `stopped` from Stop/SessionEnd hooks (immediate) or JSONL mtime > 60s (crash fallback)
+  * R34.6: 5s grace period on JSONL-vs-stopped comparison — Claude writes post-stop system entry to JSONL, making mtime slightly newer than hook timestamp
   * R34.3: status.local.json read for waiting_for_permission, stopped timestamp, and notification fields
   * R34.4: pgrep/proc liveness detection removed entirely
   * R34.5: R33 debounce removed — race condition eliminated at source
@@ -281,6 +288,11 @@ Second review pass: 22 tasks fixing correctness bugs (blocking spawn, watcher ra
 [14-card-rework](14-card-rework.md)
 
 Rework dashboard cards to unified agent-row layout: context window progress bar (128k max, color thresholds), main + sub-agent rows look identical (pulsing dot, model, user/assistant lines). Remove git branch, output tokens. 6 UI-only tasks complete, 181 tests passing.
+
+### ⬜ 15 Phase: Stop Detection Fix
+[15-stop-detection-fix](15-stop-detection-fix.md)
+
+Fix stop detection race: Claude writes post-stop `system` entry to JSONL (8ms after hook), making JSONL mtime slightly newer than stopped timestamp. Add 5s grace period to `resolveState()` comparison (R34.6).
 
 ## Files
 
