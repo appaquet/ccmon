@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { getProjectState, scanProjects, mapHookEventToState, writeStatus, filterStaleProjects } from './sessions';
+import { getProjectState, scanProjects, mapHookEventToState, writeStatus, writeNotificationStatus, filterStaleProjects } from './sessions';
 import { loadConfig, mergeCliOverrides } from './config';
 import { watchForChanges } from './watcher';
 import { startServer } from './server';
@@ -159,6 +159,26 @@ async function runStatus(): Promise<void> {
 
   const { session_id, cwd, hook_event_name } = payload;
 
+  const projectDir = await resolveProjectDir(cwd, claudeDir);
+
+  if (hook_event_name === 'Notification') {
+    try {
+      await writeNotificationStatus(
+        projectDir,
+        payload.message ?? '',
+        payload.notification_type ?? '',
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`Error writing notification status: ${message}\n`);
+      process.exit(1);
+      return;
+    }
+    process.stdout.write('{}\n');
+    process.exit(0);
+    return;
+  }
+
   const state = mapHookEventToState(hook_event_name);
   if (state === null) {
     // Unknown hook event — respond OK so Claude doesn't block on unrecognized events
@@ -166,8 +186,6 @@ async function runStatus(): Promise<void> {
     process.exit(0);
     return;
   }
-
-  const projectDir = await resolveProjectDir(cwd, claudeDir);
 
   try {
     await writeStatus(projectDir, {
@@ -252,6 +270,8 @@ interface HookPayload {
   session_id: string;
   cwd: string;
   hook_event_name: string;
+  message?: string;
+  notification_type?: string;
 }
 
 function isHookPayload(v: unknown): v is HookPayload {

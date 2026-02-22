@@ -6,6 +6,9 @@ import { join, basename } from 'node:path';
 
 const STALE_THRESHOLD_MS = 5 * 60 * 1000;
 
+// Maximum bytes to read on first access for large files (10 MB).
+const MAX_FIRST_READ = 10 * 1024 * 1024;
+
 // Sub-agents write continuously while active; 45s covers any lag without
 // counting finished agents as still running.
 const SUBAGENT_ACTIVE_THRESHOLD_MS = 45 * 1000;
@@ -32,7 +35,12 @@ let livenessCache: { result: Set<string>; ts: number } | null = null;
 const sessionsIndexCache = new Map<string, { mtime: number; data: SessionsIndex | null }>();
 
 // Keyed by jsonlPath; avoids re-reading the tail unless the file changed.
-const sessionTailCache = new Map<string, { mtime: number; data: SessionTailInfo }>();
+interface SessionTailCache {
+  mtime: number;
+  fileSize: number;
+  data: SessionTailInfo;
+}
+const sessionTailCache = new Map<string, SessionTailCache>();
 
 // Keyed by projectDirPath (full path); holds the most recent ProjectState for each project.
 // Populated on a full scan; updated in-place on targeted single-project rescans.
@@ -41,6 +49,30 @@ const projectStateCache = new Map<string, ProjectState>();
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type SessionState = 'running' | 'waiting_for_permission' | 'stopped';
+
+/**
+ * Enrichment fields shared between main sessions and sub-agents,
+ * extracted by scanning the tail of a JSONL file.
+ */
+export interface SessionEnrichment {
+  model?: string;
+  latestUserMessage?: string;
+  latestAssistantMessage?: string;
+  lastToolUse?: string;
+  tasksDone?: number;
+  tasksTotal?: number;
+}
+
+/**
+ * Sub-agent enrichment: enrichment fields plus identity and activity metadata
+ * derived from the sub-agent's JSONL file.
+ */
+export interface SubagentInfo extends SessionEnrichment {
+  agentId: string;      // extracted from filename: agent-{agentId}.jsonl
+  slug?: string;        // from first line of sub-agent JSONL
+  jsonlPath: string;    // absolute path to sub-agent JSONL
+  isActive: boolean;    // mtime within last 45 seconds
+}
 
 export interface SessionsIndexEntry {
   sessionId: string;
@@ -74,19 +106,16 @@ export interface ProjectInfo {
   gitBranch?: string;
 }
 
-export interface SessionTailInfo {
-  latestUserMessage?: string;
-  model?: string;
-  lastToolUse?: string;
-  tasksDone?: number;
-  tasksTotal?: number;
-}
+// SessionTailInfo satisfies the SessionEnrichment contract — same fields.
+export type SessionTailInfo = SessionEnrichment;
 
 export interface StatusFile {
   state: SessionState;
   timestamp: string;    // ISO 8601
   session_id: string;
   working_dir: string;
+  notificationMessage?: string;    // set by Notification hook events
+  notificationTimestamp?: string;  // ISO 8601, updated on each notification
 }
 
 export interface ProjectState extends ProjectInfo {
@@ -94,11 +123,14 @@ export interface ProjectState extends ProjectInfo {
   lastUpdated: string | null; // from status file timestamp, null if no status
   // Enrichment fields — only populated for non-stopped sessions
   latestUserMessage?: string;
-  subagentCount?: number;
+  latestAssistantMessage?: string;
   model?: string;
   lastToolUse?: string;
   tasksDone?: number;
   tasksTotal?: number;
+  subagents?: SubagentInfo[];
+  // Derived from subagents for backward compatibility
+  subagentCount?: number;
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -171,7 +203,7 @@ export async function readSessionsIndex(projectDirPath: string): Promise<Session
 
 /**
  * Maps a Claude hook event name to the corresponding SessionState.
- * Returns null for unrecognized events.
+ * Returns null for events that don't change state (Notification, unrecognized).
  */
 export function mapHookEventToState(hookEvent: string): SessionState | null {
   switch (hookEvent) {
@@ -180,8 +212,46 @@ export function mapHookEventToState(hookEvent: string): SessionState | null {
     case 'PermissionRequest': return 'waiting_for_permission';
     case 'Stop':             return 'stopped';
     case 'SessionEnd':       return 'stopped';
+    // Notification events carry a message but do not change the session state.
+    case 'Notification':     return null;
     default:                 return null;
   }
+}
+
+/**
+ * Handles a Notification hook event by merging notificationMessage and
+ * notificationTimestamp into the existing status file without altering state.
+ *
+ * Suppresses the write when notification_type is 'permission_prompt' and the
+ * current state is already 'waiting_for_permission' to avoid duplicate signals.
+ * When no status file exists, writes a new one with state 'stopped'.
+ */
+export async function writeNotificationStatus(
+  projectDirPath: string,
+  message: string,
+  notificationType: string,
+): Promise<void> {
+  const existing = await readStatus(projectDirPath);
+
+  // Suppress: permission_prompt while already waiting_for_permission
+  if (notificationType === 'permission_prompt' && existing?.state === 'waiting_for_permission') {
+    return;
+  }
+
+  const base: StatusFile = existing ?? {
+    state: 'stopped',
+    timestamp: new Date().toISOString(),
+    session_id: '',
+    working_dir: '',
+  };
+
+  const updated: StatusFile = {
+    ...base,
+    notificationMessage: message,
+    notificationTimestamp: new Date().toISOString(),
+  };
+
+  await writeStatus(projectDirPath, updated);
 }
 
 /**
@@ -382,45 +452,139 @@ export async function countActiveSubagents(latestJSONL: string): Promise<number>
 }
 
 /**
- * Reads the last 64KB of a JSONL session file and extracts enrichment fields
- * by scanning lines from newest to oldest.
+ * Returns SubagentInfo for every sub-agent JSONL found in {sessionDir}/subagents/.
+ * Each entry includes enrichment data from readSessionTail plus identity fields
+ * (agentId, jsonlPath, isActive, optional slug). Returns [] if the dir is absent.
+ */
+export async function getSubagentInfos(latestJSONL: string): Promise<SubagentInfo[]> {
+  const sessionDir = latestJSONL.endsWith('.jsonl')
+    ? latestJSONL.slice(0, -'.jsonl'.length)
+    : latestJSONL;
+  const subagentsDir = join(sessionDir, 'subagents');
+  const cutoff = Date.now() - SUBAGENT_ACTIVE_THRESHOLD_MS;
+
+  let entries: Awaited<ReturnType<typeof readdir>>;
+  try {
+    entries = await readdir(subagentsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const jsonlEntries = entries.filter((e) => e.name.endsWith('.jsonl'));
+
+  const infos = await Promise.all(
+    jsonlEntries.map(async (entry): Promise<SubagentInfo | null> => {
+      const jsonlPath = join(subagentsDir, entry.name);
+
+      let mtimeMs: number;
+      try {
+        const s = await stat(jsonlPath);
+        mtimeMs = s.mtimeMs;
+      } catch {
+        return null;
+      }
+
+      // Extract agentId from filename: "agent-ae89d86.jsonl" → "ae89d86"
+      const nameWithout = entry.name.slice(0, -'.jsonl'.length);
+      const agentId = nameWithout.startsWith('agent-')
+        ? nameWithout.slice('agent-'.length)
+        : nameWithout;
+
+      const isActive = mtimeMs > cutoff;
+
+      const enrichment = await readSessionTail(jsonlPath);
+
+      // Optionally read slug from first line (best-effort)
+      let slug: string | undefined;
+      try {
+        const file = Bun.file(jsonlPath);
+        const text = await file.slice(0, 512).text();
+        const firstLine = text.split('\n')[0];
+        if (firstLine) {
+          const parsed = JSON.parse(firstLine) as Record<string, unknown>;
+          if (typeof parsed.slug === 'string') slug = parsed.slug;
+        }
+      } catch {
+        // slug is optional — ignore errors
+      }
+
+      return { agentId, slug, jsonlPath, isActive, ...enrichment };
+    }),
+  );
+
+  return infos
+    .filter((info): info is SubagentInfo => info !== null)
+    .sort((a, b) => a.jsonlPath.localeCompare(b.jsonlPath));
+}
+
+/**
+ * Reads a JSONL session file and extracts enrichment fields by scanning lines
+ * from newest to oldest. On first read the entire file is parsed (up to 10 MB);
+ * subsequent reads only parse bytes appended since the last read (delta mode).
+ * If the file shrinks the cache is reset and the full file is re-read.
  */
 export async function readSessionTail(jsonlPath: string): Promise<SessionTailInfo> {
-  let mtime: number;
+  let mtimeMs: number;
+  let size: number;
   try {
     const s = await stat(jsonlPath);
-    mtime = s.mtimeMs;
+    mtimeMs = s.mtimeMs;
+    size = s.size;
   } catch {
     return {};
   }
 
   const cached = sessionTailCache.get(jsonlPath);
-  if (cached !== undefined && cached.mtime === mtime) {
+
+  // Determine read range and base data to merge into.
+  let startOffset: number;
+  let baseData: SessionTailInfo;
+  // isDelta tracks whether startOffset is exactly at a line boundary (append-only delta).
+  // When true, the first line at startOffset is complete and must NOT be discarded.
+  let isDelta: boolean;
+  if (cached !== undefined && cached.mtime === mtimeMs && cached.fileSize === size) {
+    // Nothing changed — return cached result immediately.
     return cached.data;
+  } else if (cached !== undefined && size > cached.fileSize) {
+    // Delta read: only parse the new bytes appended since last read.
+    // Applies even when mtime appears unchanged (sub-second writes on fast systems).
+    startOffset = cached.fileSize;
+    baseData = { ...cached.data };
+    isDelta = true;
+  } else {
+    // Full read (first read, file shrank, or mtime changed without size growth).
+    startOffset = Math.max(0, size - MAX_FIRST_READ);
+    baseData = {};
+    isDelta = false;
   }
 
   let text: string;
   try {
     const file = Bun.file(jsonlPath);
-    const size = file.size;
-    const slice = size > 65536 ? file.slice(size - 65536) : file;
-    text = await slice.text();
+    text = await file.slice(startOffset).text();
   } catch {
     return {};
   }
 
-  const lines = text.split('\n');
-  const result: SessionTailInfo = {};
+  let lines = text.split('\n').filter((l) => l.trim() !== '');
+
+  // Discard the first line when starting at a cap-based offset (may be a partial line).
+  // In delta mode startOffset is at a line boundary, so no discard is needed.
+  if (!isDelta && startOffset > 0 && lines.length > 0) {
+    lines = lines.slice(1);
+  }
+
+  // Scan newest-to-oldest so "first found" = most recent.
+  const reversed = lines.slice().reverse();
+  const scanResult: SessionTailInfo = {};
   let foundUser = false;
+  let foundAssistant = false;
   let foundModel = false;
   let foundTool = false;
   let foundTasks = false;
 
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (foundUser && foundModel && foundTool) break;
-
-    const line = lines[i].trim();
-    if (!line) continue;
+  for (const line of reversed) {
+    if (foundUser && foundAssistant && foundModel && foundTool && foundTasks) break;
 
     let entry: Record<string, unknown>;
     try {
@@ -438,14 +602,14 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
       if (!message) continue;
       const content = message.content;
       if (typeof content === 'string' && !content.startsWith('<')) {
-        result.latestUserMessage = content.slice(0, 200);
+        scanResult.latestUserMessage = content.slice(0, 200);
         foundUser = true;
       }
     }
 
     if (type === 'assistant' && message) {
       if (!foundModel && typeof message.model === 'string') {
-        result.model = message.model;
+        scanResult.model = message.model;
         foundModel = true;
       }
 
@@ -461,14 +625,28 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
               typeof (item as Record<string, unknown>).name === 'string',
           );
           if (toolUse) {
-            result.lastToolUse = toolUse.name;
+            scanResult.lastToolUse = toolUse.name;
             foundTool = true;
           }
         }
 
         if (!foundTasks) {
-          scanTodoWrite(contentBlocks, result);
-          if (result.tasksTotal !== undefined) foundTasks = true;
+          scanTodoWrite(contentBlocks, scanResult);
+          if (scanResult.tasksTotal !== undefined) foundTasks = true;
+        }
+
+        if (!foundAssistant) {
+          const textBlock = contentBlocks.find(
+            (b): b is { type: string; text: string } =>
+              typeof b === 'object' &&
+              b !== null &&
+              (b as Record<string, unknown>).type === 'text' &&
+              typeof (b as Record<string, unknown>).text === 'string',
+          );
+          if (textBlock) {
+            scanResult.latestAssistantMessage = textBlock.text.slice(0, 200);
+            foundAssistant = true;
+          }
         }
       }
     }
@@ -480,14 +658,30 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
       const innerMsg = outerMsg?.message as Record<string, unknown> | undefined;
       const content = innerMsg?.content;
       if (Array.isArray(content)) {
-        scanTodoWrite(content as unknown[], result);
-        if (result.tasksTotal !== undefined) foundTasks = true;
+        scanTodoWrite(content as unknown[], scanResult);
+        if (scanResult.tasksTotal !== undefined) foundTasks = true;
       }
     }
   }
 
-  sessionTailCache.set(jsonlPath, { mtime, data: result });
-  return result;
+  // Merge: new scan results override baseData for "latest wins" fields.
+  // For task counts, keep new scan result if found; otherwise fall back to baseData.
+  const merged: SessionTailInfo = {
+    latestUserMessage: scanResult.latestUserMessage ?? baseData.latestUserMessage,
+    latestAssistantMessage: scanResult.latestAssistantMessage ?? baseData.latestAssistantMessage,
+    model: scanResult.model ?? baseData.model,
+    lastToolUse: scanResult.lastToolUse ?? baseData.lastToolUse,
+    tasksDone: foundTasks ? scanResult.tasksDone : baseData.tasksDone,
+    tasksTotal: foundTasks ? scanResult.tasksTotal : baseData.tasksTotal,
+  };
+
+  // Strip undefined keys to keep the object clean.
+  for (const key of Object.keys(merged) as (keyof SessionTailInfo)[]) {
+    if (merged[key] === undefined) delete merged[key];
+  }
+
+  sessionTailCache.set(jsonlPath, { mtime: mtimeMs, fileSize: size, data: merged });
+  return merged;
 }
 
 // ─── Exported Test Helpers ───────────────────────────────────────────────────
@@ -556,17 +750,20 @@ async function buildProjectState(project: ProjectInfo, claudeDir: string): Promi
   const base: ProjectState = { ...project, state, lastUpdated };
 
   if (state !== 'stopped') {
-    const [tail, subagentCount] = await Promise.all([
+    const [tail, subagents] = await Promise.all([
       readSessionTail(project.latestJSONL),
-      countActiveSubagents(project.latestJSONL),
+      getSubagentInfos(project.latestJSONL),
     ]);
+    const subagentCount = subagents.filter((s) => s.isActive).length;
     return {
       ...base,
       latestUserMessage: tail.latestUserMessage,
+      latestAssistantMessage: tail.latestAssistantMessage,
       model: tail.model,
       lastToolUse: tail.lastToolUse,
       tasksDone: tail.tasksDone,
       tasksTotal: tail.tasksTotal,
+      subagents,
       subagentCount,
       gitBranch: project.gitBranch,
     };

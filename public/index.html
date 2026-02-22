@@ -169,6 +169,14 @@
     .card-flashing-stopped {
       animation: flash-stopped 0.5s ease-in-out 10;
     }
+
+    @keyframes flash-notification {
+      0%, 100% { border-color: var(--border); }
+      50%       { border-color: #f59e0b; box-shadow: 0 0 10px rgba(245,158,11,0.45); }
+    }
+    .card-flashing-notification {
+      animation: flash-notification 0.5s ease-in-out 10;
+    }
   </style>
 </head>
 <body>
@@ -239,11 +247,12 @@
       return model;
     }
 
-    function createCard(proj, flashStopped) {
+    function createCard(proj, flashStopped, flashNotification) {
       const card = document.createElement('div');
       const s = proj.state || 'stopped';
       const flashClasses = s === 'waiting_for_permission' ? ' card-flashing-waiting'
         : flashStopped ? ' card-flashing-stopped'
+        : flashNotification ? ' card-flashing-notification'
         : '';
       card.className = 'card' + flashClasses;
 
@@ -268,7 +277,12 @@
 
       // latest user message
       if (proj.latestUserMessage) {
-        html += `<div class="card-message">${esc(truncate(proj.latestUserMessage, 80))}</div>`;
+        html += `<div class="card-message">▶ ${esc(truncate(proj.latestUserMessage, 80))}</div>`;
+      }
+
+      // latest assistant message
+      if (proj.latestAssistantMessage) {
+        html += `<div class="card-message">◀ ${esc(truncate(proj.latestAssistantMessage, 80))}</div>`;
       }
 
       // model + last tool use
@@ -277,9 +291,21 @@
         html += `<div class="card-meta">${esc(parts.join(' · '))}</div>`;
       }
 
-      // subagent count
-      if (proj.subagentCount && proj.subagentCount > 0) {
-        html += `<div class="card-meta">⬡ ${esc(proj.subagentCount)} sub-agent${proj.subagentCount !== 1 ? 's' : ''}</div>`;
+      // sub-agents
+      if (proj.subagents && proj.subagents.length > 0) {
+        const active = proj.subagents.filter(a => a.isActive).length;
+        const total = proj.subagents.length;
+        html += `<div class="card-meta">⬡ agents: ${esc(active)}/${esc(total)} active`;
+        const shown = proj.subagents.slice(0, 3);
+        for (const agent of shown) {
+          const dot = agent.isActive ? '●' : '○';
+          const tool = agent.lastToolUse ? ` · ${agent.lastToolUse}` : '';
+          html += `<br><span style="margin-left:8px;font-size:10px">${dot} ${esc(agent.agentId)}${esc(tool)}</span>`;
+        }
+        if (proj.subagents.length > 3) {
+          html += `<br><span style="margin-left:8px;font-size:10px;color:var(--muted)">+${proj.subagents.length - 3} more</span>`;
+        }
+        html += `</div>`;
       }
 
       // task count
@@ -295,24 +321,38 @@
       return card;
     }
 
-    const prevState = new Map(); // projectName → last known state string
+    const prevState = new Map();                // projectName → last known state string
+    const prevNotificationTimestamp = new Map(); // projectName → last known notificationTimestamp
 
     function render() {
       const grid = document.getElementById('project-grid');
       const all = [...state.values()].flat();
       all.sort((a, b) => a.projectName.localeCompare(b.projectName));
 
-      // Compute running→stopped transitions before clearing DOM
+      // Compute running→stopped transitions and new notification arrivals before clearing DOM
       const flashStopped = new Set();
+      const flashNotification = new Set();
       for (const proj of all) {
         if (prevState.get(proj.projectName) === 'running' && proj.state === 'stopped') {
           flashStopped.add(proj.projectName);
         }
         prevState.set(proj.projectName, proj.state);
+
+        const prevTs = prevNotificationTimestamp.get(proj.projectName);
+        const curTs = proj.notificationTimestamp;
+        if (curTs && curTs !== prevTs) {
+          flashNotification.add(proj.projectName);
+        }
+        if (curTs !== undefined) {
+          prevNotificationTimestamp.set(proj.projectName, curTs);
+        }
       }
       const currentNames = new Set(all.map(p => p.projectName));
       for (const name of [...prevState.keys()]) {
         if (!currentNames.has(name)) prevState.delete(name);
+      }
+      for (const name of [...prevNotificationTimestamp.keys()]) {
+        if (!currentNames.has(name)) prevNotificationTimestamp.delete(name);
       }
 
       grid.innerHTML = '';
@@ -326,7 +366,11 @@
       }
 
       for (const proj of all) {
-        grid.appendChild(createCard(proj, flashStopped.has(proj.projectName)));
+        grid.appendChild(createCard(
+          proj,
+          flashStopped.has(proj.projectName),
+          flashNotification.has(proj.projectName),
+        ));
       }
     }
 
