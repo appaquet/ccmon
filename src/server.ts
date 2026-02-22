@@ -6,7 +6,13 @@ import type { ProjectState } from './sessions';
 import { DEFAULT_CONFIG } from './config';
 import { watchForChanges } from './watcher';
 
-const html = readFileSync(join(import.meta.dir, '..', 'public', 'index.html'), 'utf8');
+const htmlPath = join(import.meta.dir, '..', 'public', 'index.html');
+let html: string;
+try {
+  html = readFileSync(htmlPath, 'utf8');
+} catch {
+  throw new Error(`ccmon: public/index.html not found at ${htmlPath}`);
+}
 
 export interface ServerOptions {
   port?: number;
@@ -31,6 +37,7 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
   // Server-owned state map: projectDir (full path) → ProjectState.
   // Populated on startup, updated by watcher events. WS open and /api/state
   // read directly from here — no on-demand rescans.
+  // REVIEW: architecture-reviewer - The server maintains its own stateMap in addition to the module-level projectStateCache in sessions.ts. These two maps must be kept in sync manually (e.g. the updateProject function calls getProjectState which updates the module cache, then searches the result to update the local stateMap). This is duplicated state management: a bug in either sync path can leave the two maps inconsistent. Consider having the server be the single owner of state or having sessions.ts expose an observable/event-based interface rather than requiring the server to mirror module-level cache updates.
   const stateMap = new Map<string, ProjectState>();
 
   // Pending running→stopped debounce timers: projectDir → timeout handle.
@@ -110,14 +117,11 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
     broadcastCurrent();
   }
 
-  const watcher = watchForChanges(claudeDir, (projectDir: string) => {
-    updateProject(projectDir).catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`ccmon: broadcast error: ${msg}\n`);
-    });
-  });
+  // Watcher reference is set after the initial scan completes to avoid a race where a watcher
+  // event fires before ready resolves and then stateMap.clear() discards the interim update.
+  let watcher: ReturnType<typeof watchForChanges> | null = null;
 
-  // Populate the state map on startup with a full scan.
+  // Populate the state map on startup, then start the watcher so events are never lost.
   const ready = getProjectState(claudeDir)
     .then((states) => {
       stateMap.clear();
@@ -125,6 +129,12 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
         const fullPath = join(claudeDir, s.projectDir);
         stateMap.set(fullPath, s);
       }
+      watcher = watchForChanges(claudeDir, (projectDir: string) => {
+        updateProject(projectDir).catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          process.stderr.write(`ccmon: broadcast error: ${msg}\n`);
+        });
+      });
     })
     .catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
@@ -161,7 +171,7 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
 
       if (url.pathname === '/api/state') {
         // Return map contents — no rescan.
-        return Promise.resolve(Response.json(currentFilteredState()));
+        return Response.json(currentFilteredState());
       }
 
       if (url.pathname === '/') {
@@ -180,7 +190,7 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
     stop(): void {
       for (const timer of stopDebounceTimers.values()) clearTimeout(timer);
       stopDebounceTimers.clear();
-      watcher.stop();
+      watcher?.stop();
       server.stop(true);
     },
   };

@@ -69,21 +69,22 @@ function resolveConfigPath(): string {
   return join(base, 'ccmon', 'config.json');
 }
 
-// Only validates the minimum required field; other fields are optional and merged with defaults.
-function isCcmonConfig(v: unknown): v is Partial<CcmonConfig> {
-  if (typeof v !== 'object' || v === null) return false;
-  const obj = v as Record<string, unknown>;
-  return typeof obj.maxInactivityHours === 'number';
+// Accepts any non-null object; mergeWithDefaults does per-field type narrowing.
+function isCcmonConfig(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
 }
 
 /**
  * Merges a partial config loaded from file with defaults.
  * File may contain only a subset of fields.
  */
-function mergeWithDefaults(partial: Partial<CcmonConfig>): CcmonConfig {
+function mergeWithDefaults(partial: Record<string, unknown>): CcmonConfig {
   return {
-    maxInactivityHours: partial.maxInactivityHours ?? DEFAULT_CONFIG.maxInactivityHours,
-    host: partial.host ?? DEFAULT_CONFIG.host,
-    port: partial.port ?? DEFAULT_CONFIG.port,
+    maxInactivityHours:
+      typeof partial.maxInactivityHours === 'number'
+        ? partial.maxInactivityHours
+        : DEFAULT_CONFIG.maxInactivityHours,
+    host: typeof partial.host === 'string' ? partial.host : DEFAULT_CONFIG.host,
+    port: typeof partial.port === 'number' ? partial.port : DEFAULT_CONFIG.port,
   };
 }

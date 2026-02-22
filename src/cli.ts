@@ -11,6 +11,7 @@ function exit(code: number): never {
 
 const claudeDir = Bun.env.CLAUDE_PROJECTS_DIR ?? join(Bun.env.HOME ?? '/root', '.claude', 'projects');
 
+// REVIEW: architecture-reviewer - CLI argument parsing is done inline at module top-level using manual process.argv.indexOf calls scattered across the file. This means all flags (--project, --max-age, --no-filter, --port, --host) are parsed globally before the subcommand branch is reached, so flags intended only for specific subcommands are evaluated for every invocation. As the CLI grows, this approach makes it difficult to add subcommand-specific flags, validate flag combinations, or generate accurate help text. Consider a structured argument parsing approach (even a minimal one) that groups flags by subcommand and validates them after the subcommand is known.
 const subcommand = process.argv[2];
 
 const projectFlagIdx = process.argv.indexOf('--project');
@@ -53,7 +54,7 @@ if (subcommand === 'dump') {
 
   if (port !== undefined && isNaN(port)) {
     process.stderr.write('Error: --port requires a valid number\n');
-    process.exit(1);
+    exit(1);
   }
 
   const hostArg = process.argv.indexOf('--host');
@@ -64,8 +65,13 @@ if (subcommand === 'dump') {
   }
 
   const serveConfig = mergeCliOverrides(config, { port, host });
-  const { port: resolvedPort, stop } = startServer({ port: serveConfig.port, hostname: serveConfig.host, maxInactivityHours: serveConfig.maxInactivityHours });
-  process.stdout.write(`ccmon server listening on http://${serveConfig.host}:${resolvedPort}\n`);
+  const { port: resolvedPort, stop } = startServer({
+    port: serveConfig.port,
+    hostname: serveConfig.host,
+    maxInactivityHours: serveConfig.maxInactivityHours,
+  });
+  const displayHost = serveConfig.host === '0.0.0.0' ? 'localhost' : serveConfig.host;
+  process.stdout.write(`ccmon server listening on http://${displayHost}:${resolvedPort}\n`);
 
   process.on('SIGINT', () => {
     stop();
@@ -192,7 +198,6 @@ async function runStatus(): Promise<void> {
     }
     process.stdout.write('{}\n');
     process.exit(0);
-    return;
   }
 
   const state = mapHookEventToState(hook_event_name);
@@ -200,7 +205,6 @@ async function runStatus(): Promise<void> {
     // Unknown hook event — respond OK so Claude doesn't block on unrecognized events
     process.stdout.write('{}\n');
     process.exit(0);
-    return;
   }
 
   try {
@@ -243,7 +247,11 @@ async function resolveProjectDir(cwd: string, dir: string): Promise<string> {
 
 async function runSub(): Promise<void> {
   const portArg = process.argv.indexOf('--port');
-  const port = portArg !== -1 ? parseInt(process.argv[portArg + 1], 10) : config.port;
+  const port = portArg !== -1 ? parseInt(process.argv[portArg + 1] ?? '', 10) : config.port;
+  if (portArg !== -1 && isNaN(port)) {
+    process.stderr.write('Error: --port requires a valid number\n');
+    exit(1);
+  }
 
   const ws = new WebSocket(`ws://localhost:${port}/ws`);
 

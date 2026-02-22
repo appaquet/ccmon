@@ -68,11 +68,29 @@ describe('loadConfig', () => {
     expect(config).toEqual(DEFAULT_CONFIG);
   });
 
-  test('partial config (empty {}): returns defaults (fails type guard)', async () => {
+  test('partial config with only host and port: merges with defaults (R18)', async () => {
+    const configPath = join(tmpDir, 'config.json');
+    await writeFile(configPath, JSON.stringify({ host: '127.0.0.1', port: 8080 }));
+
+    const config = loadConfig(configPath);
+    expect(config.host).toBe('127.0.0.1');
+    expect(config.port).toBe(8080);
+    expect(config.maxInactivityHours).toBe(DEFAULT_CONFIG.maxInactivityHours);
+  });
+
+  test('partial config with invalid field types: falls back to defaults per field', async () => {
+    const configPath = join(tmpDir, 'config.json');
+    await writeFile(configPath, JSON.stringify({ maxInactivityHours: 'bad', port: 'notanumber' }));
+
+    const config = loadConfig(configPath);
+    expect(config.maxInactivityHours).toBe(DEFAULT_CONFIG.maxInactivityHours);
+    expect(config.port).toBe(DEFAULT_CONFIG.port);
+  });
+
+  test('partial config (empty {}): returns defaults', async () => {
     const configPath = join(tmpDir, 'config.json');
     await writeFile(configPath, JSON.stringify({}));
 
-    // Empty object fails the type guard (no maxInactivityHours)
     const config = loadConfig(configPath);
     expect(config).toEqual(DEFAULT_CONFIG);
   });

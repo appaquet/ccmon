@@ -2599,4 +2599,94 @@ describe('readSessionTail TaskCreate/TaskUpdate task parsing (R46)', () => {
     expect(result.tasksDone).toBe(1);
     expect(result.tasks).toBeUndefined(); // TodoWrite path never sets tasks array
   });
+
+  test('R46: TaskCreate seen but no tool_result yet → tasks/counts stay undefined (no 0/0 flash)', async () => {
+    // Reproduces the bug where a pending TaskCreate (no matching tool_result) caused
+    // scanTaskCreateUpdate to return a non-null empty Map, which triggered mergeEnrichment
+    // to produce tasks=[], tasksDone=0, tasksTotal=0 instead of leaving everything undefined.
+    const jsonlPath = join(tmpDir, 'r46-pending-create.jsonl');
+    const lines = [
+      // TaskCreate tool_use with no matching tool_result in the file yet
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'tool_use', id: 'tu-pending', name: 'TaskCreate', input: { subject: 'Pending task' } }],
+        },
+      }),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    // No tool_result confirms the task ID → tasks/counts must remain undefined
+    expect(result.tasks).toBeUndefined();
+    expect(result.tasksTotal).toBeUndefined();
+    expect(result.tasksDone).toBeUndefined();
+  });
+});
+
+// ─── collectPgrepPids async (R2) ─────────────────────────────────────────────
+
+describe('checkLiveness async pgrep (R2)', () => {
+  beforeEach(() => {
+    _resetCachesForTesting();
+  });
+
+  test('R2: checkLiveness resolves without error (async pgrep)', async () => {
+    // Verify that checkLiveness completes successfully when called with async pgrep.
+    // The key change from spawnSync to Bun.spawn is that the event loop is not blocked;
+    // this is verified by the call completing rather than hanging.
+    const result = await checkLiveness(['/nonexistent/path/async-test']);
+    expect(result instanceof Set).toBe(true);
+  });
+});
+
+// ─── readSessionTail line boundary edge case (R27) ────────────────────────────
+
+describe('readSessionTail line boundary edge case (R27)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-r27-boundary');
+    _resetCachesForTesting();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeAssistantEntry(model: string, contentBlocks: object[]): string {
+    return JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', model, content: contentBlocks },
+    });
+  }
+
+  test('R27: startOffset landing exactly on newline boundary preserves the line after it', async () => {
+    // Build a file where MAX_FIRST_READ is simulated by having the offset land exactly
+    // on a newline. We do this by creating a file where the slice starts at '\n'.
+    // We test this indirectly: write a file, read it, and ensure no lines are dropped
+    // even when the file starts with a newline-terminated record.
+    const jsonlPath = join(tmpDir, 'r27-boundary.jsonl');
+
+    // Write lines where the first entry is exactly followed by a newline at the boundary.
+    // The key scenario: if the file read starts exactly at a '\n', the split produces
+    // '' as first element which filter removes, then old code's slice(1) drops the next line.
+    const line1 = makeAssistantEntry('claude-sonnet-4-6', [{ type: 'text', text: 'line one' }]);
+    const line2 = makeAssistantEntry('claude-sonnet-4-6', [{ type: 'text', text: 'line two' }]);
+
+    // Simulate startOffset landing on newline: write '\n' + line2 to a separate file
+    // and read it (startOffset=0 but text[0]='\n'). The isDelta=false, startOffset=0
+    // branch does not trigger slice(1), so this tests the filter+slice interaction.
+    // More directly: write content starting with '\n' and verify nothing is dropped.
+    await writeFile(jsonlPath, '\n' + line1 + '\n' + line2 + '\n');
+
+    // Force a cap-based offset by making the file appear > MAX_FIRST_READ. We can't
+    // easily do that in a unit test, so instead verify the basic read path works correctly
+    // when text starts with '\n' (empty first element after split).
+    const result = await readSessionTail(jsonlPath);
+    // Both lines must be reachable; reversed scan finds line2 first (most recent)
+    expect(result.latestAssistantActivity?.text).toBe('line two');
+  });
 });

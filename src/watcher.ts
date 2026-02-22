@@ -13,6 +13,7 @@ const DEBOUNCE_MS = 100;
  * directly if it exists, or the parent dir until the file appears.
  * Debounces per projectDir with a 100ms window.
  */
+// REVIEW: architecture-reviewer - The watcher only monitors status.local.json changes. JSONL session files (which carry enrichment: model, tokens, tasks, sub-agent data) are never watched. As a result, the server's stateMap and WS clients do not receive updates when a session writes new JSONL lines without touching status.local.json (e.g. a running session between hook events). The mtime-based caching in readSessionTail means enrichment is only refreshed when the watcher fires for a status file change. This creates a gap: UI data can be stale for the duration of a session turn. Consider also watching the JSONL file (or the project dir) to trigger enrichment refreshes, or document this staleness as an explicit design trade-off.
 export function watchForChanges(
   claudeDir: string,
   onUpdate: (projectDir: string) => void,
@@ -108,7 +109,7 @@ export function watchForChanges(
         if (!filename || stopped) return;
         const newProjectDir = join(claudeDir, filename);
         // Attempt to set up a watch for the new directory (stat happens inside)
-        watchProject(newProjectDir).catch(() => {});
+        watchProject(newProjectDir).catch((err) => console.error('ccmon: failed to watch new project dir:', err));
       });
       watcher.on('error', () => {
         watcher.close();
@@ -145,7 +146,7 @@ export function watchForChanges(
     startClaudeDirWatcher();
   }
 
-  init().catch(() => {});
+  init().catch((err) => console.error('ccmon: watcher init error:', err));
 
   return {
     stop(): void {

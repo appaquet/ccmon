@@ -542,3 +542,26 @@ describe('dump --watch', () => {
     expect(exitCode === 0 || exitCode === 130 || exitCode === null).toBe(true);
   }, 5000);
 });
+
+// ─── sub ──────────────────────────────────────────────────────────────────────
+
+describe('sub', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-cli-sub');
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('--port with no value → non-zero exit with stderr message (R17)', async () => {
+    const result = await spawnCli(['sub', '--port'], {
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('--port requires a valid number');
+  });
+});
