@@ -123,10 +123,16 @@ R21 covers `TodoWrite` only — `TaskCreate`/`TaskUpdate` full-parse support def
   * R27.1: First read parses the entire JSONL file; subsequent reads parse only new bytes (offset-based delta)
   * R27.2: If file size shrinks (session replaced), cache resets and performs a full re-read
   * R27.3: Task counts (tasksDone/tasksTotal) reflect all TodoWrite entries in the session, not just the last 64KB
-* R28: ⬜ ProjectState includes latestAssistantMessage extracted from JSONL (Phase: Notifications & Streaming)
+* R28: ⬜ ProjectState includes latestAssistantMessage extracted from JSONL, displayed in dashboard (Phase: Notifications & Streaming)
 * R29: ⬜ Sub-agent info is exposed as structured SubagentInfo objects instead of a bare count (Phase: Notifications & Streaming)
   * R29.1: Each sub-agent entry includes agentId, model, initial prompt, last tool use, and task counts
   * R29.2: Sub-agent active/stopped status is determined via parent JSONL tool_result correlation or mtime heuristic fallback
+
+### QA Pass
+
+* R30: ⬜ Last activity timestamp in web UI updates periodically without page reload (Phase: QA Pass)
+* R31: ⬜ Server persists current project state in memory so page refresh returns correct state (Phase: QA Pass)
+* R32: ⬜ Token usage from JSONL included in session payload and displayed in dashboard (Phase: QA Pass)
 
 #### Out of Scope
 
@@ -175,6 +181,11 @@ Task count (R21 TodoWrite, R22/R23 flash animations, R24 short model names, R25 
 
 Replace stateless 64KB tail reads with byte-offset JSONL streaming for accurate task counts and full session coverage. Add notification hook support with transient UI flash. Expose structured sub-agent info and assistant message extraction.
 
+### ⬜ 07 Phase: QA Pass
+[07-qa-pass](07-qa-pass.md)
+
+Bug fixes and improvements from real-world usage: last activity timestamp auto-refresh, server state persistence on page reload, token usage display.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
@@ -192,6 +203,7 @@ Replace stateless 64KB tail reads with byte-offset JSONL streaming for accurate 
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection (Phase: Session Detection)
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands (Phase: Session Detection, Backend)
 - **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints (Phase: Backend)
+- **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
 - **tests/sessions.test.ts**: 101 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
 - **tests/cli.test.ts**: 14 tests for cli.ts — status, dump --watch, --project filter (Phase: Backend)

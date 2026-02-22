@@ -6,8 +6,9 @@ See [00-ccmon](00-ccmon.md). Replace stateless 64KB tail reads with byte-offset 
 
 ## Questions
 
-* Q1: Should SubagentInfo be included in dump/serve JSON output immediately, or behind a flag? Increases payload size for sessions with many agents.
-* Q2: Should we cap first-read file size for very large JSONL files, or let it parse everything?
+* Q1: ✅ SubagentInfo included in dump/serve immediately, no flag. Web UI updated too.
+* Q2: ✅ Cap first-read at ~10MB. For files larger than cap, start reading from `fileSize - cap` bytes (like current tail) to establish baseline, then stream forward. Avoids slow first-parse on very large JSONL.
+* Q3: ✅ R28 (last messages) also shown in web UI — not data-model-only.
 
 ## Tasks
 
@@ -25,12 +26,13 @@ See [00-ccmon](00-ccmon.md). Replace stateless 64KB tail reads with byte-offset 
 [ ] Implement sub-agent stopped detection: check parent JSONL for matching Task tool_result, fall back to mtime heuristic (R29.2)
 [ ] Add tests for sub-agent info extraction and stopped detection (R29.1, R29.2)
 [ ] Update ProjectState type: replace subagentCount with subagents: SubagentInfo[], add latestAssistantMessage (R28, R29)
-[ ] Update server/dump serialization and dashboard rendering for new fields (R28, R29)
+[ ] Update server/dump serialization for new fields (R28, R29)
+[ ] Update dashboard web UI to display latestAssistantMessage, SubagentInfo list (R28, R29)
 
 ## Architecture Decisions
 
 - **Byte-offset streaming replaces 64KB tail**: Cache entry becomes `{mtime, fileSize, byteOffset, accumulatedState}`. Accumulated state: "latest wins" for model/lastToolUse, "latest TodoWrite" for task counts. Core change — everything else builds on it.
-- **No max file size cap initially**: First-read cost is one-time per session. Add lazy background parsing later if needed.
+- **First-read file size cap (~10MB)**: For JSONL files larger than cap, start from `fileSize - cap` bytes (same as current tail), then stream forward from there. Balances correctness vs startup cost. TodoWrite entries within the cap window are captured; earlier ones remain potentially missed (acceptable tradeoff).
 - **Notification is flash-only, no new SessionState value**: notificationTimestamp in StatusFile triggers UI animation. Dashboard detects timestamp change → CSS animation.
 - **Sub-agent stopped detection**: Primary: parent JSONL tool_result correlation (reliable). Fallback: mtime heuristic.
 
@@ -45,5 +47,5 @@ See [00-ccmon](00-ccmon.md). Replace stateless 64KB tail reads with byte-offset 
 ## Files
 
 - **src/sessions.ts**: Refactored readSessionTail, new SubagentInfo type, notification handling, latestAssistantMessage
-- **public/index.html**: Notification flash animation
+- **public/index.html**: Notification flash animation, latestAssistantMessage display, SubagentInfo list
 - **tests/sessions.test.ts**: New tests for streaming, notifications, sub-agents, assistant message
