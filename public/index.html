@@ -314,15 +314,17 @@
         }
       }
 
-      // latest assistant message
-      if (proj.latestAssistantMessage) {
-        html += `<div class="card-message">◀ ${esc(truncate(proj.latestAssistantMessage, 80))}</div>`;
+      // latest assistant activity — show text when present, fall back to tool name
+      if (proj.latestAssistantActivity) {
+        const activityLabel = proj.latestAssistantActivity.text ?? proj.latestAssistantActivity.tool;
+        if (activityLabel) {
+          html += `<div class="card-message">◀ ${esc(truncate(activityLabel, 80))}</div>`;
+        }
       }
 
-      // model + last tool use
-      if (proj.model || proj.lastToolUse) {
-        const parts = [shortModel(proj.model), proj.lastToolUse].filter(Boolean);
-        html += `<div class="card-meta">${esc(parts.join(' · '))}</div>`;
+      // model
+      if (proj.model) {
+        html += `<div class="card-meta">${esc(shortModel(proj.model))}</div>`;
       }
 
       // sub-agents — hide completed agents older than 2 minutes (backend removes after 5m)
@@ -343,9 +345,11 @@
               : `<span class="agent-dot agent-dot-done">✓</span>`;
             const label = agent.description ?? agent.slug ?? agent.agentId;
             const model = shortModel(agent.model);
-            // show lastToolUse if available, else latestAssistantMessage (R38)
-            const activity = agent.lastToolUse ?? agent.latestAssistantMessage ?? '';
-            const parts = [model, activity].filter(Boolean);
+            // show latestAssistantActivity: text when present, fall back to tool name
+            const agentActivity = agent.latestAssistantActivity
+              ? (agent.latestAssistantActivity.text ?? agent.latestAssistantActivity.tool ?? '')
+              : '';
+            const parts = [model, agentActivity].filter(Boolean);
             const extra = parts.length ? ` · ${esc(parts.join(' · '))}` : '';
             html += `<br><span style="margin-left:8px;font-size:10px">${indicator} ${esc(label)}${extra}</span>`;
           }

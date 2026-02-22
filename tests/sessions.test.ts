@@ -810,7 +810,7 @@ describe('session enrichment', () => {
     });
   }
 
-  test('readSessionTail: extracts latestUserActivity, model, lastToolUse', async () => {
+  test('readSessionTail: extracts latestUserActivity, model, latestAssistantActivity', async () => {
     const jsonlPath = join(tmpDir, 'tail-test.jsonl');
     const lines = [
       makeUserEntry('what is X'),
@@ -826,7 +826,8 @@ describe('session enrichment', () => {
     expect(result.latestUserActivity?.text).toBe('what is X');
     expect(result.latestUserActivity?.isCommand).toBe(false);
     expect(result.model).toBe('claude-sonnet-4-6');
-    expect(result.lastToolUse).toBe('Read');
+    expect(result.latestAssistantActivity?.tool).toBe('Read');
+    expect(result.latestAssistantActivity?.text).toBe('some text');
   });
 
   test('readSessionTail: non-command <-prefixed content sets no latestUserActivity', async () => {
@@ -854,7 +855,7 @@ describe('session enrichment', () => {
     const result = await readSessionTail(join(tmpDir, 'nonexistent.jsonl'));
     expect(result.latestUserActivity).toBeUndefined();
     expect(result.model).toBeUndefined();
-    expect(result.lastToolUse).toBeUndefined();
+    expect(result.latestAssistantActivity).toBeUndefined();
   });
 
   test('readSessionTail: corrupt lines are skipped, valid lines parsed', async () => {
@@ -871,7 +872,7 @@ describe('session enrichment', () => {
     expect(result.latestUserActivity?.isCommand).toBe(false);
   });
 
-  test('readSessionTail: picks last tool use from assistant content array', async () => {
+  test('readSessionTail: picks most recent assistant entry (last in file)', async () => {
     const jsonlPath = join(tmpDir, 'multi-tool-test.jsonl');
     const lines = [
       makeAssistantEntry('claude-sonnet-4-6', [
@@ -885,7 +886,8 @@ describe('session enrichment', () => {
 
     const result = await readSessionTail(jsonlPath);
     // Reversed scan picks Edit (last in file = first found from end)
-    expect(result.lastToolUse).toBe('Edit');
+    expect(result.latestAssistantActivity?.tool).toBe('Edit');
+    expect(result.latestAssistantActivity?.text).toBeUndefined();
   });
 
   test('readSessionTail: TodoWrite present with mixed statuses → correct tasksDone and tasksTotal', async () => {
@@ -1132,7 +1134,7 @@ describe('session enrichment', () => {
     expect(second.tasksTotal).toBeUndefined();
   });
 
-  test('readSessionTail (R28): latestAssistantMessage extracted and truncated', async () => {
+  test('readSessionTail (R28/R50): latestAssistantActivity text extracted and truncated', async () => {
     const jsonlPath = join(tmpDir, 'r28-assistant-msg.jsonl');
     const longText = 'A'.repeat(300);
     const lines = [
@@ -1145,10 +1147,11 @@ describe('session enrichment', () => {
     await writeFile(jsonlPath, lines.join('\n') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestAssistantMessage).toBe('A'.repeat(200));
+    expect(result.latestAssistantActivity?.text).toBe('A'.repeat(200));
+    expect(result.latestAssistantActivity?.tool).toBe('Bash');
   });
 
-  test('readSessionTail (R28): latestAssistantMessage and latestUserActivity both extracted', async () => {
+  test('readSessionTail (R28/R50): latestAssistantActivity and latestUserActivity both extracted', async () => {
     const jsonlPath = join(tmpDir, 'r28-both-messages.jsonl');
     const lines = [
       makeUserEntry('user input here'),
@@ -1161,10 +1164,11 @@ describe('session enrichment', () => {
     const result = await readSessionTail(jsonlPath);
     expect(result.latestUserActivity?.text).toBe('user input here');
     expect(result.latestUserActivity?.isCommand).toBe(false);
-    expect(result.latestAssistantMessage).toBe('assistant reply here');
+    expect(result.latestAssistantActivity?.text).toBe('assistant reply here');
+    expect(result.latestAssistantActivity?.tool).toBeUndefined();
   });
 
-  test('readSessionTail (R28): assistant entry without text block yields no latestAssistantMessage', async () => {
+  test('readSessionTail (R28/R50): assistant entry without text block yields no text in latestAssistantActivity', async () => {
     const jsonlPath = join(tmpDir, 'r28-no-text-block.jsonl');
     const lines = [
       makeAssistantEntry('claude-sonnet-4-6', [
@@ -1174,7 +1178,99 @@ describe('session enrichment', () => {
     await writeFile(jsonlPath, lines.join('\n') + '\n');
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestAssistantMessage).toBeUndefined();
+    expect(result.latestAssistantActivity?.text).toBeUndefined();
+    expect(result.latestAssistantActivity?.tool).toBe('Bash');
+  });
+
+  // ── latestAssistantActivity (R50) ──
+
+  test('readSessionTail (R50): assistant entry with only text block', async () => {
+    const jsonlPath = join(tmpDir, 'r50-text-only.jsonl');
+    const lines = [
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'text', text: 'thinking out loud' },
+      ]),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.latestAssistantActivity?.text).toBe('thinking out loud');
+    expect(result.latestAssistantActivity?.tool).toBeUndefined();
+  });
+
+  test('readSessionTail (R50): assistant entry with only tool_use', async () => {
+    const jsonlPath = join(tmpDir, 'r50-tool-only.jsonl');
+    const lines = [
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'tool_use', name: 'Bash', input: {} },
+      ]),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.latestAssistantActivity?.text).toBeUndefined();
+    expect(result.latestAssistantActivity?.tool).toBe('Bash');
+  });
+
+  test('readSessionTail (R50): assistant entry with both text and tool_use', async () => {
+    const jsonlPath = join(tmpDir, 'r50-both.jsonl');
+    const lines = [
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'text', text: 'here is my plan' },
+        { type: 'tool_use', name: 'Bash', input: {} },
+      ]),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.latestAssistantActivity?.text).toBe('here is my plan');
+    expect(result.latestAssistantActivity?.tool).toBe('Bash');
+  });
+
+  test('readSessionTail (R50): temporal ordering — newer entry wins even if older has text', async () => {
+    const jsonlPath = join(tmpDir, 'r50-temporal.jsonl');
+    const lines = [
+      // older entry: has text but no tool
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'text', text: 'older text reply' },
+      ]),
+      // newer entry: tool only
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'tool_use', name: 'Read', input: {} },
+      ]),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    // Reversed scan finds newer (last in file) first — tool-only entry wins
+    expect(result.latestAssistantActivity?.tool).toBe('Read');
+    expect(result.latestAssistantActivity?.text).toBeUndefined();
+  });
+
+  test('readSessionTail (R50): delta-read merge preserves latestAssistantActivity from base when scan has none', async () => {
+    _resetCachesForTesting();
+    const jsonlPath = join(tmpDir, 'r50-delta-merge.jsonl');
+
+    // First read: assistant entry sets latestAssistantActivity
+    const firstLines = [
+      makeAssistantEntry('claude-sonnet-4-6', [
+        { type: 'text', text: 'initial response' },
+        { type: 'tool_use', name: 'Bash', input: {} },
+      ]),
+    ];
+    await writeFile(jsonlPath, firstLines.join('\n') + '\n');
+    const first = await readSessionTail(jsonlPath);
+    expect(first.latestAssistantActivity?.text).toBe('initial response');
+    expect(first.latestAssistantActivity?.tool).toBe('Bash');
+
+    // Append user-only line (no new assistant entry) — delta scan finds no assistant entry
+    const userLine = makeUserEntry('follow-up question');
+    await Bun.write(jsonlPath, firstLines.join('\n') + '\n' + userLine + '\n');
+
+    const second = await readSessionTail(jsonlPath);
+    // latestAssistantActivity must be preserved from base (delta merge)
+    expect(second.latestAssistantActivity?.text).toBe('initial response');
+    expect(second.latestAssistantActivity?.tool).toBe('Bash');
   });
 
   // ── getSubagentInfos (R29) ──
@@ -1205,10 +1301,10 @@ describe('session enrichment', () => {
     expect(infos[0].jsonlPath).toBe(agentPath);
     expect(infos[0].isActive).toBe(true);
     expect(infos[0].model).toBe('claude-opus-4-6');
-    expect(infos[0].lastToolUse).toBe('Read');
+    expect(infos[0].latestAssistantActivity?.tool).toBe('Read');
     expect(infos[0].latestUserActivity?.text).toBe('agent task');
     expect(infos[0].latestUserActivity?.isCommand).toBe(false);
-    expect(infos[0].latestAssistantMessage).toBe('agent response');
+    expect(infos[0].latestAssistantActivity?.text).toBe('agent response');
   });
 
   test('getSubagentInfos (R29): isActive respects 45s threshold', async () => {
@@ -1416,7 +1512,7 @@ describe('session enrichment', () => {
     expect(proj!.model).toBe('claude-sonnet-4-6');
     expect(proj!.inputTokens).toBeGreaterThan(0);
     expect(proj!.outputTokens).toBeGreaterThan(0);
-    expect(proj!.latestAssistantMessage).toBe('response text');
+    expect(proj!.latestAssistantActivity?.text).toBe('response text');
   });
 });
 

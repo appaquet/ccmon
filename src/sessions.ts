@@ -68,8 +68,7 @@ export interface TaskInfo {
 export interface SessionEnrichment {
   model?: string;
   latestUserActivity?: { text: string; isCommand: boolean };
-  latestAssistantMessage?: string;
-  lastToolUse?: string;
+  latestAssistantActivity?: { text?: string; tool?: string };
   tasks?: TaskInfo[];
   tasksDone?: number;
   tasksTotal?: number;
@@ -144,9 +143,8 @@ export interface ProjectState extends ProjectInfo {
   lastUpdated: string | null; // from status file timestamp, null if no status
   // Enrichment fields — populated for all states
   latestUserActivity?: { text: string; isCommand: boolean };
-  latestAssistantMessage?: string;
+  latestAssistantActivity?: { text?: string; tool?: string };
   model?: string;
-  lastToolUse?: string;
   tasksDone?: number;
   tasksTotal?: number;
   inputTokens?: number;
@@ -620,9 +618,8 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
   const reversed = lines.slice().reverse();
   const scanResult: SessionTailInfo = { agentDescriptions: new Map() };
   let foundUserActivity = false;
-  let foundAssistant = false;
+  let foundAssistantActivity = false;
   let foundModel = false;
-  let foundTool = false;
   // foundTasks is true when tasks came from TaskCreate/TaskUpdate (new scan or cached base).
   // When true, skip the TodoWrite fallback in the reversed scan.
   let foundTasks = scannedTasks !== null || baseData.tasks !== undefined;
@@ -684,27 +681,16 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
       if (Array.isArray(message.content)) {
         const contentBlocks = message.content as unknown[];
 
-        if (!foundTool) {
-          const toolUse = contentBlocks.find(
-            (item): item is { type: string; name: string } =>
-              typeof item === 'object' &&
-              item !== null &&
-              (item as Record<string, unknown>).type === 'tool_use' &&
-              typeof (item as Record<string, unknown>).name === 'string',
-          );
-          if (toolUse) {
-            scanResult.lastToolUse = toolUse.name;
-            foundTool = true;
-          }
-        }
-
         // Only fall back to TodoWrite when no TaskCreate/TaskUpdate tasks were found.
         if (!foundTasks) {
           scanTodoWrite(contentBlocks, scanResult);
           if (scanResult.tasksTotal !== undefined) foundTasks = true;
         }
 
-        if (!foundAssistant) {
+        // First assistant entry in reversed scan (= most recent chronologically) sets
+        // latestAssistantActivity. Both text and tool are extracted independently from
+        // the same entry — an entry may have text only, tool only, or both.
+        if (!foundAssistantActivity) {
           const textBlock = contentBlocks.find(
             (b): b is { type: string; text: string } =>
               typeof b === 'object' &&
@@ -712,9 +698,19 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
               (b as Record<string, unknown>).type === 'text' &&
               typeof (b as Record<string, unknown>).text === 'string',
           );
-          if (textBlock) {
-            scanResult.latestAssistantMessage = textBlock.text.slice(0, 200);
-            foundAssistant = true;
+          const toolUse = contentBlocks.find(
+            (item): item is { type: string; name: string } =>
+              typeof item === 'object' &&
+              item !== null &&
+              (item as Record<string, unknown>).type === 'tool_use' &&
+              typeof (item as Record<string, unknown>).name === 'string',
+          );
+          if (textBlock !== undefined || toolUse !== undefined) {
+            scanResult.latestAssistantActivity = {
+              text: textBlock ? textBlock.text.slice(0, 200) : undefined,
+              tool: toolUse ? toolUse.name : undefined,
+            };
+            foundAssistantActivity = true;
           }
         }
       }
@@ -804,9 +800,8 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
 
   const merged: SessionTailInfo = {
     latestUserActivity: scanResult.latestUserActivity ?? baseData.latestUserActivity,
-    latestAssistantMessage: scanResult.latestAssistantMessage ?? baseData.latestAssistantMessage,
+    latestAssistantActivity: scanResult.latestAssistantActivity ?? baseData.latestAssistantActivity,
     model: scanResult.model ?? baseData.model,
-    lastToolUse: scanResult.lastToolUse ?? baseData.lastToolUse,
     tasks: mergedTasks,
     tasksDone: mergedTasksDone,
     tasksTotal: mergedTasksTotal,
@@ -1002,9 +997,8 @@ async function buildProjectState(project: ProjectInfo, claudeDir: string): Promi
   return {
     ...base,
     latestUserActivity: tail.latestUserActivity,
-    latestAssistantMessage: tail.latestAssistantMessage,
+    latestAssistantActivity: tail.latestAssistantActivity,
     model: tail.model,
-    lastToolUse: tail.lastToolUse,
     tasksDone: tail.tasksDone,
     tasksTotal: tail.tasksTotal,
     inputTokens: tail.inputTokens,
