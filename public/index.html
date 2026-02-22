@@ -177,6 +177,26 @@
     .card-flashing-notification {
       animation: flash-notification 0.5s ease-in-out 10;
     }
+
+    .agent-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      vertical-align: middle;
+      flex-shrink: 0;
+    }
+    .agent-dot-active {
+      background: var(--running);
+      animation: pulse-dot 1.8s ease-in-out infinite;
+    }
+    .agent-dot-done {
+      width: auto;
+      height: auto;
+      border-radius: 0;
+      color: var(--muted);
+      font-size: 10px;
+    }
   </style>
 </head>
 <body>
@@ -281,8 +301,10 @@
         html += `<div class="card-meta">branch: ${esc(proj.gitBranch)}</div>`;
       }
 
-      // latest user message
-      if (proj.latestUserMessage) {
+      // latest command or user message — prefer command if available
+      if (proj.latestCommand) {
+        html += `<div class="card-message">/ ${esc(truncate(proj.latestCommand, 80))}</div>`;
+      } else if (proj.latestUserMessage) {
         html += `<div class="card-message">▶ ${esc(truncate(proj.latestUserMessage, 80))}</div>`;
       }
 
@@ -297,22 +319,34 @@
         html += `<div class="card-meta">${esc(parts.join(' · '))}</div>`;
       }
 
-      // sub-agents
+      // sub-agents — hide completed agents older than 2 minutes (backend removes after 5m)
       if (proj.subagents && proj.subagents.length > 0) {
-        const active = proj.subagents.filter(a => a.isActive).length;
-        const total = proj.subagents.length;
-        html += `<div class="card-meta">⬡ agents: ${esc(active)}/${esc(total)} active`;
-        const shown = proj.subagents.slice(0, 3);
-        for (const agent of shown) {
-          const dot = agent.isActive ? '●' : '○';
-          const label = agent.description ?? agent.slug ?? agent.agentId;
-          const tool = agent.lastToolUse ? ` · ${agent.lastToolUse}` : '';
-          html += `<br><span style="margin-left:8px;font-size:10px">${dot} ${esc(label)}${esc(tool)}</span>`;
+        const now = Date.now();
+        const twoMin = 2 * 60 * 1000;
+        const visible = proj.subagents.filter(a =>
+          a.isActive || (now - new Date(a.lastMessageTime).getTime()) <= twoMin
+        );
+        if (visible.length > 0) {
+          const active = visible.filter(a => a.isActive).length;
+          html += `<div class="card-meta">⬡ agents: ${esc(active)}/${esc(visible.length)} active`;
+          const shown = visible.slice(0, 3);
+          for (const agent of shown) {
+            const indicator = agent.isActive
+              ? `<span class="agent-dot agent-dot-active"></span>`
+              : `<span class="agent-dot agent-dot-done">✓</span>`;
+            const label = agent.description ?? agent.slug ?? agent.agentId;
+            const model = shortModel(agent.model);
+            // show lastToolUse if available, else latestAssistantMessage (R38)
+            const activity = agent.lastToolUse ?? agent.latestAssistantMessage ?? '';
+            const parts = [model, activity].filter(Boolean);
+            const extra = parts.length ? ` · ${esc(parts.join(' · '))}` : '';
+            html += `<br><span style="margin-left:8px;font-size:10px">${indicator} ${esc(label)}${extra}</span>`;
+          }
+          if (visible.length > 3) {
+            html += `<br><span style="margin-left:8px;font-size:10px;color:var(--muted)">+${visible.length - 3} more</span>`;
+          }
+          html += `</div>`;
         }
-        if (proj.subagents.length > 3) {
-          html += `<br><span style="margin-left:8px;font-size:10px;color:var(--muted)">+${proj.subagents.length - 3} more</span>`;
-        }
-        html += `</div>`;
       }
 
       // task count

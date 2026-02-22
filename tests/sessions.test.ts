@@ -1708,3 +1708,315 @@ describe('readSessionTail token usage (R32)', () => {
     expect(second.outputTokens).toBe(20);
   });
 });
+
+// ─── latestCommand extraction (R37) ──────────────────────────────────────────
+
+describe('readSessionTail latestCommand (R37)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-r37');
+    _resetCachesForTesting();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeUserEntry(content: string): string {
+    return JSON.stringify({ type: 'user', message: { role: 'user', content } });
+  }
+
+  function makeCommandEntry(name: string, args?: string): string {
+    const argsTag = args ? `<command-args>${args}</command-args>` : '';
+    return makeUserEntry(`<command-name>${name}</command-name>${argsTag}`);
+  }
+
+  test('R37: latestCommand extracted from <command-name> user entry', async () => {
+    const jsonlPath = join(tmpDir, 'r37-basic.jsonl');
+    await writeFile(jsonlPath, makeCommandEntry('/ctx-load') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.latestCommand).toBe('/ctx-load');
+    expect(result.latestUserMessage).toBeUndefined();
+  });
+
+  test('R37: latestCommand includes args when <command-args> present', async () => {
+    const jsonlPath = join(tmpDir, 'r37-args.jsonl');
+    await writeFile(jsonlPath, makeCommandEntry('/ctx-load', 'some args') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.latestCommand).toBe('/ctx-load some args');
+  });
+
+  test('R37: <command-name> without args produces command-only string', async () => {
+    const jsonlPath = join(tmpDir, 'r37-no-args.jsonl');
+    await writeFile(jsonlPath, makeCommandEntry('/implement') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.latestCommand).toBe('/implement');
+  });
+
+  test('R37 ordering: command more recent than message → latestCommand set, latestUserMessage set from older entry', async () => {
+    const jsonlPath = join(tmpDir, 'r37-cmd-newer.jsonl');
+    const lines = [
+      makeUserEntry('a plain user message'),
+      makeCommandEntry('/ctx-save'),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    // Reversed scan finds the command first (it is the most recent entry)
+    expect(result.latestCommand).toBe('/ctx-save');
+    // The plain message is still extracted (it appears earlier in the file)
+    expect(result.latestUserMessage).toBe('a plain user message');
+  });
+
+  test('R37 ordering: message more recent than command → latestUserMessage set, latestCommand set from older entry', async () => {
+    const jsonlPath = join(tmpDir, 'r37-msg-newer.jsonl');
+    const lines = [
+      makeCommandEntry('/ctx-load'),
+      makeUserEntry('a follow-up user message'),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    // Reversed scan finds the plain message first (it is the most recent entry)
+    expect(result.latestUserMessage).toBe('a follow-up user message');
+    // The command is also extracted (it appears earlier in the file)
+    expect(result.latestCommand).toBe('/ctx-load');
+  });
+
+  test('R37: content starting with < but no <command-name> tag is not a command', async () => {
+    const jsonlPath = join(tmpDir, 'r37-xml-no-cmd.jsonl');
+    // This is the existing behaviour: content starting with < is skipped for latestUserMessage
+    // and not a command either (no <command-name> tag)
+    await writeFile(jsonlPath, makeUserEntry('<some-other-tag>value</some-other-tag>') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.latestUserMessage).toBeUndefined();
+    expect(result.latestCommand).toBeUndefined();
+  });
+});
+
+// ─── accurate token totals (R39) ─────────────────────────────────────────────
+
+describe('readSessionTail accurate token totals (R39)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-r39');
+    _resetCachesForTesting();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeAssistantWithFullUsage(opts: {
+    inputTokens?: number;
+    cacheCreate?: number;
+    cacheRead?: number;
+    outputTokens?: number;
+  }): string {
+    const usage: Record<string, number> = {};
+    if (opts.inputTokens !== undefined) usage.input_tokens = opts.inputTokens;
+    if (opts.cacheCreate !== undefined) usage.cache_creation_input_tokens = opts.cacheCreate;
+    if (opts.cacheRead !== undefined) usage.cache_read_input_tokens = opts.cacheRead;
+    if (opts.outputTokens !== undefined) usage.output_tokens = opts.outputTokens;
+    return JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        model: 'claude-sonnet-4-6',
+        content: [{ type: 'text', text: 'response' }],
+        usage,
+      },
+    });
+  }
+
+  test('R39: sums input + cache_creation + cache_read tokens', async () => {
+    const jsonlPath = join(tmpDir, 'r39-full.jsonl');
+    await writeFile(jsonlPath, makeAssistantWithFullUsage({
+      inputTokens: 100,
+      cacheCreate: 5000,
+      cacheRead: 200000,
+      outputTokens: 500,
+    }) + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.inputTokens).toBe(100 + 5000 + 200000);
+    expect(result.outputTokens).toBe(500);
+  });
+
+  test('R39: missing cache fields treated as 0 (backward compat)', async () => {
+    const jsonlPath = join(tmpDir, 'r39-no-cache.jsonl');
+    await writeFile(jsonlPath, makeAssistantWithFullUsage({
+      inputTokens: 300,
+      outputTokens: 100,
+    }) + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.inputTokens).toBe(300);
+    expect(result.outputTokens).toBe(100);
+  });
+
+  test('R39: only cache fields present, input_tokens absent → sums cache only', async () => {
+    const jsonlPath = join(tmpDir, 'r39-cache-only.jsonl');
+    await writeFile(jsonlPath, makeAssistantWithFullUsage({
+      cacheCreate: 1000,
+      cacheRead: 50000,
+      outputTokens: 200,
+    }) + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.inputTokens).toBe(51000);
+    expect(result.outputTokens).toBe(200);
+  });
+
+  test('R39: multiple entries accumulate provider-billed totals', async () => {
+    const jsonlPath = join(tmpDir, 'r39-multi.jsonl');
+    const lines = [
+      makeAssistantWithFullUsage({ inputTokens: 100, cacheCreate: 1000, cacheRead: 10000, outputTokens: 50 }),
+      makeAssistantWithFullUsage({ inputTokens: 200, cacheCreate: 2000, cacheRead: 20000, outputTokens: 75 }),
+    ];
+    await writeFile(jsonlPath, lines.join('\n') + '\n');
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.inputTokens).toBe((100 + 1000 + 10000) + (200 + 2000 + 20000));
+    expect(result.outputTokens).toBe(125);
+  });
+});
+
+// ─── SubagentInfo lifecycle (R40) ────────────────────────────────────────────
+
+describe('getSubagentInfos lifecycle (R40)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-r40');
+    _resetCachesForTesting();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  async function makeSubagentDir(sessionId: string): Promise<{ subagentsDir: string; jsonlPath: string }> {
+    const sessionDir = join(tmpDir, sessionId);
+    const subagentsDir = join(sessionDir, 'subagents');
+    await mkdir(subagentsDir, { recursive: true });
+    const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
+    return { subagentsDir, jsonlPath };
+  }
+
+  test('R40: lastMessageTime populated as ISO 8601 from file mtime', async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-mtime');
+    const agentPath = join(subagentsDir, 'agent-abc.jsonl');
+    await writeFile(agentPath, '{}');
+
+    const infos = await getSubagentInfos(jsonlPath);
+    expect(infos).toHaveLength(1);
+    expect(infos[0].lastMessageTime).toBeDefined();
+    // Should be a valid ISO 8601 string
+    expect(new Date(infos[0].lastMessageTime).toISOString()).toBe(infos[0].lastMessageTime);
+    // Should be recent (within last 10 seconds)
+    expect(Date.now() - new Date(infos[0].lastMessageTime).getTime()).toBeLessThan(10_000);
+  });
+
+  test('R40: launchTime populated as ISO 8601 from file mtime', async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-launch');
+    const agentPath = join(subagentsDir, 'agent-xyz.jsonl');
+    await writeFile(agentPath, '{}');
+
+    const infos = await getSubagentInfos(jsonlPath);
+    expect(infos).toHaveLength(1);
+    expect(infos[0].launchTime).toBeDefined();
+    expect(new Date(infos[0].launchTime).toISOString()).toBe(infos[0].launchTime);
+  });
+
+  test('R40: completed agent older than 5m excluded from result', async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-expire');
+    const oldAgent = join(subagentsDir, 'agent-old.jsonl');
+    await writeFile(oldAgent, '{}');
+
+    // Backdate to 6 minutes ago
+    const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000);
+    utimesSync(oldAgent, sixMinAgo, sixMinAgo);
+
+    const infos = await getSubagentInfos(jsonlPath);
+    // Old inactive agent should be filtered out
+    expect(infos.find((i) => i.agentId === 'old')).toBeUndefined();
+  });
+
+  test('R40: completed agent younger than 5m is included', async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-recent-done');
+    const recentAgent = join(subagentsDir, 'agent-recent.jsonl');
+    await writeFile(recentAgent, '{}');
+
+    // Backdate to 3 minutes ago (within 5m window, but >45s so isActive=false)
+    const threeMinAgo = new Date(Date.now() - 3 * 60 * 1000);
+    utimesSync(recentAgent, threeMinAgo, threeMinAgo);
+
+    const infos = await getSubagentInfos(jsonlPath);
+    const agent = infos.find((i) => i.agentId === 'recent');
+    expect(agent).toBeDefined();
+    expect(agent!.isActive).toBe(false);
+  });
+
+  test('R40: active agent (mtime < 45s) always included regardless of expiry', async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-active');
+    const activeAgent = join(subagentsDir, 'agent-live.jsonl');
+    await writeFile(activeAgent, '{}');
+    // mtime is now = active
+
+    const infos = await getSubagentInfos(jsonlPath);
+    const agent = infos.find((i) => i.agentId === 'live');
+    expect(agent).toBeDefined();
+    expect(agent!.isActive).toBe(true);
+  });
+});
+
+// ─── SubagentInfo ordering (R43) ─────────────────────────────────────────────
+
+describe('getSubagentInfos ordering (R43)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir('ccmon-r43');
+    _resetCachesForTesting();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('R43: sub-agents sorted descending by launchTime', async () => {
+    const sessionId = 'r43-sort';
+    const sessionDir = join(tmpDir, sessionId);
+    const subagentsDir = join(sessionDir, 'subagents');
+    await mkdir(subagentsDir, { recursive: true });
+    const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
+
+    const agentA = join(subagentsDir, 'agent-aaa.jsonl');
+    const agentB = join(subagentsDir, 'agent-bbb.jsonl');
+    const agentC = join(subagentsDir, 'agent-ccc.jsonl');
+
+    await writeFile(agentA, '{}');
+    await writeFile(agentB, '{}');
+    await writeFile(agentC, '{}');
+
+    // Set distinct mtimes: C is newest, A is oldest
+    const now = Date.now();
+    utimesSync(agentA, new Date(now - 3000), new Date(now - 3000));
+    utimesSync(agentB, new Date(now - 2000), new Date(now - 2000));
+    utimesSync(agentC, new Date(now - 1000), new Date(now - 1000));
+
+    const infos = await getSubagentInfos(jsonlPath);
+    expect(infos).toHaveLength(3);
+    // Descending by launchTime: C, B, A
+    expect(infos[0].agentId).toBe('ccc');
+    expect(infos[1].agentId).toBe('bbb');
+    expect(infos[2].agentId).toBe('aaa');
+  });
+});

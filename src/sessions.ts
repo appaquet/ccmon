@@ -13,6 +13,10 @@ const MAX_FIRST_READ = 10 * 1024 * 1024;
 // counting finished agents as still running.
 const SUBAGENT_ACTIVE_THRESHOLD_MS = 45 * 1000;
 
+// Completed sub-agents are excluded from the payload after this duration
+// to keep the state map lean.
+const SUBAGENT_EXPIRY_MS = 5 * 60 * 1000;
+
 const DEFAULT_CLAUDE_DIR = join(
   Bun.env.HOME ?? '/root',
   '.claude',
@@ -57,6 +61,7 @@ export type SessionState = 'running' | 'waiting_for_permission' | 'stopped';
 export interface SessionEnrichment {
   model?: string;
   latestUserMessage?: string;
+  latestCommand?: string;
   latestAssistantMessage?: string;
   lastToolUse?: string;
   tasksDone?: number;
@@ -70,11 +75,13 @@ export interface SessionEnrichment {
  * derived from the sub-agent's JSONL file.
  */
 export interface SubagentInfo extends SessionEnrichment {
-  agentId: string;        // extracted from filename: agent-{agentId}.jsonl
-  slug?: string;          // from first line of sub-agent JSONL
-  description?: string;   // from parent session queue-operation enqueue entry
-  jsonlPath: string;      // absolute path to sub-agent JSONL
-  isActive: boolean;      // mtime within last 45 seconds
+  agentId: string;          // extracted from filename: agent-{agentId}.jsonl
+  slug?: string;            // from first line of sub-agent JSONL
+  description?: string;     // from parent session queue-operation enqueue entry
+  jsonlPath: string;        // absolute path to sub-agent JSONL
+  isActive: boolean;        // mtime within last 45 seconds
+  lastMessageTime: string;  // ISO 8601 from file mtime
+  launchTime: string;       // ISO 8601 from file mtime (used as proxy for launch time)
 }
 
 export interface SessionsIndexEntry {
@@ -130,6 +137,7 @@ export interface ProjectState extends ProjectInfo {
   lastUpdated: string | null; // from status file timestamp, null if no status
   // Enrichment fields — only populated for non-stopped sessions
   latestUserMessage?: string;
+  latestCommand?: string;
   latestAssistantMessage?: string;
   model?: string;
   lastToolUse?: string;
@@ -485,6 +493,8 @@ export async function getSubagentInfos(latestJSONL: string): Promise<SubagentInf
   // since readSessionTail caches by path and is called again in buildProjectState.
   const parentTail = await readSessionTail(latestJSONL);
 
+  const expiryCutoff = Date.now() - SUBAGENT_EXPIRY_MS;
+
   const infos = await Promise.all(
     jsonlEntries.map(async (entry): Promise<SubagentInfo | null> => {
       const jsonlPath = join(subagentsDir, entry.name);
@@ -505,6 +515,9 @@ export async function getSubagentInfos(latestJSONL: string): Promise<SubagentInf
 
       const isActive = mtimeMs > cutoff;
 
+      // Exclude completed agents older than 5 minutes to keep payload lean.
+      if (!isActive && mtimeMs < expiryCutoff) return null;
+
       const enrichment = await readSessionTail(jsonlPath);
 
       // Optionally read slug from first line (best-effort)
@@ -521,14 +534,15 @@ export async function getSubagentInfos(latestJSONL: string): Promise<SubagentInf
         // slug is optional — ignore errors
       }
 
+      const lastMessageTime = new Date(mtimeMs).toISOString();
       const description = parentTail.agentDescriptions.get(agentId);
-      return { agentId, slug, description, jsonlPath, isActive, ...enrichment };
+      return { agentId, slug, description, jsonlPath, isActive, lastMessageTime, launchTime: lastMessageTime, ...enrichment };
     }),
   );
 
   return infos
     .filter((info): info is SubagentInfo => info !== null)
-    .sort((a, b) => a.jsonlPath.localeCompare(b.jsonlPath));
+    .sort((a, b) => b.launchTime.localeCompare(a.launchTime));
 }
 
 /**
@@ -596,6 +610,7 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
   const reversed = lines.slice().reverse();
   const scanResult: SessionTailInfo = { agentDescriptions: new Map() };
   let foundUser = false;
+  let foundCommand = false;
   let foundAssistant = false;
   let foundModel = false;
   let foundTool = false;
@@ -617,12 +632,24 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
     const type = entry.type;
     const message = entry.message as Record<string, unknown> | undefined;
 
-    if (!foundUser && type === 'user') {
+    if (type === 'user') {
       if (!message) continue;
       const content = message.content;
-      if (typeof content === 'string' && !content.startsWith('<')) {
-        scanResult.latestUserMessage = content.slice(0, 200);
-        foundUser = true;
+      if (typeof content === 'string') {
+        if (!content.startsWith('<')) {
+          // Plain user message.
+          if (!foundUser) {
+            scanResult.latestUserMessage = content.slice(0, 200);
+            foundUser = true;
+          }
+        } else if (!foundCommand) {
+          // May be a slash command — look for <command-name> tag.
+          const cmd = extractCommand(content);
+          if (cmd !== null) {
+            scanResult.latestCommand = cmd;
+            foundCommand = true;
+          }
+        }
       }
     }
 
@@ -633,9 +660,13 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
       }
 
       // Accumulate token usage across all assistant entries in this scan range.
+      // Provider-billed input total = input_tokens + cache_creation_input_tokens + cache_read_input_tokens.
       const usage = message.usage as Record<string, unknown> | undefined;
       if (usage !== undefined) {
-        if (typeof usage.input_tokens === 'number') scanInputTokens += usage.input_tokens;
+        const input = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
+        const cacheCreate = typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0;
+        const cacheRead = typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0;
+        scanInputTokens += input + cacheCreate + cacheRead;
         if (typeof usage.output_tokens === 'number') scanOutputTokens += usage.output_tokens;
       }
 
@@ -722,6 +753,7 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
 
   const merged: SessionTailInfo = {
     latestUserMessage: scanResult.latestUserMessage ?? baseData.latestUserMessage,
+    latestCommand: scanResult.latestCommand ?? baseData.latestCommand,
     latestAssistantMessage: scanResult.latestAssistantMessage ?? baseData.latestAssistantMessage,
     model: scanResult.model ?? baseData.model,
     lastToolUse: scanResult.lastToolUse ?? baseData.lastToolUse,
@@ -772,6 +804,19 @@ export function parseProcessOutput(output: string): number[] {
 
 // ─── Private Helpers ─────────────────────────────────────────────────────────
 
+/**
+ * Extracts a slash command string from a user message content string.
+ * Returns "/command-name [args]" if a <command-name> tag is found, null otherwise.
+ */
+function extractCommand(content: string): string | null {
+  const nameMatch = content.match(/<command-name>([^<]+)<\/command-name>/);
+  if (!nameMatch) return null;
+  const name = nameMatch[1].trim();
+  const argsMatch = content.match(/<command-args>([^<]*)<\/command-args>/);
+  const args = argsMatch ? argsMatch[1].trim() : '';
+  return args ? `${name} ${args}` : name;
+}
+
 function scanTodoWrite(contentBlocks: unknown[], result: SessionTailInfo): void {
   const todoWrite = contentBlocks.find(
     (item): item is { type: string; name: string; input: Record<string, unknown> } =>
@@ -815,6 +860,7 @@ async function buildProjectState(project: ProjectInfo, claudeDir: string): Promi
     return {
       ...base,
       latestUserMessage: tail.latestUserMessage,
+      latestCommand: tail.latestCommand,
       latestAssistantMessage: tail.latestAssistantMessage,
       model: tail.model,
       lastToolUse: tail.lastToolUse,
