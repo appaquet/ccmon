@@ -41,7 +41,7 @@ See [00-ccmon](00-ccmon.md). A collection of UI improvements and small data mode
 ### R41 — Keep enrichment info visible when stopped
 
 - [x] In `index.html`, when session transitions to stopped, preserve enrichment fields (messages, tokens, tasks, tool use) — only update the state pill/indicator (R41)
-- [x] Clear fields that don't make sense in stopped state if any (R41) — confirmed no clearing needed, fields already preserved
+- [x] Fix root cause: `buildProjectState()` in `sessions.ts` was guarding `readSessionTail()` behind `if (state !== 'stopped')`, so stopped sessions returned no enrichment. Removed guard; enrichment now always populated. (R41)
 
 ### R42 — Sub-agent status indicator
 

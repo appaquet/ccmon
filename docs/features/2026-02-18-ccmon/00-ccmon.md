@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 10 (UI Polish) implemented: 144 tests (128 → +16). All R37–R44 tasks complete. `latestCommand` extracted from `<command-name>` XML user entries, shown in UI with `/ ` prefix (fallback to `latestUserMessage`). Token totals now provider-billed: `input + cache_creation + cache_read`. Sub-agents have `lastMessageTime`/`launchTime` fields; backend filters >5m inactive; UI hides >2m; active dot vs `✓` checkmark; model shown in sub-agent rows; descending launch-time sort. R41 confirmed no change needed (enrichment already preserved on stopped).
+Phase 10 (UI Polish) implemented + R41 bugfix: 145 tests. Root cause of R41: `buildProjectState()` guarded `readSessionTail()` behind `if (state !== 'stopped')`, so stopped sessions returned no enrichment data at all. Fixed by removing guard. All R37–R44 features complete: `latestCommand` display, one-activity sub-agent, provider-billed tokens, sub-agent lifecycle, checkmark indicator, ordering, model display.
 
 Phase 08 (JSONL-Primary Detection) is the next planned phase — replace hook-driven running/stopped with JSONL mtime + system:stop_hook_summary, reducing hooks to PermissionRequest + Notification only.
 
@@ -19,6 +19,11 @@ Phase 08 (JSONL-Primary Detection) is the next planned phase — replace hook-dr
 - [ ] Show last update time left of the pill, next to name
 - [ ] Let's plan reintroducing tasks. Would love to see # tasks and currently active ones in web ui.
   In json payload, would be nice to see the tasks + status for each.
+- [ ] It seems lioke tokens are being summed? i think the tokens in messages aren't to be summed,
+  they are current total input tokens. agent and sub-agents (whic should be using same logic,
+  right???)
+- [ ] "Agents" should show active state when one of the sub-agent is active (pulsating green dot)
+      Remove "1/x active" as well. It's quite easy to count...
 
 ## Requirements
 
