@@ -210,6 +210,7 @@
     <div id="project-grid"></div>
   </main>
   <script>
+    // REVIEW: code-style-reviewer - `state` is declared as a Map ("source → ProjectState[]") but only ever has one key (`'local'` set in `ws.onmessage`). The Map indirection adds complexity — `state.values()` then `.flat()` — for no benefit over a simple `let projects = []`. Either remove the Map and use a plain array, or document why the multi-source Map was kept (e.g. anticipating a future multi-server feature).
     const state = new Map(); // source → ProjectState[]
 
     const stateLabel = {
@@ -380,6 +381,7 @@
       }
 
       // token usage
+      // REVIEW: code-style-reviewer - `esc(fmtTokens(...))` is redundant: `fmtTokens` returns only digits, `.`, `K`, or `M` — none of which are HTML-special characters. Same redundancy applies to `esc(visible.length)`, `esc(done)`, `esc(nonDeleted.length)`, `esc(label)` for the "+N more" suffix, and similar uses of `esc()` on numeric values elsewhere in `createCard`. Wrapping numbers in `esc()` is noise that obscures which values are actually user-supplied strings requiring escaping.
       if (proj.inputTokens > 0 || proj.outputTokens > 0) {
         const parts = [];
         if (proj.inputTokens > 0) parts.push(`${esc(fmtTokens(proj.inputTokens))} in`);
@@ -461,6 +463,7 @@
       };
 
       ws.onmessage = (e) => {
+        // REVIEW: code-correctness-reviewer - `JSON.parse(e.data)` is not wrapped in try/catch. If the server sends malformed JSON (partial write, server bug), this throws an uncaught exception inside an event handler. In browsers this does not trigger `onerror`, leaving the UI in a broken state with no reconnect triggered. Wrap in try/catch and either skip the bad message or trigger reconnect.
         state.set('local', JSON.parse(e.data));
         render();
       };

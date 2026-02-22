@@ -5,6 +5,8 @@ import { join } from 'node:path';
 
 const DEBOUNCE_MS = 100;
 
+// REVIEW: code-style-reviewer - Section banner comment "─── Public API ───" marks code organization with a visual divider rather than letting the file structure speak for itself. Per project code style guidelines, such banners are discouraged — if sections feel necessary, the file should be split instead.
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -15,6 +17,7 @@ const DEBOUNCE_MS = 100;
  * directly if it exists, or the parent dir until the file appears.
  * Debounces per projectDir with a 100ms window.
  */
+// REVIEW: architecture-reviewer - The watcher is scoped exclusively to `status.local.json` changes. JSONL session transcript files (which carry model, tokens, task progress, assistant activity) are never watched. This means the dashboard only updates when a hook event fires — not during ongoing session I/O. Consumers of `getProjectState` therefore see stale enrichment data between hook events. If near-real-time enrichment is required, the watcher must also watch for JSONL file changes (at minimum the latest JSONL path per project). If stale enrichment is acceptable by design, this scope limitation should be documented explicitly so future maintainers don't add JSONL-based features expecting live updates.
 export function watchForChanges(
   claudeDir: string,
   onUpdate: (projectDir: string) => void,

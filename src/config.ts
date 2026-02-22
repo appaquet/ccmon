@@ -69,6 +69,8 @@ function resolveConfigPath(): string {
   return join(base, 'ccmon', 'config.json');
 }
 
+// REVIEW: code-style-reviewer - `isCcmonConfig` is declared as `v is CcmonConfig` but only validates `maxInactivityHours`. `CcmonConfig` requires `host: string` and `port: number` as well, so this type predicate overpromises — TypeScript treats the result as a fully-valid `CcmonConfig` even when `host`/`port` are absent, causing `mergeWithDefaults` to need the defensive casts. The return type should be `v is Partial<CcmonConfig>` (or a dedicated `RawConfig` type) to accurately reflect what is validated.
+// REVIEW: architecture-reviewer - The type-guard/merge split is an architectural inconsistency: `isCcmonConfig` asserts `v is CcmonConfig` (fully valid) but intentionally leaves validation partial, forcing `mergeWithDefaults` to defensively re-check fields it already trusts due to the type assertion. The correct design is a two-step approach: a guard returning `v is { maxInactivityHours: number }` (minimum validity), then `mergeWithDefaults` accepting `unknown` or `Partial<CcmonConfig>` and applying defaults without needing casts. This removes the false type guarantee and the redundant defensive checks, and makes the boundary between "valid enough to proceed" and "fully defaults-merged" explicit.
 function isCcmonConfig(v: unknown): v is CcmonConfig {
   if (typeof v !== 'object' || v === null) return false;
   const obj = v as Record<string, unknown>;
@@ -80,6 +82,7 @@ function isCcmonConfig(v: unknown): v is CcmonConfig {
  * Merges a partial config loaded from file with defaults.
  * File may contain only a subset of fields.
  */
+// REVIEW: code-style-reviewer - `partial` is typed as `CcmonConfig` but `host` and `port` are immediately cast to `Record<string, unknown>` to perform type checks that the TypeScript type already guarantees. This is a mismatch: if `partial` can actually be a partial config with missing fields, the parameter type should be `Partial<CcmonConfig>` (which `isCcmonConfig` validates is not fully guaranteed for `host`/`port`). The casts make the code harder to read and should be replaced by a cleaner approach — either change the parameter type to `Partial<CcmonConfig>` and use `partial.host ?? DEFAULT_CONFIG.host`, or update `isCcmonConfig` to validate all fields and trust the type here.
 function mergeWithDefaults(partial: CcmonConfig): CcmonConfig {
   return {
     maxInactivityHours: partial.maxInactivityHours ?? DEFAULT_CONFIG.maxInactivityHours,
