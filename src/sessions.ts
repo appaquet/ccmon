@@ -43,7 +43,6 @@ const VALID_STATES: ReadonlySet<string> = new Set([
   'stopped',
 ]);
 
-// REVIEW: architecture-reviewer - Module-level mutable singletons (sessionsIndexCache, sessionTailCache, projectStateCache) are unscoped to a claudeDir. Two concurrent callers using different claudeDirs share the same caches, causing cross-contamination. The design also forces the exported _resetCachesForTesting to exist solely as a test escape hatch rather than proper encapsulation. Consider a class or context object constructed per claudeDir so state is isolated per instance and no test-only export is needed.
 // Keyed by projectDirPath; avoids re-parsing sessions-index.json unless mtime changed.
 const sessionsIndexCache = new Map<string, { mtime: number; data: SessionsIndex | null }>();
 
@@ -233,12 +232,12 @@ export async function readSessionsIndex(projectDirPath: string): Promise<Session
  */
 export function mapHookEventToState(hookEvent: string): SessionState | null {
   switch (hookEvent) {
-    case 'UserPromptSubmit':  return 'running';
-    case 'PostToolUse':       return 'running';
+    case 'UserPromptSubmit': return 'running';
+    case 'PostToolUse': return 'running';
     case 'PermissionRequest': return 'waiting_for_permission';
-    case 'Stop':              return 'stopped';
-    case 'SessionEnd':        return 'stopped';
-    default:                  return null;
+    case 'Stop': return 'stopped';
+    case 'SessionEnd': return 'stopped';
+    default: return null;
   }
 }
 
@@ -345,7 +344,6 @@ export async function readStatus(projectDir: string): Promise<StatusFile | null>
  * only that project is rescanned and merged into the cached state, avoiding
  * a full I/O sweep of all projects on every watcher event.
  */
-// REVIEW: architecture-reviewer - getProjectState conflates two distinct operations: (1) a full scan that populates the projectStateCache, and (2) a targeted single-project refresh that reads from that same cache. The optional changedProjectDir parameter mixes these two modes into one function, creating implicit control flow that depends on whether the module-level cache is warm. server.ts duplicates the targeted-refresh + cache-update logic independently. Separating these into distinct functions (e.g. loadProjectStates and refreshProjectState) would make the calling contract explicit and eliminate the hidden dependency on module-level cache population state.
 export async function getProjectState(
   claudeDir: string = DEFAULT_CLAUDE_DIR,
   changedProjectDir?: string,
@@ -877,10 +875,10 @@ function scanTaskCreateUpdate(lines: string[], baseTasks?: TaskInfo[]): Map<stri
           ? content
           : Array.isArray(content)
             ? (content as unknown[])
-                .filter((c): c is { type: string; text: string } =>
-                  typeof c === 'object' && c !== null && (c as Record<string, unknown>).type === 'text')
-                .map((c) => c.text)
-                .join('')
+              .filter((c): c is { type: string; text: string } =>
+                typeof c === 'object' && c !== null && (c as Record<string, unknown>).type === 'text')
+              .map((c) => c.text)
+              .join('')
             : '';
         const match = text.match(/Task #(\d+)/i);
         if (match) taskId = match[1];

@@ -38,7 +38,6 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
   // Server-owned state map: projectDir (full path) → ProjectState.
   // Populated on startup, updated by watcher events. WS open and /api/state
   // read directly from here — no on-demand rescans.
-  // REVIEW: architecture-reviewer - The server maintains its own stateMap in addition to the module-level projectStateCache in sessions.ts. These two maps must be kept in sync manually (e.g. the updateProject function calls getProjectState which updates the module cache, then searches the result to update the local stateMap). This is duplicated state management: a bug in either sync path can leave the two maps inconsistent. Consider having the server be the single owner of state or having sessions.ts expose an observable/event-based interface rather than requiring the server to mirror module-level cache updates.
   const stateMap = new Map<string, ProjectState>();
 
   function currentFilteredState(): ProjectState[] {

@@ -45,7 +45,7 @@ describe('loadConfig', () => {
 
   test('valid file with maxInactivityHours: 6 returns correct value', async () => {
     const configPath = join(tmpDir, 'config.json');
-    await writeFile(configPath, JSON.stringify({ maxInactivityHours: 6, host: '0.0.0.0', port: 9480 }));
+    await writeFile(configPath, JSON.stringify({ maxInactivityHours: 6, host: '0.0.0.0', port: 8080 }));
 
     const config = loadConfig(configPath);
     expect(config.maxInactivityHours).toBe(6);

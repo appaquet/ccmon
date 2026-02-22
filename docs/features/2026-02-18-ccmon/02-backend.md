@@ -165,7 +165,7 @@ Design decisions: config at `$XDG_CONFIG_HOME/ccmon/config.json` (default `~/.co
 
 ### Step 11 (host/port): Configurable host + port for serve — complete
 
-* [x] Add `host: '0.0.0.0'` and `port: 9480` to `CcmonConfig` + `DEFAULT_CONFIG` in `src/config.ts`
+* [x] Add `host: '0.0.0.0'` and `port: 8080` to `CcmonConfig` + `DEFAULT_CONFIG` in `src/config.ts`
 * [x] Add `hostname?: string` to `ServerOptions` in `src/server.ts`; pass to `Bun.serve()`
 * [x] Parse `--host` flag in `serve` subcommand in `src/cli.ts`; pass `hostname` + `port` from config
 * [x] `sub` subcommand uses `config.port` instead of hardcoded 3000

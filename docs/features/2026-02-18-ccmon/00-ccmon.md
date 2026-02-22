@@ -14,7 +14,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 18 (Multi-Backend WebSocket) planned. Server wraps WS payload in `{ hostname, projects }` envelope; frontend manages N backend connections with merged project view, connection status pill, and settings menu. Plan ready in 18-multi-backend.md, awaiting `/implement`.
+Phase 18 (Multi-Backend WebSocket) implemented. Server wraps WS payload in `{ hostname, projects }` envelope; frontend `BackendManager` manages N connections, merges project views, aggregate status pill (Connected/Partial/Disconnected), settings dropdown for add/remove backends. 198 tests passing. Pending manual validation with two live servers.
 
 ## Requirements
 
@@ -201,12 +201,12 @@ Phase 18 (Multi-Backend WebSocket) planned. Server wraps WS payload in `{ hostna
 
 ### Multi-Backend WebSocket
 
-- R56: ⬜ Dashboard supports connecting to multiple ccmon server backends simultaneously (Phase: Multi-Backend)
+- R56: 🔄 Dashboard supports connecting to multiple ccmon server backends simultaneously (Phase: Multi-Backend)
   - R56.1: Server WS messages use `{ hostname, projects }` envelope instead of raw `ProjectState[]`
   - R56.2: Frontend manages N backend connections with independent reconnect logic per backend
   - R56.3: Frontend handles legacy servers that send raw arrays (backward compat)
   - R56.4: Additional server URLs persisted in localStorage and restored on page load
-- R57: ⬜ Connection status and server management UI (Phase: Multi-Backend)
+- R57: 🔄 Connection status and server management UI (Phase: Multi-Backend)
   - R57.1: Projects from all connected backends merged into a single grid
   - R57.2: Status pill: Connected (all up) / Partially connected (some up) / Disconnected (none up)
   - R57.3: Cog icon + clickable pill open server management menu; add/remove servers; main server cannot be removed
@@ -329,7 +329,7 @@ Three bugs: task completions not reflected in WebSocket/sub (delta reads drop Ta
 
 After session stops and resumes (same UUID), old sub-agents can appear active because `getSubagentInfos()` uses 45s mtime threshold with no awareness of session stop events. Fix: pass `stoppedAtMs` into sub-agent detection.
 
-### ⬜ 18 Phase: Multi-Backend WebSocket
+### 🔄 18 Phase: Multi-Backend WebSocket
 
 [18-multi-backend](18-multi-backend.md)
 
@@ -346,17 +346,17 @@ Dashboard connects to multiple ccmon servers simultaneously. Server sends `{ hos
 - **package.json**: Bun project config — `"type": "module"`, `@types/bun`, `dump` script (Phase: Session Detection)
 - **tsconfig.json**: IDE TypeScript support — ESNext, moduleResolution bundler (Phase: Session Detection)
 - **bun.lock**: Bun lockfile (Phase: Session Detection)
-- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc() (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework)
+- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed (Phase: Backend, Review Fixes)
 - **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()`; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback; `STOP_GRACE_MS` grace period in `resolveState()`; `scanTaskCreateUpdate` base tasks param for delta reads; `resolveState` permission override fix (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed (Phase: Session Detection, Review Fixes)
-- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner (Phase: Session Detection, Backend, Review Fixes)
-- **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init (Phase: Backend, Review Fixes)
+- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner; `sub` parses new WS envelope with backward compat (Phase: Session Detection, Backend, Review Fixes, Multi-Backend)
+- **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init; WS payload wrapped in `{ hostname, projects }` envelope (Phase: Backend, Review Fixes, Multi-Backend)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
 - **tests/sessions.test.ts**: 197 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
 - **tests/cli.test.ts**: 18 tests for cli.ts — 4 new arg-validation cases, status, dump --watch, --project filter (Phase: Review Fixes)
 - **tests/config.test.ts**: Config loading tests; 22+ tests covering partial config, invalid types (Phase: Review Fixes 2)
-- **tests/server.test.ts**: 4 tests for server.ts — HTTP endpoints, WebSocket (Phase: Backend)
+- **tests/server.test.ts**: 11 tests for server.ts — HTTP endpoints, WebSocket, WS envelope + hostname field (Phase: Backend, Multi-Backend)
 - **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)
 - **docs/features/2026-02-18-ccmon/06-notifications-streaming.md**: Phase 06 plan — notifications, JSONL streaming, sub-agent consolidation (Phase: Notifications & Streaming)

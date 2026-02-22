@@ -10,7 +10,7 @@ export interface CcmonConfig {
 export const DEFAULT_CONFIG: CcmonConfig = {
   maxInactivityHours: 3,
   host: '0.0.0.0',
-  port: 9480,
+  port: 8080,
 };
 
 /**

@@ -67,6 +67,7 @@ describe('scanProjects', () => {
     // older file
     const older = join(projDir, 'old.jsonl');
     await writeFile(older, makeFirstLine('/home/user/proj', 'old-session') + '\n');
+
     // set mtime to past
     const pastTime = new Date(Date.now() - 60_000);
     await utimes(older, pastTime, pastTime);
@@ -139,6 +140,7 @@ describe('scanProjects', () => {
       message: { role: 'user', content: longContent },
     };
     const firstLine = JSON.stringify(firstLineObj);
+
     // Sanity-check: the test is only meaningful when the line actually exceeds 512 bytes.
     expect(firstLine.length).toBeGreaterThan(512);
 
@@ -169,6 +171,7 @@ describe('scanProjects', () => {
       isSidechain: false,
     };
     await writeFile(join(projDir, 'sessions-index.json'), JSON.stringify({ version: 1, entries: [entry] }));
+
     // JSONL file must exist since latestJSONL points to it (stat used in getProjectState)
     await writeFile(entry.fullPath, makeFirstLine('/home/user/indexed', 'idx-sess') + '\n');
 

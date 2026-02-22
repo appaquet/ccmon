@@ -6,15 +6,18 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    { nixpkgs, flake-utils }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         src = ./.;
         ccmon = pkgs.writeShellScriptBin "ccmon" ''
           exec ${pkgs.bun}/bin/bun run ${src}/src/cli.ts "$@"
         '';
-      in {
+      in
+      {
         packages = {
           ccmon = ccmon;
           default = ccmon;
@@ -28,5 +31,6 @@
         devShells.default = pkgs.mkShell {
           buildInputs = [ pkgs.bun ];
         };
-      });
+      }
+    );
 }

@@ -12,7 +12,7 @@ Real-time dashboard for your Claude Code sessions.
 1. Install — see [Installation](#instalation) or run locally with `bun run serve`
 2. Configure hooks — see [Hook Configuration](#hook-configuration)
 3. Start server with `ccmon serve`
-4. Open [http://localhost:3000](http://localhost:3000) in your browser
+4. Open [http://localhost:8080](http://localhost:8080) in your browser
 
 ## Features
 

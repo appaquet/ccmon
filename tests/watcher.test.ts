@@ -41,7 +41,7 @@ describe('watchForChanges', () => {
   });
 
   test('returns a stop() function that can be called without error', async () => {
-    const watcher = watchForChanges(tmpDir, () => {});
+    const watcher = watchForChanges(tmpDir, () => { });
     expect(typeof watcher.stop).toBe('function');
     // Should not throw
     watcher.stop();
@@ -72,6 +72,7 @@ describe('watchForChanges', () => {
   test('JSONL file write triggers onUpdate callback', async () => {
     const projDir = join(tmpDir, '-home-user-jsonlproj');
     await mkdir(projDir, { recursive: true });
+
     // Pre-create the JSONL so the project dir exists before watcher init
     const jsonlFile = join(projDir, 'session.jsonl');
     await writeFile(jsonlFile, '{"type":"user"}\n');

@@ -11,7 +11,6 @@ function exit(code: number): never {
 
 const claudeDir = Bun.env.CLAUDE_PROJECTS_DIR ?? join(Bun.env.HOME ?? '/root', '.claude', 'projects');
 
-// REVIEW: architecture-reviewer - CLI argument parsing is done inline at module top-level using manual process.argv.indexOf calls scattered across the file. This means all flags (--project, --max-age, --no-filter, --port, --host) are parsed globally before the subcommand branch is reached, so flags intended only for specific subcommands are evaluated for every invocation. As the CLI grows, this approach makes it difficult to add subcommand-specific flags, validate flag combinations, or generate accurate help text. Consider a structured argument parsing approach (even a minimal one) that groups flags by subcommand and validates them after the subcommand is known.
 const subcommand = process.argv[2];
 
 const projectFlagIdx = process.argv.indexOf('--project');
@@ -27,6 +26,7 @@ if (maxAgeIdx !== -1 && (maxAgeArg === undefined || isNaN(maxAgeArg))) {
   process.stderr.write('Error: --max-age requires a valid number\n');
   exit(1);
 }
+
 const noFilter = process.argv.includes('--no-filter');
 
 const config = mergeCliOverrides(
@@ -81,8 +81,9 @@ if (subcommand === 'dump') {
     process.exit(0);
   });
 } else {
+  // REVIEW: Let's clean that up. Shouldn't we use a multi-line string?
   process.stderr.write(
-    'Usage: ccmon <subcommand>\n\nSubcommands:\n  dump                   Print current Claude Code project state as JSON\n  dump --watch           Watch for changes and print updates\n  dump --max-age <hours> Override maxInactivityHours from config\n  dump --no-filter       Disable inactivity filter\n  status                 Read hook event from stdin and write status file\n  serve                  Start HTTP + WebSocket server\n  serve --host <addr>    Listen on custom host (default: 0.0.0.0)\n  serve --port <N>       Listen on custom port (default: 9480)\n  sub                    Connect to running server, stream state as NDJSON\n',
+    'Usage: ccmon <subcommand>\n\nSubcommands:\n  dump                   Print current Claude Code project state as JSON\n  dump --watch           Watch for changes and print updates\n  dump --max-age <hours> Override maxInactivityHours from config\n  dump --no-filter       Disable inactivity filter\n  status                 Read hook event from stdin and write status file\n  serve                  Start HTTP + WebSocket server\n  serve --host <addr>    Listen on custom host (default: 0.0.0.0)\n  serve --port <N>       Listen on custom port (default: 8080)\n  sub                    Connect to running server, stream state as NDJSON\n',
   );
   process.exit(1);
 }
