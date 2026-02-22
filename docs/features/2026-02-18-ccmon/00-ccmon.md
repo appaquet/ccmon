@@ -123,10 +123,11 @@ R21 covers `TodoWrite` only — `TaskCreate`/`TaskUpdate` full-parse support def
   * R27.1: First read parses the entire JSONL file; subsequent reads parse only new bytes (offset-based delta)
   * R27.2: If file size shrinks (session replaced), cache resets and performs a full re-read
   * R27.3: Task counts (tasksDone/tasksTotal) reflect all TodoWrite entries in the session, not just the last 64KB
-* R28: ⬜ ProjectState includes latestAssistantMessage extracted from JSONL, displayed in dashboard (Phase: Notifications & Streaming)
-* R29: ⬜ Sub-agent info is exposed as structured SubagentInfo objects instead of a bare count (Phase: Notifications & Streaming)
-  * R29.1: Each sub-agent entry includes agentId, model, initial prompt, last tool use, and task counts
-  * R29.2: Sub-agent active/stopped status is determined via parent JSONL tool_result correlation or mtime heuristic fallback
+* R28: ⬜ Session payload exposes both latestUserMessage and latestAssistantMessage as a pair, displayed in dashboard (Phase: Notifications & Streaming)
+* R29: ⬜ Sub-agent info shares a common enrichment structure with the main session (Phase: Notifications & Streaming)
+  * R29.1: A shared base type carries model, latestUserMessage, latestAssistantMessage, lastToolUse, tasksDone, tasksTotal — used by both ProjectState and SubagentInfo
+  * R29.2: SubagentInfo extends the base with agentId, slug, jsonlPath; ProjectState keeps its session-level fields (cwd, state, gitBranch, etc.)
+  * R29.3: Sub-agent active/stopped status is determined via parent JSONL tool_result correlation or mtime heuristic fallback
 
 ### QA Pass
 
