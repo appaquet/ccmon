@@ -14,8 +14,7 @@ See [00-ccmon](00-ccmon.md). Switch from hook-driven state detection to JSONL fi
 
 ### R34 — JSONL mtime as primary running/stopped signal
 
-- [ ] Extend watcher to watch JSONL files in addition to `status.local.json`, so that enrichment data (model, tokens, task progress, assistant activity) updates in near-real-time between hook events (R34)
-- [ ] Extend watcher to also watch `*.jsonl` files (and `sessions-index.json`) in each project dir, in addition to (or replacing) `status.local.json` watching (R34)
+- [ ] Extend watcher to watch `*.jsonl` files (and `sessions-index.json`) in each project dir alongside `status.local.json`, so enrichment data (model, tokens, task progress, assistant activity) updates in near-real-time between hook events (R34)
 - [ ] In `resolveState()`: derive `running` from JSONL mtime within recent threshold (e.g., last 60s); derive `stopped` from `system:stop_hook_summary` as last meaningful entry, or JSONL mtime staleness (R34)
 - [ ] Remove dependency on `status.local.json` for running/stopped — only read it for `waiting_for_permission` and notification fields (R34)
 - [ ] Add tests for mtime-based running detection and stop_hook_summary stopped detection (R34)

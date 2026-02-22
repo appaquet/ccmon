@@ -47,13 +47,19 @@ Code review pass covering correctness bugs, style issues, and architecture impro
 - [x] Fix: `index.html:384` — remove redundant `esc()` wrapping around numeric values (style)
 - [x] Fix: `server.ts:31` — move HTML asset load from inside `startServer()` to module initialization (style)
 
+### Post-review Bug Fixes
+
+- [x] Fix: `readFirstLine` slice 512→4096 bytes — 512-byte truncation silently dropped projects whose first JSONL line exceeded 512 bytes (ccmon itself: 586-byte first line → JSON.parse failure → invisible in dump) (R1)
+- [x] Fix: stale `sessions-index.json` fallback — `readProjectInfo` now scans disk for newer JSONLs not in the index; prevents a stale index from hiding active projects (R1)
+
 ## Files
 
-- **src/sessions.ts**: All 17 review fixes — notification propagation, liveness cache, task fallback guards, NaN guards, launchTime, readSessionTail refactor, style cleanup
-- **tests/sessions.test.ts**: Added 10 new correctness tests, removed 4 countActiveSubagents tests (166 total)
+- **src/sessions.ts**: All 17 review fixes + 2 post-review bugs (notification propagation, liveness cache, task fallback guards, NaN guards, launchTime, readSessionTail refactor, readFirstLine 4096 slice, stale-index disk fallback, style cleanup)
+- **tests/sessions.test.ts**: Added 12 new tests total (168 passing), removed 4 countActiveSubagents tests
 - **src/cli.ts**: Empty cwd guard, arg validation errors, exit() helper, readStdin one-liner
 - **src/config.ts**: isCcmonConfig type predicate and mergeWithDefaults parameter fixed
 - **src/server.ts**: DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read moved to module init
 - **tests/cli.test.ts**: 4 new tests for arg validation error cases (18 total)
 - **public/index.html**: JSON.parse try/catch, state Map → array, numeric esc() cleanup
 - **src/watcher.ts**: Section banner removed
+- **CLAUDE.md**: Integration check section added (run dump --no-filter after sessions.ts changes)

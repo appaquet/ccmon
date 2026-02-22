@@ -10,7 +10,9 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 12 (Review Fixes) complete. 30 tasks implemented across sessions.ts, cli.ts, config.ts, server.ts, index.html, watcher.ts. 166 tests passing. Key fixes: R26 notification flash now functional, liveness cache fixed, TaskUpdate/TodoWrite fallback guards fixed, NaN timestamp guards added, launchTime uses JSONL entry, readSessionTail refactored. One deferred REVIEW comment remains in watcher.ts (R34/R35 scope, Phase 08). User to confirm phase acceptance.
+Phase 12 (Review Fixes) complete, 168 tests passing. 32 tasks done (30 planned + 2 post-review bugs): R26 notification flash now functional, liveness cache fixed, TaskUpdate/TodoWrite fallback guards fixed, NaN timestamp guards, launchTime from JSONL entry, readSessionTail refactored. Two post-review regressions also fixed: `readFirstLine` 512→4096 byte slice (ccmon itself was invisible in its own dump output) and stale `sessions-index.json` fallback to disk scan. CLAUDE.md updated with integration check procedure. Watcher REVIEW comment moved to Phase 08 doc.
+
+Phase 11 and Phase 12 both pending user acceptance. No inbox items. Next: user to confirm both phases, then Phase 08 (JSONL-Primary Detection) or other work.
 
 ## Inbox
 
@@ -259,12 +261,12 @@ Fixes and improvements from real-world usage: input token counting bug fix (last
 ### 🔄 12 Phase: Review Fixes
 [12-review-fixes](12-review-fixes.md)
 
-Correctness bug fixes, style cleanup, and architecture improvements from review pass. 30 tasks across sessions.ts, cli.ts, config.ts, server.ts, index.html, watcher.ts.
+Correctness bug fixes, style cleanup, and architecture improvements from review pass. 32 tasks (30 planned + 2 post-review regressions): R26 notification flash, liveness cache, task fallback guards, NaN guards, readFirstLine 4096 slice, stale-index disk fallback. 168 tests passing.
 
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
-- **CLAUDE.md**: Development instructions, maintained across all phases (Phase: Session Detection, Packaging)
+- **CLAUDE.md**: Development instructions; integration check section added — run `dump --no-filter` after sessions.ts changes (Phase: Session Detection, Packaging, Review Fixes)
 - **README.md**: Install guide, hook config, commands reference (Phase: Packaging)
 - **flake.nix**: Nix devShell + packages/apps outputs for ccmon (Phase: Session Detection, Packaging)
 - **.envrc**: direnv config — `use flake` (Phase: Session Detection)
@@ -272,14 +274,14 @@ Correctness bug fixes, style cleanup, and architecture improvements from review 
 - **package.json**: Bun project config — `"type": "module"`, `@types/bun`, `dump` script (Phase: Session Detection)
 - **tsconfig.json**: IDE TypeScript support — ESNext, moduleResolution bundler (Phase: Session Detection)
 - **bun.lock**: Bun lockfile (Phase: Session Detection)
-- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; task count display, permission flash, stopped flash animations; R45 header time, R46 task display, R48 agents dot, R49 latestUserActivity display, R50 latestAssistantActivity display (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements)
-- **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours (Phase: Backend)
-- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()`; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements)
-- **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection (Phase: Session Detection)
-- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands (Phase: Session Detection, Backend)
-- **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints (Phase: Backend)
+- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; task count display, permission flash, stopped flash animations; R45 header time, R46 task display, R48 agents dot, R49 latestUserActivity display, R50 latestAssistantActivity display; JSON.parse try/catch, state Map→array, numeric esc() cleanup (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes)
+- **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed (Phase: Backend, Review Fixes)
+- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()`; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes)
+- **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed (Phase: Session Detection, Review Fixes)
+- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner (Phase: Session Detection, Backend, Review Fixes)
+- **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init (Phase: Backend, Review Fixes)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
-- **tests/sessions.test.ts**: 160 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements)
+- **tests/sessions.test.ts**: 168 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
 - **tests/cli.test.ts**: 18 tests for cli.ts — 4 new arg-validation cases, status, dump --watch, --project filter (Phase: Review Fixes)
 - **tests/server.test.ts**: 4 tests for server.ts — HTTP endpoints, WebSocket (Phase: Backend)
