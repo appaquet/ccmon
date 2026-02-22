@@ -14,6 +14,10 @@ Phase 13 (Review Fixes 2) complete, 174 tests passing. 22 tasks implemented: blo
 
 ## Inbox
 
+- [ ] We removed the listen to 0.0.0.0 and have weird logic showing localhost when it's listening to
+  it. I still want the server to listen to 0.0.0.0 by default. This is meant to be running on a
+  remote computer as well, and it's internal only anyway, no security risk. Let's put that back
+  ASAP.
 
 ## Requirements
 
@@ -139,12 +143,15 @@ Phase 13 (Review Fixes 2) complete, 174 tests passing. 22 tasks implemented: blo
 
 ### JSONL-Primary Detection
 
-* R34: ⬜ JSONL mtime is the primary signal for running/stopped state — no dependency on status.local.json for activity detection (Phase: JSONL-Primary Detection)
-  * R34.1: Watcher monitors *.jsonl files; running derived from recent mtime; stopped from system:stop_hook_summary or staleness
-  * R34.2: status.local.json read only for waiting_for_permission and notification fields
-* R35: ⬜ Hook config reduced to PermissionRequest + Notification only (Phase: JSONL-Primary Detection)
-  * R35.1: UserPromptSubmit, PostToolUse, Stop, SessionEnd hooks removed from ccmon dotfiles config
-  * R35.2: R33 debounce revisited — may be unnecessary once race condition is eliminated
+* R34: ⬜ JSONL mtime is the primary signal for running state; hooks retained for immediate stopped detection (Phase: JSONL-Primary Detection)
+  * R34.1: Watcher monitors *.jsonl files in project dirs; `running` derived from JSONL mtime < 60s
+  * R34.2: `stopped` from Stop/SessionEnd hooks (immediate) or JSONL mtime > 60s (crash fallback)
+  * R34.3: status.local.json read for waiting_for_permission, stopped timestamp, and notification fields
+  * R34.4: pgrep/proc liveness detection removed entirely
+  * R34.5: R33 debounce removed — race condition eliminated at source
+* R35: ⬜ Hook config reduced — remove UserPromptSubmit + PostToolUse only (Phase: JSONL-Primary Detection)
+  * R35.1: UserPromptSubmit, PostToolUse hooks removed (JSONL mtime handles running)
+  * R35.2: Stop, SessionEnd, PermissionRequest, Notification, SessionStart hooks retained
 
 ### UI Polish
 
@@ -239,7 +246,7 @@ Bug fixes and improvements from real-world usage: last activity timestamp auto-r
 ### ⬜ 08 Phase: JSONL-Primary Detection
 [08-jsonl-primary](08-jsonl-primary.md)
 
-Replace hook-driven running/stopped detection with JSONL mtime + system:stop_hook_summary watching. Reduce hook config to PermissionRequest + Notification only. Eliminates the R33 race condition at its source.
+JSONL mtime as primary running signal, Stop/SessionEnd hooks for immediate stopped. Remove pgrep liveness, R33 debounce, and UserPromptSubmit/PostToolUse hooks. 8 tasks planned.
 
 ### 🔄 09 Phase: Sub-Agent Names
 [09-sub-agent-names](09-sub-agent-names.md)
