@@ -5,6 +5,8 @@
 
 Real-time dashboard for your Claude Code sessions.
 
+<img width="891" height="483" alt="Screenshot 2026-02-22 at 14 29 37" src="https://github.com/user-attachments/assets/100be8f2-ba2a-4686-8b63-75b1b4b23f42" />
+
 ## Quick Start
 
 1. Install — see [Installation](#instalation) or run locally with `bun run serve`
