@@ -157,7 +157,7 @@ export function startServer(options: ServerOptions = {}): {
   });
 
   return {
-    port: server.port!,
+    port: server.port as number,
     ready,
     stop(): void {
       watcher?.stop();

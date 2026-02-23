@@ -556,8 +556,13 @@ export async function readSessionTail(
   );
 
   if (startOffset === -1) {
-    // Cache hit: nothing changed. cached is guaranteed non-null when startOffset === -1.
-    return cached!.data;
+    // Cache hit: nothing changed. cached is guaranteed non-null when startOffset === -1
+    // (computeReadRange only returns -1 when cached !== undefined).
+    if (!cached)
+      throw new Error(
+        "cache invariant violated: startOffset === -1 but cached is undefined",
+      );
+    return cached.data;
   }
 
   let text: string;
