@@ -345,6 +345,11 @@ Add Biome linting and TypeScript type-check. Wire `test`, `lint`, `lint:fix`, `t
 
 GHA workflow running lint, typecheck, and tests on every push and pull request.
 
+### ⬜ 21 Phase: CLAUDE.md Trim
+[21-claude-md-trim](21-claude-md-trim.md)
+
+Reduce CLAUDE.md from ~181 lines to ~90 by removing JSON schema examples and redundant prose. Keep essential dev context only.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
