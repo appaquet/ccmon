@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phases 18–21 complete. Phase 21: CLAUDE.md trimmed 181 → 114 lines (37% token reduction) by removing JSON schema examples and redundant prose. Phases 15 (stop detection), 17 (sub-agent stop/resume), 18 (multi-backend) are implemented but have pending manual validation tasks. 198 tests passing, lint clean, typecheck clean.
+Phase 22 (Multi-Backend Naming) implemented: composite `hostname::projectName` keys in frontend state maps; hostname prefix shown in card header when names collide. Pending manual validation. 198 tests passing, lint clean, typecheck clean.
 
 ## Requirements
 
@@ -207,7 +207,7 @@ Phases 18–21 complete. Phase 21: CLAUDE.md trimmed 181 → 114 lines (37% toke
   - R57.2: Status pill: Connected (all up) / Partially connected (some up) / Disconnected (none up)
   - R57.3: Cog icon + clickable pill open server management menu; add/remove servers; main server cannot be removed
 
-- R58: ⬜ Same-named projects across backends are disambiguated with composite key and hostname prefix (Phase: Multi-Backend Naming)
+- R58: 🔄 Same-named projects across backends are disambiguated with composite key and hostname prefix (Phase: Multi-Backend Naming)
   - R58.1: Card header shows `hostname:projectName` when the same `projectName` exists on multiple backends
 
 #### Out of Scope
@@ -352,7 +352,7 @@ GHA workflow running lint, typecheck, and tests on every push and pull request.
 
 Reduced CLAUDE.md from 181 to 114 lines (37%) by removing JSON schema examples and redundant prose. Commands and architecture sections kept intact.
 
-### ⬜ 22 Phase: Multi-Backend Project Naming
+### 🔄 22 Phase: Multi-Backend Project Naming
 
 [22-multi-backend-naming](22-multi-backend-naming.md)
 
