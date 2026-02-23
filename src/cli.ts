@@ -253,6 +253,7 @@ async function runSub(): Promise<void> {
     exit(1);
   }
 
+  // REVIEW: Make host configurable too 
   const ws = new WebSocket(`ws://localhost:${port}/ws`);
 
   ws.onmessage = (event) => {

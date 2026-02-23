@@ -14,7 +14,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 18 (Multi-Backend WebSocket) implemented. Server wraps WS payload in `{ hostname, projects }` envelope; frontend `BackendManager` manages N connections, merges project views, aggregate status pill (Connected/Partial/Disconnected), settings dropdown for add/remove backends. 198 tests passing. Pending manual validation with two live servers.
+Phase 19 (Linting Setup) planned. Biome linter + TypeScript type-check; `test`, `lint`, `lint:fix`, `typecheck` scripts in package.json; CLAUDE.md updated. Plan ready in 19-linting.md, awaiting `/implement`.
 
 ## Requirements
 
@@ -334,6 +334,11 @@ After session stops and resumes (same UUID), old sub-agents can appear active be
 [18-multi-backend](18-multi-backend.md)
 
 Dashboard connects to multiple ccmon servers simultaneously. Server sends `{ hostname, projects }` envelope. Frontend manages N connections with merged project view, connection status pill (Connected/Partially/Disconnected), and settings menu for adding/removing servers.
+
+### ⬜ 19 Phase: Linting Setup
+[19-linting](19-linting.md)
+
+Add Biome linting and TypeScript type-check. Wire `test`, `lint`, `lint:fix`, `typecheck` scripts in package.json. Document in CLAUDE.md.
 
 ## Files
 
