@@ -14,7 +14,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 19 (Linting Setup) complete. Biome installed; `biome.json` with 2-space indent; `test`, `lint`, `lint:fix`, `typecheck` scripts in package.json; CLAUDE.md updated. Auto-fixed formatting/isNaN/template literals; manually fixed 9 typecheck errors. 198 tests passing, lint clean, typecheck clean.
+Phase 20 (GitHub Actions CI) planned. Single workflow file `.github/workflows/ci.yml` — push/PR trigger, ubuntu-latest, setup-bun, lint + typecheck + test as separate steps. Plan in 20-gha-ci.md, awaiting `/implement`.
 
 ## Requirements
 
@@ -339,6 +339,11 @@ Dashboard connects to multiple ccmon servers simultaneously. Server sends `{ hos
 [19-linting](19-linting.md)
 
 Add Biome linting and TypeScript type-check. Wire `test`, `lint`, `lint:fix`, `typecheck` scripts in package.json. Document in CLAUDE.md.
+
+### ⬜ 20 Phase: GitHub Actions CI
+[20-gha-ci](20-gha-ci.md)
+
+GHA workflow running lint, typecheck, and tests on every push and pull request.
 
 ## Files
 
