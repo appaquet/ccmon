@@ -669,6 +669,8 @@
 
     const prevState = new Map();                // projKey → last known state string
     const prevNotificationTimestamp = new Map(); // projKey → last known notificationTimestamp
+    const flashStopped = new Map();             // projKey → timestamp when flash started (5s window)
+    const flashNotification = new Map();        // projKey → timestamp when flash started (5s window)
 
     // Composite key that uniquely identifies a project across multiple backends
     const projKey = (p) => p._backendKey + '::' + p.projectName;
@@ -706,31 +708,39 @@
       const grid = document.getElementById('project-grid');
       const all = [...projects];
 
-      // Compute running→stopped transitions and new notification arrivals before clearing DOM
-      const flashStopped = new Set();
-      const flashNotification = new Set();
+      // Compute state transitions and new notification arrivals before clearing DOM
+      const now = Date.now();
+      const flashWindow = 5000;
       for (const proj of all) {
         const key = projKey(proj);
-        if (prevState.get(key) === 'running' && proj.state === 'stopped') {
-          flashStopped.add(key);
+        const prev = prevState.get(key);
+        if (prev !== undefined && prev !== 'stopped' && proj.state === 'stopped') {
+          flashStopped.set(key, now);
         }
         prevState.set(key, proj.state);
 
         const prevTs = prevNotificationTimestamp.get(key);
         const curTs = proj.notificationTimestamp;
         if (curTs && curTs !== prevTs) {
-          flashNotification.add(key);
+          flashNotification.set(key, now);
         }
         if (curTs !== undefined) {
           prevNotificationTimestamp.set(key, curTs);
         }
       }
+      // Prune entries no longer in the project list or whose flash window has expired
       const currentKeys = new Set(all.map(p => projKey(p)));
       for (const key of [...prevState.keys()]) {
         if (!currentKeys.has(key)) prevState.delete(key);
       }
       for (const key of [...prevNotificationTimestamp.keys()]) {
         if (!currentKeys.has(key)) prevNotificationTimestamp.delete(key);
+      }
+      for (const [key, ts] of [...flashStopped.entries()]) {
+        if (!currentKeys.has(key) || now - ts >= flashWindow) flashStopped.delete(key);
+      }
+      for (const [key, ts] of [...flashNotification.entries()]) {
+        if (!currentKeys.has(key) || now - ts >= flashWindow) flashNotification.delete(key);
       }
 
       grid.innerHTML = '';

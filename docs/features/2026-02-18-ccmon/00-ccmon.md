@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phases 23 and 24 implemented. Phase 23: `▶`/`◀` triangles replace `>`/`<` in `renderAgentRow()`. Phase 24: time-based sort with 30s throttle via `getSortedProjects()`. 198 tests pass, lint + typecheck clean. Both pending visual verification.
+Phases 23, 24, 25 implemented. Phase 23: `▶`/`◀` triangles. Phase 24: time-based sort with 30s throttle. Phase 25: stopped flash persistence (5s TTL Maps). 198 tests pass, lint + typecheck clean. All pending visual verification.
 
 ## Requirements
 
@@ -357,6 +357,12 @@ Reduced CLAUDE.md from 181 to 114 lines (37%) by removing JSON schema examples a
 [22-multi-backend-naming](22-multi-backend-naming.md)
 
 Fix same-named projects across backends causing double flash. Use composite `hostname::projectName` key in frontend state maps. Show hostname prefix in card header when names collide.
+
+### ⬜ 25 Phase: Stopped Flash Fix
+
+[25-stopped-flash-fix](25-stopped-flash-fix.md)
+
+Fix stopped flash persistence: promote `flashStopped`/`flashNotification` to module-level Maps with 5s TTL. Broaden transition check to any non-stopped → stopped.
 
 ### ⬜ 24 Phase: Dashboard Sort Order
 
