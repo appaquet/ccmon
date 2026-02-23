@@ -1,5 +1,6 @@
-import { readdir, stat } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import type { Dirent } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
+import { basename, join } from "node:path";
 
 // Staleness window for waiting_for_permission signals from status.local.json.
 const PERMISSION_STALE_MS = 5 * 60 * 1000;
@@ -18,7 +19,7 @@ const STOP_GRACE_MS = 5_000;
 // JSONL mtime takes over naturally within this window as Claude writes.
 const RUNNING_HOOK_TTL_MS = 30_000;
 
-const JSONL_EXT = '.jsonl';
+const JSONL_EXT = ".jsonl";
 
 // Maximum bytes to read on first access for large files (10 MB).
 const MAX_FIRST_READ = 10 * 1024 * 1024;
@@ -32,19 +33,22 @@ const SUBAGENT_ACTIVE_THRESHOLD_MS = 45 * 1000;
 const SUBAGENT_EXPIRY_MS = 5 * 60 * 1000;
 
 export const DEFAULT_CLAUDE_DIR = join(
-  Bun.env.HOME ?? '/root',
-  '.claude',
-  'projects',
+  Bun.env.HOME ?? "/root",
+  ".claude",
+  "projects",
 );
 
 const VALID_STATES: ReadonlySet<string> = new Set([
-  'running',
-  'waiting_for_permission',
-  'stopped',
+  "running",
+  "waiting_for_permission",
+  "stopped",
 ]);
 
 // Keyed by projectDirPath; avoids re-parsing sessions-index.json unless mtime changed.
-const sessionsIndexCache = new Map<string, { mtime: number; data: SessionsIndex | null }>();
+const sessionsIndexCache = new Map<
+  string,
+  { mtime: number; data: SessionsIndex | null }
+>();
 
 // Keyed by jsonlPath; avoids re-reading the tail unless the file changed.
 interface SessionTailCache {
@@ -58,7 +62,7 @@ const sessionTailCache = new Map<string, SessionTailCache>();
 // Populated on a full scan; updated in-place on targeted single-project rescans.
 const projectStateCache = new Map<string, ProjectState>();
 
-export type SessionState = 'running' | 'waiting_for_permission' | 'stopped';
+export type SessionState = "running" | "waiting_for_permission" | "stopped";
 
 /**
  * Enrichment fields shared between main sessions and sub-agents,
@@ -87,23 +91,23 @@ export interface SessionEnrichment {
  * derived from the sub-agent's JSONL file.
  */
 export interface SubagentInfo extends SessionEnrichment {
-  agentId: string;          // extracted from filename: agent-{agentId}.jsonl
-  slug?: string;            // from first line of sub-agent JSONL
-  description?: string;     // from parent session queue-operation enqueue entry
-  jsonlPath: string;        // absolute path to sub-agent JSONL
-  isActive: boolean;        // mtime within last 45 seconds
-  lastMessageTime: string;  // ISO 8601 from file mtime
-  launchTime: string;       // ISO 8601 from first JSONL entry timestamp, falls back to file mtime
+  agentId: string; // extracted from filename: agent-{agentId}.jsonl
+  slug?: string; // from first line of sub-agent JSONL
+  description?: string; // from parent session queue-operation enqueue entry
+  jsonlPath: string; // absolute path to sub-agent JSONL
+  isActive: boolean; // mtime within last 45 seconds
+  lastMessageTime: string; // ISO 8601 from file mtime
+  launchTime: string; // ISO 8601 from first JSONL entry timestamp, falls back to file mtime
 }
 
 export interface SessionsIndexEntry {
   sessionId: string;
   fullPath: string;
-  fileMtime: number;    // epoch ms
+  fileMtime: number; // epoch ms
   firstPrompt?: string;
   summary?: string;
   messageCount?: number;
-  modified?: string;    // ISO 8601
+  modified?: string; // ISO 8601
   projectPath: string;
   isSidechain: boolean;
   gitBranch?: string;
@@ -115,11 +119,11 @@ export interface SessionsIndex {
 }
 
 export interface ProjectInfo {
-  projectDir: string;     // directory name under ~/.claude/projects/
-  cwd: string;            // working directory (from index projectPath or JSONL first line)
-  projectName: string;    // last segment of cwd
-  sessionId: string;      // from index or JSONL first line
-  latestJSONL: string;    // absolute path to most recent .jsonl file
+  projectDir: string; // directory name under ~/.claude/projects/
+  cwd: string; // working directory (from index projectPath or JSONL first line)
+  projectName: string; // last segment of cwd
+  sessionId: string; // from index or JSONL first line
+  latestJSONL: string; // absolute path to most recent .jsonl file
   // Enriched fields from sessions-index.json (absent when falling back to JSONL scan)
   summary?: string;
   firstPrompt?: string;
@@ -139,18 +143,18 @@ export interface SessionTailInfo extends SessionEnrichment {
 
 export interface StatusFile {
   state: SessionState;
-  timestamp: string;    // ISO 8601
+  timestamp: string; // ISO 8601
   session_id: string;
   working_dir: string;
-  notificationMessage?: string;    // set by Notification hook events
-  notificationTimestamp?: string;  // ISO 8601, updated on each notification
+  notificationMessage?: string; // set by Notification hook events
+  notificationTimestamp?: string; // ISO 8601, updated on each notification
 }
 
 export interface ProjectState extends ProjectInfo, SessionEnrichment {
   state: SessionState;
   lastUpdated: string | null; // from status file timestamp, null if no status
-  notificationMessage?: string;    // forwarded from StatusFile when present
-  notificationTimestamp?: string;  // forwarded from StatusFile when present
+  notificationMessage?: string; // forwarded from StatusFile when present
+  notificationTimestamp?: string; // forwarded from StatusFile when present
   subagents?: SubagentInfo[];
   // Convenience count of active sub-agents; kept alongside subagents[] so clients
   // that don't parse the full array (e.g. simple status bars) can read a single field.
@@ -162,8 +166,10 @@ export interface ProjectState extends ProjectInfo, SessionEnrichment {
  * Filters out sidechain entries and returns null if the file is missing,
  * unparseable, or has no usable (non-sidechain) entries.
  */
-export async function readSessionsIndex(projectDirPath: string): Promise<SessionsIndex | null> {
-  const indexPath = join(projectDirPath, 'sessions-index.json');
+export async function readSessionsIndex(
+  projectDirPath: string,
+): Promise<SessionsIndex | null> {
+  const indexPath = join(projectDirPath, "sessions-index.json");
 
   let mtime: number;
   try {
@@ -200,18 +206,22 @@ export async function readSessionsIndex(projectDirPath: string): Promise<Session
 
   const entries = parsed.entries
     .filter((e) => !e.isSidechain)
-    .map((e): SessionsIndexEntry => ({
-      sessionId: e.sessionId,
-      fullPath: e.fullPath,
-      fileMtime: e.fileMtime,
-      firstPrompt: typeof e.firstPrompt === 'string' ? e.firstPrompt : undefined,
-      summary: typeof e.summary === 'string' ? e.summary : undefined,
-      messageCount: typeof e.messageCount === 'number' ? e.messageCount : undefined,
-      modified: typeof e.modified === 'string' ? e.modified : undefined,
-      projectPath: e.projectPath,
-      isSidechain: e.isSidechain,
-      gitBranch: typeof e.gitBranch === 'string' ? e.gitBranch : undefined,
-    }));
+    .map(
+      (e): SessionsIndexEntry => ({
+        sessionId: e.sessionId,
+        fullPath: e.fullPath,
+        fileMtime: e.fileMtime,
+        firstPrompt:
+          typeof e.firstPrompt === "string" ? e.firstPrompt : undefined,
+        summary: typeof e.summary === "string" ? e.summary : undefined,
+        messageCount:
+          typeof e.messageCount === "number" ? e.messageCount : undefined,
+        modified: typeof e.modified === "string" ? e.modified : undefined,
+        projectPath: e.projectPath,
+        isSidechain: e.isSidechain,
+        gitBranch: typeof e.gitBranch === "string" ? e.gitBranch : undefined,
+      }),
+    );
 
   if (entries.length === 0) {
     sessionsIndexCache.set(projectDirPath, { mtime, data: null });
@@ -221,7 +231,10 @@ export async function readSessionsIndex(projectDirPath: string): Promise<Session
   // The sessions-index.json format has no top-level cwd field, so we use the first entry's
   // projectPath as the canonical cwd without validating that all entries agree. In practice
   // all entries in a single index file share the same project directory.
-  const result: SessionsIndex = { projectPath: entries[0].projectPath, entries };
+  const result: SessionsIndex = {
+    projectPath: entries[0].projectPath,
+    entries,
+  };
   sessionsIndexCache.set(projectDirPath, { mtime, data: result });
   return result;
 }
@@ -232,12 +245,18 @@ export async function readSessionsIndex(projectDirPath: string): Promise<Session
  */
 export function mapHookEventToState(hookEvent: string): SessionState | null {
   switch (hookEvent) {
-    case 'UserPromptSubmit': return 'running';
-    case 'PostToolUse': return 'running';
-    case 'PermissionRequest': return 'waiting_for_permission';
-    case 'Stop': return 'stopped';
-    case 'SessionEnd': return 'stopped';
-    default: return null;
+    case "UserPromptSubmit":
+      return "running";
+    case "PostToolUse":
+      return "running";
+    case "PermissionRequest":
+      return "waiting_for_permission";
+    case "Stop":
+      return "stopped";
+    case "SessionEnd":
+      return "stopped";
+    default:
+      return null;
   }
 }
 
@@ -257,15 +276,18 @@ export async function writeNotificationStatus(
   const existing = await readStatus(projectDirPath);
 
   // Suppress: permission_prompt while already waiting_for_permission
-  if (notificationType === 'permission_prompt' && existing?.state === 'waiting_for_permission') {
+  if (
+    notificationType === "permission_prompt" &&
+    existing?.state === "waiting_for_permission"
+  ) {
     return;
   }
 
   const base: StatusFile = existing ?? {
-    state: 'stopped',
+    state: "stopped",
     timestamp: new Date().toISOString(),
-    session_id: '',
-    working_dir: '',
+    session_id: "",
+    working_dir: "",
   };
 
   const updated: StatusFile = {
@@ -280,8 +302,11 @@ export async function writeNotificationStatus(
 /**
  * Writes a StatusFile as JSON to {projectDirPath}/status.local.json.
  */
-export async function writeStatus(projectDirPath: string, status: StatusFile): Promise<void> {
-  const statusPath = join(projectDirPath, 'status.local.json');
+export async function writeStatus(
+  projectDirPath: string,
+  status: StatusFile,
+): Promise<void> {
+  const statusPath = join(projectDirPath, "status.local.json");
   await Bun.write(statusPath, JSON.stringify(status));
 }
 
@@ -289,7 +314,9 @@ export async function writeStatus(projectDirPath: string, status: StatusFile): P
  * Scans claudeDir for Claude Code project subdirectories and returns metadata
  * parsed from the most recent JSONL session file in each.
  */
-export async function scanProjects(claudeDir: string = DEFAULT_CLAUDE_DIR): Promise<ProjectInfo[]> {
+export async function scanProjects(
+  claudeDir: string = DEFAULT_CLAUDE_DIR,
+): Promise<ProjectInfo[]> {
   let entries: string[];
   try {
     entries = await readdir(claudeDir);
@@ -300,7 +327,7 @@ export async function scanProjects(claudeDir: string = DEFAULT_CLAUDE_DIR): Prom
   const results: ProjectInfo[] = [];
 
   for (const entry of entries) {
-    if (entry === 'subagents') continue;
+    if (entry === "subagents") continue;
 
     const fullPath = join(claudeDir, entry);
     const info = await readProjectInfo(fullPath, entry);
@@ -316,8 +343,10 @@ export async function scanProjects(claudeDir: string = DEFAULT_CLAUDE_DIR): Prom
  * Reads and validates status.local.json from projectDir.
  * Returns null if the file is missing, corrupt, or has an unknown state.
  */
-export async function readStatus(projectDir: string): Promise<StatusFile | null> {
-  const statusPath = join(projectDir, 'status.local.json');
+export async function readStatus(
+  projectDir: string,
+): Promise<StatusFile | null> {
+  const statusPath = join(projectDir, "status.local.json");
   let raw: string;
   try {
     raw = await Bun.file(statusPath).text();
@@ -391,14 +420,15 @@ export function filterStaleProjects(
   projects: ProjectState[],
   maxInactivityHours: number,
 ): ProjectState[] {
-  if (maxInactivityHours <= 0 || !isFinite(maxInactivityHours)) return projects;
+  if (maxInactivityHours <= 0 || !Number.isFinite(maxInactivityHours))
+    return projects;
   const cutoff = Date.now() - maxInactivityHours * 3600 * 1000;
   return projects.filter((p) => {
     if (p.lastUpdated === null) return false;
     // An invalid/unparseable timestamp (NaN) is treated as non-stale (keep the project)
     // rather than silently dropping it from the dashboard.
     const time = new Date(p.lastUpdated).getTime();
-    return isNaN(time) || time >= cutoff;
+    return Number.isNaN(time) || time >= cutoff;
   });
 }
 
@@ -407,12 +437,15 @@ export function filterStaleProjects(
  * Each entry includes enrichment data from readSessionTail plus identity fields
  * (agentId, jsonlPath, isActive, optional slug). Returns [] if the dir is absent.
  */
-export async function getSubagentInfos(latestJSONL: string, stoppedAtMs: number | null = null): Promise<SubagentInfo[]> {
+export async function getSubagentInfos(
+  latestJSONL: string,
+  stoppedAtMs: number | null = null,
+): Promise<SubagentInfo[]> {
   const sessionDir = sessionDirFromJSONL(latestJSONL);
-  const subagentsDir = join(sessionDir, 'subagents');
+  const subagentsDir = join(sessionDir, "subagents");
   const cutoff = Date.now() - SUBAGENT_ACTIVE_THRESHOLD_MS;
 
-  let entries: Awaited<ReturnType<typeof readdir>>;
+  let entries: Dirent<string>[];
   try {
     entries = await readdir(subagentsDir, { withFileTypes: true });
   } catch {
@@ -444,11 +477,12 @@ export async function getSubagentInfos(latestJSONL: string, stoppedAtMs: number 
 
       // Extract agentId from filename: "agent-ae89d86.jsonl" → "ae89d86"
       const nameWithout = entry.name.slice(0, -JSONL_EXT.length);
-      const agentId = nameWithout.startsWith('agent-')
-        ? nameWithout.slice('agent-'.length)
+      const agentId = nameWithout.startsWith("agent-")
+        ? nameWithout.slice("agent-".length)
         : nameWithout;
 
-      const stoppedRecently = stoppedAtMs !== null && mtimeMs <= stoppedAtMs + STOP_GRACE_MS;
+      const stoppedRecently =
+        stoppedAtMs !== null && mtimeMs <= stoppedAtMs + STOP_GRACE_MS;
       const isActive = !stoppedRecently && mtimeMs > cutoff;
 
       // Exclude completed agents older than 5 minutes to keep payload lean.
@@ -464,11 +498,12 @@ export async function getSubagentInfos(latestJSONL: string, stoppedAtMs: number 
       try {
         const file = Bun.file(jsonlPath);
         const text = await file.slice(0, 512).text();
-        const firstLine = text.split('\n')[0];
+        const firstLine = text.split("\n")[0];
         if (firstLine) {
           const parsed = JSON.parse(firstLine) as Record<string, unknown>;
-          if (typeof parsed.slug === 'string') slug = parsed.slug;
-          if (typeof parsed.timestamp === 'string') launchTime = parsed.timestamp;
+          if (typeof parsed.slug === "string") slug = parsed.slug;
+          if (typeof parsed.timestamp === "string")
+            launchTime = parsed.timestamp;
         }
       } catch {
         // slug and launchTime are both optional — ignore errors
@@ -476,7 +511,16 @@ export async function getSubagentInfos(latestJSONL: string, stoppedAtMs: number 
 
       const lastMessageTime = new Date(mtimeMs).toISOString();
       const description = parentTail.agentDescriptions.get(agentId);
-      return { agentId, slug, description, jsonlPath, isActive, lastMessageTime, launchTime, ...enrichment };
+      return {
+        agentId,
+        slug,
+        description,
+        jsonlPath,
+        isActive,
+        lastMessageTime,
+        launchTime,
+        ...enrichment,
+      };
     }),
   );
 
@@ -491,7 +535,9 @@ export async function getSubagentInfos(latestJSONL: string, stoppedAtMs: number 
  * subsequent reads only parse bytes appended since the last read (delta mode).
  * If the file shrinks the cache is reset and the full file is re-read.
  */
-export async function readSessionTail(jsonlPath: string): Promise<SessionTailInfo> {
+export async function readSessionTail(
+  jsonlPath: string,
+): Promise<SessionTailInfo> {
   let mtimeMs: number;
   let size: number;
   try {
@@ -503,10 +549,14 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
   }
 
   const cached = sessionTailCache.get(jsonlPath);
-  const { startOffset, baseData, isDelta } = computeReadRange(cached, mtimeMs, size);
+  const { startOffset, baseData, isDelta } = computeReadRange(
+    cached,
+    mtimeMs,
+    size,
+  );
 
   if (startOffset === -1) {
-    // Cache hit: nothing changed.
+    // Cache hit: nothing changed. cached is guaranteed non-null when startOffset === -1.
     return cached!.data;
   }
 
@@ -520,9 +570,9 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
 
   // Whether startOffset falls exactly on a newline byte (clean boundary).
   // When true, no partial-line discard is needed even in cap-based reads.
-  const startsAtNewline = text.length > 0 && text[0] === '\n';
+  const startsAtNewline = text.length > 0 && text[0] === "\n";
 
-  let lines = text.split('\n').filter((l) => l.trim() !== '');
+  let lines = text.split("\n").filter((l) => l.trim() !== "");
 
   // Discard the first element when starting at a cap-based offset that landed
   // mid-line (may be a partial record). Skip the discard when the offset falls
@@ -536,7 +586,11 @@ export async function readSessionTail(jsonlPath: string): Promise<SessionTailInf
   const scanResult = scanEnrichment(lines, scannedTasks, baseData);
   const merged = mergeEnrichment(scannedTasks, scanResult, baseData);
 
-  sessionTailCache.set(jsonlPath, { mtime: mtimeMs, fileSize: size, data: merged });
+  sessionTailCache.set(jsonlPath, {
+    mtime: mtimeMs,
+    fileSize: size,
+    data: merged,
+  });
   return merged;
 }
 
@@ -558,7 +612,7 @@ function extractCommand(content: string): string | null {
   if (!nameMatch) return null;
   const name = nameMatch[1].trim();
   const argsMatch = content.match(/<command-args>([^<]*)<\/command-args>/);
-  const args = argsMatch ? argsMatch[1].trim() : '';
+  const args = argsMatch ? argsMatch[1].trim() : "";
   return args ? `${name} ${args}` : name;
 }
 
@@ -571,7 +625,11 @@ function computeReadRange(
   mtimeMs: number,
   size: number,
 ): { startOffset: number; baseData: SessionTailInfo; isDelta: boolean } {
-  if (cached !== undefined && cached.mtime === mtimeMs && cached.fileSize === size) {
+  if (
+    cached !== undefined &&
+    cached.mtime === mtimeMs &&
+    cached.fileSize === size
+  ) {
     // Nothing changed — signal cache hit.
     return { startOffset: -1, baseData: cached.data, isDelta: false };
   } else if (cached !== undefined && size > cached.fileSize) {
@@ -580,7 +638,10 @@ function computeReadRange(
     // Copy the cached agentDescriptions so new scan entries accumulate independently.
     return {
       startOffset: cached.fileSize,
-      baseData: { ...cached.data, agentDescriptions: new Map(cached.data.agentDescriptions) },
+      baseData: {
+        ...cached.data,
+        agentDescriptions: new Map(cached.data.agentDescriptions),
+      },
       isDelta: true,
     };
   } else {
@@ -611,7 +672,9 @@ function scanEnrichment(
   // Only suppress the TodoWrite fallback when at least one task was resolved via
   // TaskCreate/TaskUpdate; an empty scannedTasks Map (creates seen but results missing)
   // does not count.
-  let foundTasks = (scannedTasks !== null && scannedTasks.size > 0) || baseData.tasks !== undefined;
+  let foundTasks =
+    (scannedTasks !== null && scannedTasks.size > 0) ||
+    baseData.tasks !== undefined;
   // inputTokens: last-seen value (cache_read grows monotonically — summing inflates it).
   let scanInputTokens: number | undefined;
   let scanOutputTokens = 0;
@@ -621,7 +684,7 @@ function scanEnrichment(
     let entry: Record<string, unknown>;
     try {
       const parsed = JSON.parse(line);
-      if (typeof parsed !== 'object' || parsed === null) continue;
+      if (typeof parsed !== "object" || parsed === null) continue;
       entry = parsed as Record<string, unknown>;
     } catch {
       continue;
@@ -630,25 +693,28 @@ function scanEnrichment(
     const type = entry.type;
     const message = entry.message as Record<string, unknown> | undefined;
 
-    if (type === 'user') {
+    if (type === "user") {
       if (!message || foundUserActivity) continue;
       const content = message.content;
-      if (typeof content === 'string') {
-        const isXml = content.startsWith('<');
+      if (typeof content === "string") {
+        const isXml = content.startsWith("<");
         const cmd = isXml ? extractCommand(content) : null;
         if (cmd !== null) {
           result.latestUserActivity = { text: cmd, isCommand: true };
           foundUserActivity = true;
         } else if (!isXml) {
           // Exclude <-prefixed content that isn't a recognized command.
-          result.latestUserActivity = { text: content.slice(0, 200), isCommand: false };
+          result.latestUserActivity = {
+            text: content.slice(0, 200),
+            isCommand: false,
+          };
           foundUserActivity = true;
         }
       }
     }
 
-    if (type === 'assistant' && message) {
-      if (!foundModel && typeof message.model === 'string') {
+    if (type === "assistant" && message) {
+      if (!foundModel && typeof message.model === "string") {
         result.model = message.model;
         foundModel = true;
       }
@@ -657,11 +723,20 @@ function scanEnrichment(
       // output tokens: accumulate all per-call deltas.
       const usage = message.usage as Record<string, unknown> | undefined;
       if (usage !== undefined) {
-        const input = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
-        const cacheCreate = typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0;
-        const cacheRead = typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0;
-        if (scanInputTokens === undefined) scanInputTokens = input + cacheCreate + cacheRead;
-        if (typeof usage.output_tokens === 'number') scanOutputTokens += usage.output_tokens;
+        const input =
+          typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
+        const cacheCreate =
+          typeof usage.cache_creation_input_tokens === "number"
+            ? usage.cache_creation_input_tokens
+            : 0;
+        const cacheRead =
+          typeof usage.cache_read_input_tokens === "number"
+            ? usage.cache_read_input_tokens
+            : 0;
+        if (scanInputTokens === undefined)
+          scanInputTokens = input + cacheCreate + cacheRead;
+        if (typeof usage.output_tokens === "number")
+          scanOutputTokens += usage.output_tokens;
       }
 
       if (Array.isArray(message.content)) {
@@ -693,7 +768,7 @@ function scanEnrichment(
     }
 
     // progress entries carry TodoWrite tool calls (legacy fallback path).
-    if (!foundTasks && type === 'progress') {
+    if (!foundTasks && type === "progress") {
       const data = entry.data as Record<string, unknown> | undefined;
       const outerMsg = data?.message as Record<string, unknown> | undefined;
       const innerMsg = outerMsg?.message as Record<string, unknown> | undefined;
@@ -709,12 +784,15 @@ function scanEnrichment(
     }
 
     // queue-operation enqueue entries map agentId → description for sub-agents.
-    if (type === 'queue-operation') {
+    if (type === "queue-operation") {
       const operation = entry.operation;
-      if (operation === 'enqueue' && typeof entry.content === 'string') {
+      if (operation === "enqueue" && typeof entry.content === "string") {
         try {
           const parsed = JSON.parse(entry.content) as Record<string, unknown>;
-          if (typeof parsed.task_id === 'string' && typeof parsed.description === 'string') {
+          if (
+            typeof parsed.task_id === "string" &&
+            typeof parsed.description === "string"
+          ) {
             result.agentDescriptions.set(parsed.task_id, parsed.description);
           }
         } catch {
@@ -724,7 +802,8 @@ function scanEnrichment(
     }
   }
 
-  if (scanInputTokens !== undefined && scanInputTokens > 0) result.inputTokens = scanInputTokens;
+  if (scanInputTokens !== undefined && scanInputTokens > 0)
+    result.inputTokens = scanInputTokens;
   if (scanOutputTokens > 0) result.outputTokens = scanOutputTokens;
   return result;
 }
@@ -764,9 +843,9 @@ function mergeEnrichment(
       return na - nb;
     });
     mergedTasks = taskList;
-    const nonDeleted = taskList.filter((t) => t.status !== 'deleted');
+    const nonDeleted = taskList.filter((t) => t.status !== "deleted");
     mergedTasksTotal = nonDeleted.length;
-    mergedTasksDone = nonDeleted.filter((t) => t.status === 'completed').length;
+    mergedTasksDone = nonDeleted.filter((t) => t.status === "completed").length;
   } else if (scanResult.tasksTotal !== undefined) {
     // TodoWrite path: scanResult already has tasksDone/tasksTotal set.
     mergedTasksDone = scanResult.tasksDone;
@@ -778,7 +857,8 @@ function mergeEnrichment(
   }
 
   const mergedInputTokens = scanResult.inputTokens ?? baseData.inputTokens;
-  const mergedOutputTokens = (baseData.outputTokens ?? 0) + (scanResult.outputTokens ?? 0);
+  const mergedOutputTokens =
+    (baseData.outputTokens ?? 0) + (scanResult.outputTokens ?? 0);
 
   const mergedDescriptions = baseData.agentDescriptions;
   for (const [id, desc] of scanResult.agentDescriptions) {
@@ -788,19 +868,29 @@ function mergeEnrichment(
   const merged: SessionTailInfo = {
     agentDescriptions: mergedDescriptions,
   };
-  const latestUserActivity = scanResult.latestUserActivity ?? baseData.latestUserActivity;
-  if (latestUserActivity !== undefined) merged.latestUserActivity = latestUserActivity;
-  const latestAssistantActivity = scanResult.latestAssistantActivity ?? baseData.latestAssistantActivity;
-  if (latestAssistantActivity !== undefined) merged.latestAssistantActivity = latestAssistantActivity;
+  const latestUserActivity =
+    scanResult.latestUserActivity ?? baseData.latestUserActivity;
+  if (latestUserActivity !== undefined)
+    merged.latestUserActivity = latestUserActivity;
+  const latestAssistantActivity =
+    scanResult.latestAssistantActivity ?? baseData.latestAssistantActivity;
+  if (latestAssistantActivity !== undefined)
+    merged.latestAssistantActivity = latestAssistantActivity;
   const model = scanResult.model ?? baseData.model;
   if (model !== undefined) merged.model = model;
   if (mergedTasks !== undefined) merged.tasks = mergedTasks;
   if (mergedTasksDone !== undefined) merged.tasksDone = mergedTasksDone;
   if (mergedTasksTotal !== undefined) merged.tasksTotal = mergedTasksTotal;
-  const mergedInputTokensFinal = mergedInputTokens !== undefined && mergedInputTokens > 0 ? mergedInputTokens : undefined;
-  if (mergedInputTokensFinal !== undefined) merged.inputTokens = mergedInputTokensFinal;
-  const mergedOutputTokensFinal = mergedOutputTokens > 0 ? mergedOutputTokens : undefined;
-  if (mergedOutputTokensFinal !== undefined) merged.outputTokens = mergedOutputTokensFinal;
+  const mergedInputTokensFinal =
+    mergedInputTokens !== undefined && mergedInputTokens > 0
+      ? mergedInputTokens
+      : undefined;
+  if (mergedInputTokensFinal !== undefined)
+    merged.inputTokens = mergedInputTokensFinal;
+  const mergedOutputTokensFinal =
+    mergedOutputTokens > 0 ? mergedOutputTokens : undefined;
+  if (mergedOutputTokensFinal !== undefined)
+    merged.outputTokens = mergedOutputTokensFinal;
   return merged;
 }
 
@@ -810,17 +900,25 @@ function mergeEnrichment(
  * IDs are extracted from the tool_result response text ("Task #N created successfully").
  * TaskUpdate patches status and optionally subject/activeForm on existing entries.
  */
-function scanTaskCreateUpdate(lines: string[], baseTasks?: TaskInfo[]): Map<string, TaskInfo> | null {
+function scanTaskCreateUpdate(
+  lines: string[],
+  baseTasks?: TaskInfo[],
+): Map<string, TaskInfo> | null {
   // Maps tool_use_id → { subject, activeForm } for pending TaskCreate calls awaiting tool_result.
-  const pendingCreates = new Map<string, { subject: string; activeForm?: string }>();
+  const pendingCreates = new Map<
+    string,
+    { subject: string; activeForm?: string }
+  >();
   // Seed with base tasks so TaskUpdate entries in delta reads can resolve pre-existing tasks.
-  const tasks = new Map<string, TaskInfo>(baseTasks?.map((t) => [t.id, { ...t }]));
+  const tasks = new Map<string, TaskInfo>(
+    baseTasks?.map((t) => [t.id, { ...t }]),
+  );
 
   for (const line of lines) {
     let entry: Record<string, unknown>;
     try {
       const parsed = JSON.parse(line);
-      if (typeof parsed !== 'object' || parsed === null) continue;
+      if (typeof parsed !== "object" || parsed === null) continue;
       entry = parsed as Record<string, unknown>;
     } catch {
       continue;
@@ -829,41 +927,47 @@ function scanTaskCreateUpdate(lines: string[], baseTasks?: TaskInfo[]): Map<stri
     const type = entry.type;
     const message = entry.message as Record<string, unknown> | undefined;
 
-    if (type === 'assistant' && message && Array.isArray(message.content)) {
+    if (type === "assistant" && message && Array.isArray(message.content)) {
       for (const block of message.content as unknown[]) {
-        if (typeof block !== 'object' || block === null) continue;
+        if (typeof block !== "object" || block === null) continue;
         const b = block as Record<string, unknown>;
-        if (b.type !== 'tool_use') continue;
-        if (typeof b.id !== 'string') continue;
+        if (b.type !== "tool_use") continue;
+        if (typeof b.id !== "string") continue;
         const input = b.input as Record<string, unknown> | undefined;
         if (!input) continue;
 
-        if (b.name === 'TaskCreate' && typeof input.subject === 'string') {
+        if (b.name === "TaskCreate" && typeof input.subject === "string") {
           // Record pending create keyed by tool_use_id to match tool_result later.
           pendingCreates.set(b.id, {
             subject: input.subject,
-            activeForm: typeof input.activeForm === 'string' ? input.activeForm : undefined,
+            activeForm:
+              typeof input.activeForm === "string"
+                ? input.activeForm
+                : undefined,
           });
         }
 
-        if (b.name === 'TaskUpdate' && typeof input.taskId === 'string') {
+        if (b.name === "TaskUpdate" && typeof input.taskId === "string") {
           const existing = tasks.get(input.taskId);
           if (existing) {
-            if (typeof input.status === 'string') existing.status = input.status;
-            if (typeof input.subject === 'string') existing.subject = input.subject;
-            if (typeof input.activeForm === 'string') existing.activeForm = input.activeForm;
+            if (typeof input.status === "string")
+              existing.status = input.status;
+            if (typeof input.subject === "string")
+              existing.subject = input.subject;
+            if (typeof input.activeForm === "string")
+              existing.activeForm = input.activeForm;
           }
         }
       }
     }
 
     // User messages carry tool_result blocks that confirm TaskCreate with the assigned ID.
-    if (type === 'user' && message && Array.isArray(message.content)) {
+    if (type === "user" && message && Array.isArray(message.content)) {
       for (const block of message.content as unknown[]) {
-        if (typeof block !== 'object' || block === null) continue;
+        if (typeof block !== "object" || block === null) continue;
         const b = block as Record<string, unknown>;
-        if (b.type !== 'tool_result') continue;
-        if (typeof b.tool_use_id !== 'string') continue;
+        if (b.type !== "tool_result") continue;
+        if (typeof b.tool_use_id !== "string") continue;
 
         const pending = pendingCreates.get(b.tool_use_id);
         if (!pending) continue;
@@ -871,20 +975,30 @@ function scanTaskCreateUpdate(lines: string[], baseTasks?: TaskInfo[]): Map<stri
         // Extract task ID from result text like "Task #3 created successfully"
         let taskId: string | undefined;
         const content = b.content;
-        const text = typeof content === 'string'
-          ? content
-          : Array.isArray(content)
-            ? (content as unknown[])
-              .filter((c): c is { type: string; text: string } =>
-                typeof c === 'object' && c !== null && (c as Record<string, unknown>).type === 'text')
-              .map((c) => c.text)
-              .join('')
-            : '';
+        const text =
+          typeof content === "string"
+            ? content
+            : Array.isArray(content)
+              ? (content as unknown[])
+                  .filter(
+                    (c): c is { type: string; text: string } =>
+                      typeof c === "object" &&
+                      c !== null &&
+                      (c as Record<string, unknown>).type === "text",
+                  )
+                  .map((c) => c.text)
+                  .join("")
+              : "";
         const match = text.match(/Task #(\d+)/i);
         if (match) taskId = match[1];
 
         if (taskId) {
-          tasks.set(taskId, { id: taskId, subject: pending.subject, status: 'pending', activeForm: pending.activeForm });
+          tasks.set(taskId, {
+            id: taskId,
+            subject: pending.subject,
+            status: "pending",
+            activeForm: pending.activeForm,
+          });
           pendingCreates.delete(b.tool_use_id);
         }
       }
@@ -897,43 +1011,52 @@ function scanTaskCreateUpdate(lines: string[], baseTasks?: TaskInfo[]): Map<stri
   return tasks.size > 0 ? tasks : null;
 }
 
-function scanTodoWrite(contentBlocks: unknown[]): { tasksDone: number; tasksTotal: number } | null {
+function scanTodoWrite(
+  contentBlocks: unknown[],
+): { tasksDone: number; tasksTotal: number } | null {
   const todoWrite = contentBlocks.find(
-    (item): item is { type: string; name: string; input: Record<string, unknown> } =>
-      typeof item === 'object' &&
+    (
+      item,
+    ): item is { type: string; name: string; input: Record<string, unknown> } =>
+      typeof item === "object" &&
       item !== null &&
-      (item as Record<string, unknown>).type === 'tool_use' &&
-      (item as Record<string, unknown>).name === 'TodoWrite',
+      (item as Record<string, unknown>).type === "tool_use" &&
+      (item as Record<string, unknown>).name === "TodoWrite",
   );
   if (todoWrite === undefined) return null;
-  const input = (todoWrite as Record<string, unknown>).input as Record<string, unknown> | undefined;
+  const input = (todoWrite as Record<string, unknown>).input as
+    | Record<string, unknown>
+    | undefined;
   if (input === undefined || !Array.isArray(input.todos)) return null;
   const todos = input.todos as Array<{ status: string }>;
   return {
     tasksTotal: todos.length,
-    tasksDone: todos.filter((t) => t.status === 'completed').length,
+    tasksDone: todos.filter((t) => t.status === "completed").length,
   };
 }
 
 function isTextBlock(b: unknown): b is { type: string; text: string } {
   return (
-    typeof b === 'object' &&
+    typeof b === "object" &&
     b !== null &&
-    (b as Record<string, unknown>).type === 'text' &&
-    typeof (b as Record<string, unknown>).text === 'string'
+    (b as Record<string, unknown>).type === "text" &&
+    typeof (b as Record<string, unknown>).text === "string"
   );
 }
 
 function isToolUseBlock(b: unknown): b is { type: string; name: string } {
   return (
-    typeof b === 'object' &&
+    typeof b === "object" &&
     b !== null &&
-    (b as Record<string, unknown>).type === 'tool_use' &&
-    typeof (b as Record<string, unknown>).name === 'string'
+    (b as Record<string, unknown>).type === "tool_use" &&
+    typeof (b as Record<string, unknown>).name === "string"
   );
 }
 
-async function buildProjectState(project: ProjectInfo, claudeDir: string): Promise<ProjectState> {
+async function buildProjectState(
+  project: ProjectInfo,
+  claudeDir: string,
+): Promise<ProjectState> {
   const projectDirPath = join(claudeDir, project.projectDir);
   const status = await readStatus(projectDirPath);
 
@@ -961,8 +1084,12 @@ async function buildProjectState(project: ProjectInfo, claudeDir: string): Promi
   // Fetch enrichment for all states so stopped sessions still show messages/tokens/tasks.
   // Sub-agents are only relevant for active sessions.
   const tail = await readSessionTail(project.latestJSONL);
-  const stoppedAtMs = status?.state === 'stopped' ? new Date(status.timestamp).getTime() : null;
-  const subagents = state !== 'stopped' ? await getSubagentInfos(project.latestJSONL, stoppedAtMs) : [];
+  const stoppedAtMs =
+    status?.state === "stopped" ? new Date(status.timestamp).getTime() : null;
+  const subagents =
+    state !== "stopped"
+      ? await getSubagentInfos(project.latestJSONL, stoppedAtMs)
+      : [];
   const subagentCount = subagents.filter((s) => s.isActive).length;
   return {
     ...base,
@@ -984,7 +1111,10 @@ async function buildProjectState(project: ProjectInfo, claudeDir: string): Promi
   };
 }
 
-async function readProjectInfo(fullPath: string, dirName: string): Promise<ProjectInfo | null> {
+async function readProjectInfo(
+  fullPath: string,
+  dirName: string,
+): Promise<ProjectInfo | null> {
   let isDir: boolean;
   try {
     const s = await stat(fullPath);
@@ -997,7 +1127,9 @@ async function readProjectInfo(fullPath: string, dirName: string): Promise<Proje
   // Prefer sessions-index.json for richer metadata; fall back to JSONL first-line parse
   const index = await readSessionsIndex(fullPath);
   if (index !== null) {
-    const latest = index.entries.reduce((a, b) => (a.fileMtime > b.fileMtime ? a : b));
+    const latest = index.entries.reduce((a, b) =>
+      a.fileMtime > b.fileMtime ? a : b,
+    );
 
     // The index can grow stale: scan direct-child .jsonl files for any with a newer
     // mtime than what the index recorded. Subdirectory files (subagent JSONLs under
@@ -1086,7 +1218,7 @@ async function findLatestJSONL(dirPath: string): Promise<string | null> {
 async function readFirstLine(filePath: string): Promise<string | null> {
   try {
     const text = await Bun.file(filePath).slice(0, 4096).text();
-    const newline = text.indexOf('\n');
+    const newline = text.indexOf("\n");
     return newline === -1 ? text.trim() : text.slice(0, newline).trim();
   } catch {
     return null;
@@ -1107,19 +1239,26 @@ async function readFirstLine(filePath: string): Promise<string | null> {
  *
  * Exported for unit testing only.
  */
-export function resolveState(jsonlMtimeMs: number | null, status: StatusFile | null): SessionState {
-  const stoppedAtMs = status?.state === 'stopped' ? new Date(status.timestamp).getTime() : null;
+export function resolveState(
+  jsonlMtimeMs: number | null,
+  status: StatusFile | null,
+): SessionState {
+  const stoppedAtMs =
+    status?.state === "stopped" ? new Date(status.timestamp).getTime() : null;
 
   // Priority 1: permission request wins when the signal is fresh — unless JSONL has been
   // written after the permission timestamp (+ grace), which means the user answered and
   // Claude resumed. In that case fall through to Priority 2.
-  if (status?.state === 'waiting_for_permission') {
+  if (status?.state === "waiting_for_permission") {
     const age = Date.now() - new Date(status.timestamp).getTime();
     // Unparseable timestamp (NaN) treated as stale.
-    if (!isNaN(age) && age < PERMISSION_STALE_MS) {
+    if (!Number.isNaN(age) && age < PERMISSION_STALE_MS) {
       const permissionAtMs = new Date(status.timestamp).getTime();
-      if (jsonlMtimeMs === null || jsonlMtimeMs <= permissionAtMs + STOP_GRACE_MS) {
-        return 'waiting_for_permission';
+      if (
+        jsonlMtimeMs === null ||
+        jsonlMtimeMs <= permissionAtMs + STOP_GRACE_MS
+      ) {
+        return "waiting_for_permission";
       }
       // Fall through: JSONL newer than permission signal → activity resumed.
     }
@@ -1127,48 +1266,62 @@ export function resolveState(jsonlMtimeMs: number | null, status: StatusFile | n
 
   // Priority 2: hook-based running signal (UserPromptSubmit / PostToolUse).
   // Gives immediate running state before JSONL mtime catches up (e.g. slash commands).
-  if (status?.state === 'running') {
+  if (status?.state === "running") {
     const runningAtMs = new Date(status.timestamp).getTime();
     const age = Date.now() - runningAtMs;
-    if (!isNaN(age) && age < RUNNING_HOOK_TTL_MS) {
+    if (!Number.isNaN(age) && age < RUNNING_HOOK_TTL_MS) {
       // Stopped signal newer than the running hook overrides it.
-      if (stoppedAtMs === null || isNaN(stoppedAtMs) || runningAtMs > stoppedAtMs) {
-        return 'running';
+      if (
+        stoppedAtMs === null ||
+        Number.isNaN(stoppedAtMs) ||
+        runningAtMs > stoppedAtMs
+      ) {
+        return "running";
       }
     }
   }
 
   // Priority 3: fresh JSONL mtime signals active session.
-  if (jsonlMtimeMs !== null && jsonlMtimeMs > Date.now() - JSONL_ACTIVE_THRESHOLD_MS) {
-    if (status?.state !== 'stopped') return 'running';
+  if (
+    jsonlMtimeMs !== null &&
+    jsonlMtimeMs > Date.now() - JSONL_ACTIVE_THRESHOLD_MS
+  ) {
+    if (status?.state !== "stopped") return "running";
     // JSONL written after the stopped signal means activity resumed (e.g. new session start
     // or prompt submitted after Stop hook fired). Only treat as running in that case.
-    if (stoppedAtMs === null || isNaN(stoppedAtMs) || jsonlMtimeMs > stoppedAtMs + STOP_GRACE_MS) return 'running';
+    if (
+      stoppedAtMs === null ||
+      Number.isNaN(stoppedAtMs) ||
+      jsonlMtimeMs > stoppedAtMs + STOP_GRACE_MS
+    )
+      return "running";
   }
 
   // Priority 4: explicit stopped signal from hook.
-  if (status?.state === 'stopped') return 'stopped';
+  if (status?.state === "stopped") return "stopped";
 
   // Priority 5: default — no fresh JSONL and no useful status.
-  return 'stopped';
+  return "stopped";
 }
 
 function isStatusFile(v: unknown): v is StatusFile {
-  if (typeof v !== 'object' || v === null) return false;
+  if (typeof v !== "object" || v === null) return false;
   const obj = v as Record<string, unknown>;
   return (
-    typeof obj.state === 'string' &&
+    typeof obj.state === "string" &&
     VALID_STATES.has(obj.state) &&
-    typeof obj.timestamp === 'string' &&
-    typeof obj.session_id === 'string' &&
-    typeof obj.working_dir === 'string'
+    typeof obj.timestamp === "string" &&
+    typeof obj.session_id === "string" &&
+    typeof obj.working_dir === "string"
   );
 }
 
-function isFirstLineRecord(v: unknown): v is { cwd: string; sessionId: string } {
-  if (typeof v !== 'object' || v === null) return false;
+function isFirstLineRecord(
+  v: unknown,
+): v is { cwd: string; sessionId: string } {
+  if (typeof v !== "object" || v === null) return false;
   const obj = v as Record<string, unknown>;
-  return typeof obj.cwd === 'string' && typeof obj.sessionId === 'string';
+  return typeof obj.cwd === "string" && typeof obj.sessionId === "string";
 }
 
 type RawIndexEntry = {
@@ -1185,23 +1338,25 @@ type RawIndexEntry = {
 };
 
 function isSessionsIndexRaw(v: unknown): v is { entries: RawIndexEntry[] } {
-  if (typeof v !== 'object' || v === null) return false;
+  if (typeof v !== "object" || v === null) return false;
   const obj = v as Record<string, unknown>;
   if (!Array.isArray(obj.entries)) return false;
   return obj.entries.every(
     (e) =>
-      typeof e === 'object' &&
+      typeof e === "object" &&
       e !== null &&
-      typeof (e as Record<string, unknown>).sessionId === 'string' &&
-      typeof (e as Record<string, unknown>).fullPath === 'string' &&
-      typeof (e as Record<string, unknown>).fileMtime === 'number' &&
-      typeof (e as Record<string, unknown>).projectPath === 'string' &&
-      typeof (e as Record<string, unknown>).isSidechain === 'boolean',
+      typeof (e as Record<string, unknown>).sessionId === "string" &&
+      typeof (e as Record<string, unknown>).fullPath === "string" &&
+      typeof (e as Record<string, unknown>).fileMtime === "number" &&
+      typeof (e as Record<string, unknown>).projectPath === "string" &&
+      typeof (e as Record<string, unknown>).isSidechain === "boolean",
   );
 }
 
 // Strips the .jsonl extension from a path to get the corresponding session directory.
 // Both getSubagentInfos and the former countActiveSubagents rely on this convention.
 function sessionDirFromJSONL(jsonlPath: string): string {
-  return jsonlPath.endsWith(JSONL_EXT) ? jsonlPath.slice(0, -JSONL_EXT.length) : jsonlPath;
+  return jsonlPath.endsWith(JSONL_EXT)
+    ? jsonlPath.slice(0, -JSONL_EXT.length)
+    : jsonlPath;
 }

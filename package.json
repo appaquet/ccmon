@@ -4,9 +4,15 @@
   "scripts": {
     "dump": "bun run src/cli.ts dump",
     "serve": "bun run src/cli.ts serve",
-    "sub": "bun run src/cli.ts sub"
+    "sub": "bun run src/cli.ts sub",
+    "test": "bun test",
+    "lint": "bunx biome check src/ tests/",
+    "lint:fix": "bunx biome check --write src/ tests/",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@biomejs/biome": "2.4.4",
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
   }
 }

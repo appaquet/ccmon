@@ -1,22 +1,25 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { loadConfig, mergeCliOverrides, DEFAULT_CONFIG } from '../src/config';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { DEFAULT_CONFIG, loadConfig, mergeCliOverrides } from "../src/config";
 
-const TMPDIR = Bun.env.TMPDIR || '/tmp';
+const TMPDIR = Bun.env.TMPDIR || "/tmp";
 
 async function makeTempDir(prefix: string): Promise<string> {
-  const dir = join(TMPDIR, `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = join(
+    TMPDIR,
+    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   await mkdir(dir, { recursive: true });
   return dir;
 }
 
-describe('loadConfig', () => {
+describe("loadConfig", () => {
   let tmpDir: string;
   const originalEnv: Record<string, string | undefined> = {};
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-config');
+    tmpDir = await makeTempDir("ccmon-config");
     originalEnv.CCMON_CONFIG = process.env.CCMON_CONFIG;
     originalEnv.XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME;
     delete process.env.CCMON_CONFIG;
@@ -38,65 +41,77 @@ describe('loadConfig', () => {
     }
   });
 
-  test('missing file: returns defaults', () => {
-    const config = loadConfig(join(tmpDir, 'nonexistent.json'));
+  test("missing file: returns defaults", () => {
+    const config = loadConfig(join(tmpDir, "nonexistent.json"));
     expect(config).toEqual(DEFAULT_CONFIG);
   });
 
-  test('valid file with maxInactivityHours: 6 returns correct value', async () => {
-    const configPath = join(tmpDir, 'config.json');
-    await writeFile(configPath, JSON.stringify({ maxInactivityHours: 6, host: '0.0.0.0', port: 8080 }));
+  test("valid file with maxInactivityHours: 6 returns correct value", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ maxInactivityHours: 6, host: "0.0.0.0", port: 8080 }),
+    );
 
     const config = loadConfig(configPath);
     expect(config.maxInactivityHours).toBe(6);
   });
 
-  test('valid file with host and port returns correct values', async () => {
-    const configPath = join(tmpDir, 'config.json');
-    await writeFile(configPath, JSON.stringify({ maxInactivityHours: 3, host: '127.0.0.1', port: 8080 }));
+  test("valid file with host and port returns correct values", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ maxInactivityHours: 3, host: "127.0.0.1", port: 8080 }),
+    );
 
     const config = loadConfig(configPath);
-    expect(config.host).toBe('127.0.0.1');
+    expect(config.host).toBe("127.0.0.1");
     expect(config.port).toBe(8080);
   });
 
-  test('invalid JSON: returns defaults', async () => {
-    const configPath = join(tmpDir, 'config.json');
-    await writeFile(configPath, 'not valid json {{');
+  test("invalid JSON: returns defaults", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(configPath, "not valid json {{");
 
     const config = loadConfig(configPath);
     expect(config).toEqual(DEFAULT_CONFIG);
   });
 
-  test('partial config with only host and port: merges with defaults (R18)', async () => {
-    const configPath = join(tmpDir, 'config.json');
-    await writeFile(configPath, JSON.stringify({ host: '127.0.0.1', port: 8080 }));
+  test("partial config with only host and port: merges with defaults (R18)", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ host: "127.0.0.1", port: 8080 }),
+    );
 
     const config = loadConfig(configPath);
-    expect(config.host).toBe('127.0.0.1');
+    expect(config.host).toBe("127.0.0.1");
     expect(config.port).toBe(8080);
     expect(config.maxInactivityHours).toBe(DEFAULT_CONFIG.maxInactivityHours);
   });
 
-  test('partial config with invalid field types: falls back to defaults per field', async () => {
-    const configPath = join(tmpDir, 'config.json');
-    await writeFile(configPath, JSON.stringify({ maxInactivityHours: 'bad', port: 'notanumber' }));
+  test("partial config with invalid field types: falls back to defaults per field", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ maxInactivityHours: "bad", port: "notanumber" }),
+    );
 
     const config = loadConfig(configPath);
     expect(config.maxInactivityHours).toBe(DEFAULT_CONFIG.maxInactivityHours);
     expect(config.port).toBe(DEFAULT_CONFIG.port);
   });
 
-  test('partial config (empty {}): returns defaults', async () => {
-    const configPath = join(tmpDir, 'config.json');
+  test("partial config (empty {}): returns defaults", async () => {
+    const configPath = join(tmpDir, "config.json");
     await writeFile(configPath, JSON.stringify({}));
 
     const config = loadConfig(configPath);
     expect(config).toEqual(DEFAULT_CONFIG);
   });
 
-  test('CCMON_CONFIG env var overrides path', async () => {
-    const configPath = join(tmpDir, 'custom-config.json');
+  test("CCMON_CONFIG env var overrides path", async () => {
+    const configPath = join(tmpDir, "custom-config.json");
     await writeFile(configPath, JSON.stringify({ maxInactivityHours: 9 }));
     process.env.CCMON_CONFIG = configPath;
 
@@ -106,26 +121,26 @@ describe('loadConfig', () => {
   });
 });
 
-describe('mergeCliOverrides', () => {
-  test('overrides maxInactivityHours', () => {
+describe("mergeCliOverrides", () => {
+  test("overrides maxInactivityHours", () => {
     const base = { ...DEFAULT_CONFIG };
     const result = mergeCliOverrides(base, { maxInactivityHours: 1 });
     expect(result.maxInactivityHours).toBe(1);
   });
 
-  test('overrides host', () => {
+  test("overrides host", () => {
     const base = { ...DEFAULT_CONFIG };
-    const result = mergeCliOverrides(base, { host: '127.0.0.1' });
-    expect(result.host).toBe('127.0.0.1');
+    const result = mergeCliOverrides(base, { host: "127.0.0.1" });
+    expect(result.host).toBe("127.0.0.1");
   });
 
-  test('overrides port', () => {
+  test("overrides port", () => {
     const base = { ...DEFAULT_CONFIG };
     const result = mergeCliOverrides(base, { port: 8080 });
     expect(result.port).toBe(8080);
   });
 
-  test('empty overrides keeps config unchanged', () => {
+  test("empty overrides keeps config unchanged", () => {
     const base = { ...DEFAULT_CONFIG };
     const result = mergeCliOverrides(base, {});
     expect(result).toEqual(base);

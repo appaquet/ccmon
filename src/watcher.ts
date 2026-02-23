@@ -1,7 +1,7 @@
-import { watch } from 'node:fs';
-import type { FSWatcher } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import type { FSWatcher } from "node:fs";
+import { watch } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 
 const DEBOUNCE_MS = 100;
 
@@ -44,7 +44,7 @@ export function watchForChanges(
       const watcher = watch(projectDir, () => {
         scheduleUpdate(projectDir);
       });
-      watcher.on('error', () => {
+      watcher.on("error", () => {
         watcher.close();
         watchers.delete(key);
       });
@@ -70,16 +70,18 @@ export function watchForChanges(
   function startClaudeDirWatcher(): void {
     if (stopped) return;
     try {
-      const watcher = watch(claudeDir, (eventType, filename) => {
+      const watcher = watch(claudeDir, (_eventType, filename) => {
         if (!filename || stopped) return;
         const newProjectDir = join(claudeDir, filename);
-        watchProject(newProjectDir).catch((err) => console.error('ccmon: failed to watch new project dir:', err));
+        watchProject(newProjectDir).catch((err) =>
+          console.error("ccmon: failed to watch new project dir:", err),
+        );
       });
-      watcher.on('error', () => {
+      watcher.on("error", () => {
         watcher.close();
-        watchers.delete('claudeDir');
+        watchers.delete("claudeDir");
       });
-      watchers.set('claudeDir', watcher);
+      watchers.set("claudeDir", watcher);
     } catch {
       // claudeDir inaccessible — nothing to watch
     }
@@ -95,7 +97,7 @@ export function watchForChanges(
     }
 
     for (const entry of entries) {
-      if (entry === 'subagents') continue;
+      if (entry === "subagents") continue;
       const fullPath = join(claudeDir, entry);
       try {
         const s = await stat(fullPath);
@@ -110,7 +112,7 @@ export function watchForChanges(
     startClaudeDirWatcher();
   }
 
-  init().catch((err) => console.error('ccmon: watcher init error:', err));
+  init().catch((err) => console.error("ccmon: watcher init error:", err));
 
   return {
     stop(): void {
@@ -118,7 +120,11 @@ export function watchForChanges(
       for (const timer of timers.values()) clearTimeout(timer);
       timers.clear();
       for (const watcher of watchers.values()) {
-        try { watcher.close(); } catch { /* ignore */ }
+        try {
+          watcher.close();
+        } catch {
+          /* ignore */
+        }
       }
       watchers.clear();
     },

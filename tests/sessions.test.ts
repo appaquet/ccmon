@@ -1,224 +1,266 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdir, writeFile, rm, utimes } from 'node:fs/promises';
-import { join } from 'node:path';
-import { utimesSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { utimesSync } from "node:fs";
+import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { StatusFile } from "../src/sessions";
 import {
-  scanProjects,
-  readStatus,
-  readSessionsIndex,
-  getProjectState,
-  mapHookEventToState,
-  writeStatus,
-  writeNotificationStatus,
-  filterStaleProjects,
-  getSubagentInfos,
-  readSessionTail,
-  resolveState,
   _resetCachesForTesting,
-} from '../src/sessions';
-import type { StatusFile } from '../src/sessions';
+  filterStaleProjects,
+  getProjectState,
+  getSubagentInfos,
+  mapHookEventToState,
+  readSessionsIndex,
+  readSessionTail,
+  readStatus,
+  resolveState,
+  scanProjects,
+  writeNotificationStatus,
+  writeStatus,
+} from "../src/sessions";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const TMPDIR = Bun.env.TMPDIR || '/tmp';
+const TMPDIR = Bun.env.TMPDIR || "/tmp";
 
 async function makeTempDir(prefix: string): Promise<string> {
-  const dir = join(TMPDIR, `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = join(
+    TMPDIR,
+    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   await mkdir(dir, { recursive: true });
   return dir;
 }
 
-function makeFirstLine(cwd: string, sessionId: string, gitBranch = 'main'): string {
-  return JSON.stringify({ timestamp: new Date().toISOString(), sessionId, cwd, gitBranch });
+function makeFirstLine(
+  cwd: string,
+  sessionId: string,
+  gitBranch = "main",
+): string {
+  return JSON.stringify({
+    timestamp: new Date().toISOString(),
+    sessionId,
+    cwd,
+    gitBranch,
+  });
 }
 
 // ─── scanProjects ────────────────────────────────────────────────────────────
 
-describe('scanProjects', () => {
+describe("scanProjects", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-scan');
+    tmpDir = await makeTempDir("ccmon-scan");
   });
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test('happy path: returns correct projectDir, cwd, projectName, sessionId, latestJSONL', async () => {
-    const projDir = join(tmpDir, '-home-user-myproject');
+  test("happy path: returns correct projectDir, cwd, projectName, sessionId, latestJSONL", async () => {
+    const projDir = join(tmpDir, "-home-user-myproject");
     await mkdir(projDir, { recursive: true });
-    await writeFile(join(projDir, 'session1.jsonl'), makeFirstLine('/home/user/myproject', 'abc123') + '\n');
+    await writeFile(
+      join(projDir, "session1.jsonl"),
+      `${makeFirstLine("/home/user/myproject", "abc123")}\n`,
+    );
 
     const results = await scanProjects(tmpDir);
 
     expect(results).toHaveLength(1);
-    expect(results[0].projectDir).toBe('-home-user-myproject');
-    expect(results[0].cwd).toBe('/home/user/myproject');
-    expect(results[0].projectName).toBe('myproject');
-    expect(results[0].sessionId).toBe('abc123');
-    expect(results[0].latestJSONL).toBe(join(projDir, 'session1.jsonl'));
+    expect(results[0].projectDir).toBe("-home-user-myproject");
+    expect(results[0].cwd).toBe("/home/user/myproject");
+    expect(results[0].projectName).toBe("myproject");
+    expect(results[0].sessionId).toBe("abc123");
+    expect(results[0].latestJSONL).toBe(join(projDir, "session1.jsonl"));
   });
 
-  test('multiple JSONL files: picks most recently modified one', async () => {
-    const projDir = join(tmpDir, '-home-user-proj');
+  test("multiple JSONL files: picks most recently modified one", async () => {
+    const projDir = join(tmpDir, "-home-user-proj");
     await mkdir(projDir, { recursive: true });
 
     // older file
-    const older = join(projDir, 'old.jsonl');
-    await writeFile(older, makeFirstLine('/home/user/proj', 'old-session') + '\n');
+    const older = join(projDir, "old.jsonl");
+    await writeFile(
+      older,
+      `${makeFirstLine("/home/user/proj", "old-session")}\n`,
+    );
 
     // set mtime to past
     const pastTime = new Date(Date.now() - 60_000);
     await utimes(older, pastTime, pastTime);
 
     // newer file
-    const newer = join(projDir, 'new.jsonl');
-    await writeFile(newer, makeFirstLine('/home/user/proj', 'new-session') + '\n');
+    const newer = join(projDir, "new.jsonl");
+    await writeFile(
+      newer,
+      `${makeFirstLine("/home/user/proj", "new-session")}\n`,
+    );
 
     const results = await scanProjects(tmpDir);
 
     expect(results).toHaveLength(1);
-    expect(results[0].sessionId).toBe('new-session');
+    expect(results[0].sessionId).toBe("new-session");
     expect(results[0].latestJSONL).toBe(newer);
   });
 
-  test('no JSONL files in subdir: skips that project', async () => {
-    const projDir = join(tmpDir, '-home-user-nojsonl');
+  test("no JSONL files in subdir: skips that project", async () => {
+    const projDir = join(tmpDir, "-home-user-nojsonl");
     await mkdir(projDir, { recursive: true });
-    await writeFile(join(projDir, 'status.local.json'), '{}');
+    await writeFile(join(projDir, "status.local.json"), "{}");
 
     const results = await scanProjects(tmpDir);
     expect(results).toHaveLength(0);
   });
 
-  test('corrupt JSONL (invalid JSON first line): skips that project', async () => {
-    const projDir = join(tmpDir, '-home-user-corrupt');
+  test("corrupt JSONL (invalid JSON first line): skips that project", async () => {
+    const projDir = join(tmpDir, "-home-user-corrupt");
     await mkdir(projDir, { recursive: true });
-    await writeFile(join(projDir, 'session.jsonl'), 'not valid json\n');
+    await writeFile(join(projDir, "session.jsonl"), "not valid json\n");
 
     const results = await scanProjects(tmpDir);
     expect(results).toHaveLength(0);
   });
 
-  test('subagents/ subdir in project dir: ignored as a project dir', async () => {
-    const subagentsDir = join(tmpDir, 'subagents');
+  test("subagents/ subdir in project dir: ignored as a project dir", async () => {
+    const subagentsDir = join(tmpDir, "subagents");
     await mkdir(subagentsDir, { recursive: true });
-    await writeFile(join(subagentsDir, 'session.jsonl'), makeFirstLine('/some/path', 'sa-session') + '\n');
+    await writeFile(
+      join(subagentsDir, "session.jsonl"),
+      `${makeFirstLine("/some/path", "sa-session")}\n`,
+    );
 
     const results = await scanProjects(tmpDir);
     expect(results).toHaveLength(0);
   });
 
-  test('empty projects dir: returns empty array', async () => {
+  test("empty projects dir: returns empty array", async () => {
     const results = await scanProjects(tmpDir);
     expect(results).toHaveLength(0);
   });
 
-  test('multiple valid projects: returns all', async () => {
-    for (const name of ['-home-user-proj-a', '-home-user-proj-b']) {
+  test("multiple valid projects: returns all", async () => {
+    for (const name of ["-home-user-proj-a", "-home-user-proj-b"]) {
       const projDir = join(tmpDir, name);
       await mkdir(projDir, { recursive: true });
-      await writeFile(join(projDir, 'session.jsonl'), makeFirstLine(`/home/user/${name}`, `id-${name}`) + '\n');
+      await writeFile(
+        join(projDir, "session.jsonl"),
+        `${makeFirstLine(`/home/user/${name}`, `id-${name}`)}\n`,
+      );
     }
 
     const results = await scanProjects(tmpDir);
     expect(results).toHaveLength(2);
   });
 
-  test('no sessions-index.json, first JSONL line >512 bytes: project is not dropped', async () => {
-    const projDir = join(tmpDir, '-home-user-longfirstline');
+  test("no sessions-index.json, first JSONL line >512 bytes: project is not dropped", async () => {
+    const projDir = join(tmpDir, "-home-user-longfirstline");
     await mkdir(projDir, { recursive: true });
 
     // Build a first-line JSON whose serialized form exceeds 512 bytes by including a long string value.
-    const longContent = 'x'.repeat(600);
+    const longContent = "x".repeat(600);
     const firstLineObj = {
       timestamp: new Date().toISOString(),
-      sessionId: 'long-line-session',
-      cwd: '/home/user/longfirstline',
-      gitBranch: 'main',
-      message: { role: 'user', content: longContent },
+      sessionId: "long-line-session",
+      cwd: "/home/user/longfirstline",
+      gitBranch: "main",
+      message: { role: "user", content: longContent },
     };
     const firstLine = JSON.stringify(firstLineObj);
 
     // Sanity-check: the test is only meaningful when the line actually exceeds 512 bytes.
     expect(firstLine.length).toBeGreaterThan(512);
 
-    await writeFile(join(projDir, 'session.jsonl'), firstLine + '\n');
+    await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
 
     const results = await scanProjects(tmpDir);
 
     expect(results).toHaveLength(1);
-    expect(results[0].sessionId).toBe('long-line-session');
-    expect(results[0].cwd).toBe('/home/user/longfirstline');
+    expect(results[0].sessionId).toBe("long-line-session");
+    expect(results[0].cwd).toBe("/home/user/longfirstline");
   });
 
-  test('sessions-index.json present: returns enriched fields, uses projectPath as cwd', async () => {
-    const projDir = join(tmpDir, '-home-user-indexed');
+  test("sessions-index.json present: returns enriched fields, uses projectPath as cwd", async () => {
+    const projDir = join(tmpDir, "-home-user-indexed");
     await mkdir(projDir, { recursive: true });
 
     const entry = {
-      sessionId: 'idx-sess',
-      fullPath: join(projDir, 'idx-sess.jsonl'),
+      sessionId: "idx-sess",
+      fullPath: join(projDir, "idx-sess.jsonl"),
       fileMtime: 1_700_000_000_000,
-      firstPrompt: 'Work on feature X',
-      summary: 'Feature X implementation',
+      firstPrompt: "Work on feature X",
+      summary: "Feature X implementation",
       messageCount: 42,
-      created: '2026-02-01T00:00:00.000Z',
-      modified: '2026-02-01T02:00:00.000Z',
-      gitBranch: 'main',
-      projectPath: '/home/user/indexed',
+      created: "2026-02-01T00:00:00.000Z",
+      modified: "2026-02-01T02:00:00.000Z",
+      gitBranch: "main",
+      projectPath: "/home/user/indexed",
       isSidechain: false,
     };
-    await writeFile(join(projDir, 'sessions-index.json'), JSON.stringify({ version: 1, entries: [entry] }));
+    await writeFile(
+      join(projDir, "sessions-index.json"),
+      JSON.stringify({ version: 1, entries: [entry] }),
+    );
 
     // JSONL file must exist since latestJSONL points to it (stat used in getProjectState)
-    await writeFile(entry.fullPath, makeFirstLine('/home/user/indexed', 'idx-sess') + '\n');
+    await writeFile(
+      entry.fullPath,
+      `${makeFirstLine("/home/user/indexed", "idx-sess")}\n`,
+    );
 
     const results = await scanProjects(tmpDir);
 
     expect(results).toHaveLength(1);
-    expect(results[0].cwd).toBe('/home/user/indexed');
-    expect(results[0].projectName).toBe('indexed');
-    expect(results[0].sessionId).toBe('idx-sess');
+    expect(results[0].cwd).toBe("/home/user/indexed");
+    expect(results[0].projectName).toBe("indexed");
+    expect(results[0].sessionId).toBe("idx-sess");
     expect(results[0].latestJSONL).toBe(entry.fullPath);
-    expect(results[0].summary).toBe('Feature X implementation');
-    expect(results[0].firstPrompt).toBe('Work on feature X');
+    expect(results[0].summary).toBe("Feature X implementation");
+    expect(results[0].firstPrompt).toBe("Work on feature X");
     expect(results[0].messageCount).toBe(42);
-    expect(results[0].sessionModified).toBe('2026-02-01T02:00:00.000Z');
+    expect(results[0].sessionModified).toBe("2026-02-01T02:00:00.000Z");
   });
 
-  test('stale sessions-index.json: newer on-disk JSONL used as latestJSONL', async () => {
+  test("stale sessions-index.json: newer on-disk JSONL used as latestJSONL", async () => {
     // Simulates the scenario where the index stops updating (e.g. Feb 3) but real
     // JSONL files continue being written to the project dir (e.g. Feb 21).
-    const projDir = join(tmpDir, '-home-user-stale-index');
+    const projDir = join(tmpDir, "-home-user-stale-index");
     await mkdir(projDir, { recursive: true });
 
     // Old JSONL referenced by the index (mtime = 20 days ago)
-    const oldJSONL = join(projDir, 'old-session.jsonl');
-    await writeFile(oldJSONL, makeFirstLine('/home/user/stale-index', 'old-sess') + '\n');
+    const oldJSONL = join(projDir, "old-session.jsonl");
+    await writeFile(
+      oldJSONL,
+      `${makeFirstLine("/home/user/stale-index", "old-sess")}\n`,
+    );
     const staleMtime = new Date(Date.now() - 20 * 24 * 3600 * 1000);
     utimesSync(oldJSONL, staleMtime, staleMtime);
     const staleMtimeMs = staleMtime.getTime();
 
     // Index records the old JSONL with its stale mtime
     const entry = {
-      sessionId: 'old-sess',
+      sessionId: "old-sess",
       fullPath: oldJSONL,
       fileMtime: staleMtimeMs,
-      firstPrompt: 'Old prompt',
-      summary: 'Old summary',
+      firstPrompt: "Old prompt",
+      summary: "Old summary",
       messageCount: 5,
       modified: staleMtime.toISOString(),
-      gitBranch: 'main',
-      projectPath: '/home/user/stale-index',
+      gitBranch: "main",
+      projectPath: "/home/user/stale-index",
       isSidechain: false,
     };
-    await writeFile(join(projDir, 'sessions-index.json'), JSON.stringify({ version: 1, entries: [entry] }));
+    await writeFile(
+      join(projDir, "sessions-index.json"),
+      JSON.stringify({ version: 1, entries: [entry] }),
+    );
 
     // Newer JSONL exists on disk (not in the index), written today
-    const newerJSONL = join(projDir, 'new-session.jsonl');
-    await writeFile(newerJSONL, makeFirstLine('/home/user/stale-index', 'new-sess') + '\n');
+    const newerJSONL = join(projDir, "new-session.jsonl");
+    await writeFile(
+      newerJSONL,
+      `${makeFirstLine("/home/user/stale-index", "new-sess")}\n`,
+    );
     // Default mtime = now (no utimes call needed)
 
     _resetCachesForTesting();
@@ -229,109 +271,125 @@ describe('scanProjects', () => {
     expect(results[0].latestJSONL).toBe(newerJSONL);
     // lastUpdated from getProjectState would reflect the newer file's mtime,
     // so verify via filterStaleProjects that this project is NOT dropped at 3h threshold
-    const { getProjectState, filterStaleProjects } = await import('../src/sessions');
+    const { getProjectState, filterStaleProjects } = await import(
+      "../src/sessions"
+    );
     _resetCachesForTesting();
     const states = await getProjectState(tmpDir);
     expect(states).toHaveLength(1);
     const kept = filterStaleProjects(states, 3);
     expect(kept).toHaveLength(1);
     // lastUpdated should be recent (within the last minute)
-    expect(new Date(kept[0].lastUpdated!).getTime()).toBeGreaterThan(Date.now() - 60_000);
+    expect(new Date(kept[0].lastUpdated as string).getTime()).toBeGreaterThan(
+      Date.now() - 60_000,
+    );
   });
 });
 
 // ─── readSessionsIndex ───────────────────────────────────────────────────────
 
-describe('readSessionsIndex', () => {
+describe("readSessionsIndex", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-index');
+    tmpDir = await makeTempDir("ccmon-index");
   });
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  function makeIndexEntry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  function makeIndexEntry(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
     return {
-      sessionId: 'sess-1',
-      fullPath: '/some/path/sess-1.jsonl',
+      sessionId: "sess-1",
+      fullPath: "/some/path/sess-1.jsonl",
       fileMtime: 1_700_000_000_000,
-      firstPrompt: 'Hello world',
-      summary: 'A session summary',
+      firstPrompt: "Hello world",
+      summary: "A session summary",
       messageCount: 10,
-      created: '2026-02-01T00:00:00.000Z',
-      modified: '2026-02-01T01:00:00.000Z',
-      gitBranch: 'main',
-      projectPath: '/home/user/project',
+      created: "2026-02-01T00:00:00.000Z",
+      modified: "2026-02-01T01:00:00.000Z",
+      gitBranch: "main",
+      projectPath: "/home/user/project",
       isSidechain: false,
       ...overrides,
     };
   }
 
-  test('valid sessions-index.json: returns projectPath and entries', async () => {
+  test("valid sessions-index.json: returns projectPath and entries", async () => {
     const entry = makeIndexEntry();
     const index = { version: 1, entries: [entry] };
-    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify(index));
+    await writeFile(join(tmpDir, "sessions-index.json"), JSON.stringify(index));
 
     const result = await readSessionsIndex(tmpDir);
 
     expect(result).not.toBeNull();
-    expect(result!.projectPath).toBe('/home/user/project');
-    expect(result!.entries).toHaveLength(1);
-    expect(result!.entries[0].sessionId).toBe('sess-1');
-    expect(result!.entries[0].fullPath).toBe('/some/path/sess-1.jsonl');
-    expect(result!.entries[0].fileMtime).toBe(1_700_000_000_000);
-    expect(result!.entries[0].summary).toBe('A session summary');
-    expect(result!.entries[0].firstPrompt).toBe('Hello world');
-    expect(result!.entries[0].messageCount).toBe(10);
-    expect(result!.entries[0].modified).toBe('2026-02-01T01:00:00.000Z');
+    expect(result?.projectPath).toBe("/home/user/project");
+    expect(result?.entries).toHaveLength(1);
+    expect(result?.entries[0].sessionId).toBe("sess-1");
+    expect(result?.entries[0].fullPath).toBe("/some/path/sess-1.jsonl");
+    expect(result?.entries[0].fileMtime).toBe(1_700_000_000_000);
+    expect(result?.entries[0].summary).toBe("A session summary");
+    expect(result?.entries[0].firstPrompt).toBe("Hello world");
+    expect(result?.entries[0].messageCount).toBe(10);
+    expect(result?.entries[0].modified).toBe("2026-02-01T01:00:00.000Z");
   });
 
-  test('missing sessions-index.json: returns null', async () => {
+  test("missing sessions-index.json: returns null", async () => {
     const result = await readSessionsIndex(tmpDir);
     expect(result).toBeNull();
   });
 
-  test('corrupt JSON: returns null', async () => {
-    await writeFile(join(tmpDir, 'sessions-index.json'), 'not valid json {{');
+  test("corrupt JSON: returns null", async () => {
+    await writeFile(join(tmpDir, "sessions-index.json"), "not valid json {{");
     const result = await readSessionsIndex(tmpDir);
     expect(result).toBeNull();
   });
 
-  test('picks entry with highest fileMtime as latest session', async () => {
-    const older = makeIndexEntry({ sessionId: 'old', fullPath: '/p/old.jsonl', fileMtime: 1_000 });
-    const newer = makeIndexEntry({ sessionId: 'new', fullPath: '/p/new.jsonl', fileMtime: 2_000 });
+  test("picks entry with highest fileMtime as latest session", async () => {
+    const older = makeIndexEntry({
+      sessionId: "old",
+      fullPath: "/p/old.jsonl",
+      fileMtime: 1_000,
+    });
+    const newer = makeIndexEntry({
+      sessionId: "new",
+      fullPath: "/p/new.jsonl",
+      fileMtime: 2_000,
+    });
     const index = { version: 1, entries: [older, newer] };
-    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify(index));
+    await writeFile(join(tmpDir, "sessions-index.json"), JSON.stringify(index));
 
     const result = await readSessionsIndex(tmpDir);
 
     expect(result).not.toBeNull();
     // entries returned in original order; caller picks max
-    expect(result!.entries).toHaveLength(2);
-    const maxEntry = result!.entries.reduce((a, b) => (a.fileMtime > b.fileMtime ? a : b));
-    expect(maxEntry.sessionId).toBe('new');
+    expect(result?.entries).toHaveLength(2);
+    const maxEntry = result?.entries.reduce((a, b) =>
+      a.fileMtime > b.fileMtime ? a : b,
+    );
+    expect(maxEntry?.sessionId).toBe("new");
   });
 
-  test('filters out isSidechain: true entries', async () => {
-    const mainEntry = makeIndexEntry({ sessionId: 'main', isSidechain: false });
-    const sideEntry = makeIndexEntry({ sessionId: 'side', isSidechain: true });
+  test("filters out isSidechain: true entries", async () => {
+    const mainEntry = makeIndexEntry({ sessionId: "main", isSidechain: false });
+    const sideEntry = makeIndexEntry({ sessionId: "side", isSidechain: true });
     const index = { version: 1, entries: [mainEntry, sideEntry] };
-    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify(index));
+    await writeFile(join(tmpDir, "sessions-index.json"), JSON.stringify(index));
 
     const result = await readSessionsIndex(tmpDir);
 
     expect(result).not.toBeNull();
-    expect(result!.entries).toHaveLength(1);
-    expect(result!.entries[0].sessionId).toBe('main');
+    expect(result?.entries).toHaveLength(1);
+    expect(result?.entries[0].sessionId).toBe("main");
   });
 
-  test('all entries are sidechains: returns null (no usable entries)', async () => {
-    const sideEntry = makeIndexEntry({ sessionId: 'side', isSidechain: true });
+  test("all entries are sidechains: returns null (no usable entries)", async () => {
+    const sideEntry = makeIndexEntry({ sessionId: "side", isSidechain: true });
     const index = { version: 1, entries: [sideEntry] };
-    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify(index));
+    await writeFile(join(tmpDir, "sessions-index.json"), JSON.stringify(index));
 
     const result = await readSessionsIndex(tmpDir);
     expect(result).toBeNull();
@@ -340,63 +398,78 @@ describe('readSessionsIndex', () => {
 
 // ─── readStatus ──────────────────────────────────────────────────────────────
 
-describe('readStatus', () => {
+describe("readStatus", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-status');
+    tmpDir = await makeTempDir("ccmon-status");
   });
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test('valid status.local.json: returns StatusFile', async () => {
+  test("valid status.local.json: returns StatusFile", async () => {
     const payload = {
-      state: 'running',
-      timestamp: '2026-02-19T10:00:00.000Z',
-      session_id: 'abc123',
-      working_dir: '/home/user/proj',
+      state: "running",
+      timestamp: "2026-02-19T10:00:00.000Z",
+      session_id: "abc123",
+      working_dir: "/home/user/proj",
     };
-    await writeFile(join(tmpDir, 'status.local.json'), JSON.stringify(payload));
+    await writeFile(join(tmpDir, "status.local.json"), JSON.stringify(payload));
 
     const result = await readStatus(tmpDir);
 
     expect(result).not.toBeNull();
-    expect(result!.state).toBe('running');
-    expect(result!.timestamp).toBe('2026-02-19T10:00:00.000Z');
-    expect(result!.session_id).toBe('abc123');
-    expect(result!.working_dir).toBe('/home/user/proj');
+    expect(result?.state).toBe("running");
+    expect(result?.timestamp).toBe("2026-02-19T10:00:00.000Z");
+    expect(result?.session_id).toBe("abc123");
+    expect(result?.working_dir).toBe("/home/user/proj");
   });
 
-  test('waiting_for_permission state: accepted', async () => {
-    const payload = { state: 'waiting_for_permission', timestamp: '2026-02-19T10:00:00.000Z', session_id: 's', working_dir: '/p' };
-    await writeFile(join(tmpDir, 'status.local.json'), JSON.stringify(payload));
+  test("waiting_for_permission state: accepted", async () => {
+    const payload = {
+      state: "waiting_for_permission",
+      timestamp: "2026-02-19T10:00:00.000Z",
+      session_id: "s",
+      working_dir: "/p",
+    };
+    await writeFile(join(tmpDir, "status.local.json"), JSON.stringify(payload));
     const result = await readStatus(tmpDir);
-    expect(result!.state).toBe('waiting_for_permission');
+    expect(result?.state).toBe("waiting_for_permission");
   });
 
-  test('stopped state: accepted', async () => {
-    const payload = { state: 'stopped', timestamp: '2026-02-19T10:00:00.000Z', session_id: 's', working_dir: '/p' };
-    await writeFile(join(tmpDir, 'status.local.json'), JSON.stringify(payload));
+  test("stopped state: accepted", async () => {
+    const payload = {
+      state: "stopped",
+      timestamp: "2026-02-19T10:00:00.000Z",
+      session_id: "s",
+      working_dir: "/p",
+    };
+    await writeFile(join(tmpDir, "status.local.json"), JSON.stringify(payload));
     const result = await readStatus(tmpDir);
-    expect(result!.state).toBe('stopped');
+    expect(result?.state).toBe("stopped");
   });
 
-  test('missing file: returns null', async () => {
+  test("missing file: returns null", async () => {
     const result = await readStatus(tmpDir);
     expect(result).toBeNull();
   });
 
-  test('corrupt JSON: returns null', async () => {
-    await writeFile(join(tmpDir, 'status.local.json'), 'not json at all');
+  test("corrupt JSON: returns null", async () => {
+    await writeFile(join(tmpDir, "status.local.json"), "not json at all");
     const result = await readStatus(tmpDir);
     expect(result).toBeNull();
   });
 
-  test('unknown state value: returns null', async () => {
-    const payload = { state: 'unknown_state', timestamp: '2026-02-19T10:00:00.000Z', session_id: 's', working_dir: '/p' };
-    await writeFile(join(tmpDir, 'status.local.json'), JSON.stringify(payload));
+  test("unknown state value: returns null", async () => {
+    const payload = {
+      state: "unknown_state",
+      timestamp: "2026-02-19T10:00:00.000Z",
+      session_id: "s",
+      working_dir: "/p",
+    };
+    await writeFile(join(tmpDir, "status.local.json"), JSON.stringify(payload));
     const result = await readStatus(tmpDir);
     expect(result).toBeNull();
   });
@@ -404,133 +477,176 @@ describe('readStatus', () => {
 
 // ─── getProjectState ─────────────────────────────────────────────────────────
 
-describe('getProjectState', () => {
+describe("getProjectState", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-state');
+    tmpDir = await makeTempDir("ccmon-state");
   });
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  async function makeProject(name: string, cwd: string, sessionId: string): Promise<string> {
+  async function makeProject(
+    name: string,
+    cwd: string,
+    sessionId: string,
+  ): Promise<string> {
     const projDir = join(tmpDir, name);
     await mkdir(projDir, { recursive: true });
-    await writeFile(join(projDir, 'session.jsonl'), makeFirstLine(cwd, sessionId) + '\n');
+    await writeFile(
+      join(projDir, "session.jsonl"),
+      `${makeFirstLine(cwd, sessionId)}\n`,
+    );
     return projDir;
   }
 
-  test('fresh JSONL mtime: state is running (JSONL-primary)', async () => {
+  test("fresh JSONL mtime: state is running (JSONL-primary)", async () => {
     // JSONL mtime < 60s → running, regardless of status
-    await makeProject('-home-user-fresh', '/home/user/fresh', 'sid1');
+    await makeProject("-home-user-fresh", "/home/user/fresh", "sid1");
     // No status file; fresh JSONL mtime drives state.
     const before = Date.now();
     const results = await getProjectState(tmpDir);
 
     expect(results).toHaveLength(1);
-    expect(results[0].state).toBe('running');
+    expect(results[0].state).toBe("running");
     // lastUpdated is JSONL mtime, which is recent
     expect(results[0].lastUpdated).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    expect(new Date(results[0].lastUpdated!).getTime()).toBeGreaterThanOrEqual(before - 5000);
-    expect(new Date(results[0].lastUpdated!).getTime()).toBeLessThanOrEqual(Date.now() + 1000);
+    expect(
+      new Date(results[0].lastUpdated as string).getTime(),
+    ).toBeGreaterThanOrEqual(before - 5000);
+    expect(
+      new Date(results[0].lastUpdated as string).getTime(),
+    ).toBeLessThanOrEqual(Date.now() + 1000);
   });
 
-  test('status absent, stale JSONL mtime: state = stopped, lastUpdated from JSONL mtime', async () => {
-    const projDir = await makeProject('-home-user-nostatus', '/home/user/nostatus', 'sid2');
+  test("status absent, stale JSONL mtime: state = stopped, lastUpdated from JSONL mtime", async () => {
+    const projDir = await makeProject(
+      "-home-user-nostatus",
+      "/home/user/nostatus",
+      "sid2",
+    );
     // Backdate the JSONL to simulate a stale session (> 60s ago)
-    const jsonlPath = join(projDir, 'session.jsonl');
+    const jsonlPath = join(projDir, "session.jsonl");
     const staleMtime = new Date(Date.now() - 2 * 60 * 1000); // 2 min ago
     utimesSync(jsonlPath, staleMtime, staleMtime);
 
     const results = await getProjectState(tmpDir);
 
     expect(results).toHaveLength(1);
-    expect(results[0].state).toBe('stopped');
+    expect(results[0].state).toBe("stopped");
     expect(results[0].lastUpdated).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     // lastUpdated comes from the (backdated) JSONL mtime
-    const updatedMs = new Date(results[0].lastUpdated!).getTime();
+    const updatedMs = new Date(results[0].lastUpdated as string).getTime();
     expect(updatedMs).toBeGreaterThanOrEqual(staleMtime.getTime() - 1000);
     expect(updatedMs).toBeLessThanOrEqual(staleMtime.getTime() + 1000);
   });
 
-  test('stopped hook signal with stale JSONL: overrides to stopped', async () => {
+  test("stopped hook signal with stale JSONL: overrides to stopped", async () => {
     // When status says stopped and JSONL is old, state is stopped.
-    const projDir = await makeProject('-home-user-stale', '/home/user/stale', 'sid3');
-    const jsonlPath = join(projDir, 'session.jsonl');
+    const projDir = await makeProject(
+      "-home-user-stale",
+      "/home/user/stale",
+      "sid3",
+    );
+    const jsonlPath = join(projDir, "session.jsonl");
     const staleMtime = new Date(Date.now() - 2 * 60 * 1000);
     utimesSync(jsonlPath, staleMtime, staleMtime);
     const payload = {
-      state: 'stopped',
+      state: "stopped",
       timestamp: new Date().toISOString(),
-      session_id: 'sid3',
-      working_dir: '/home/user/stale',
+      session_id: "sid3",
+      working_dir: "/home/user/stale",
     };
-    await writeFile(join(projDir, 'status.local.json'), JSON.stringify(payload));
+    await writeFile(
+      join(projDir, "status.local.json"),
+      JSON.stringify(payload),
+    );
 
     const results = await getProjectState(tmpDir);
 
     expect(results).toHaveLength(1);
-    expect(results[0].state).toBe('stopped');
+    expect(results[0].state).toBe("stopped");
   });
 
-  test('stopped hook signal wins over fresh JSONL when status is newer', async () => {
+  test("stopped hook signal wins over fresh JSONL when status is newer", async () => {
     // If stopped signal timestamp > JSONL mtime, session is stopped.
-    const projDir = await makeProject('-home-user-stale-stopped', '/home/user/stale-stopped', 'sid4');
-    const jsonlPath = join(projDir, 'session.jsonl');
+    const projDir = await makeProject(
+      "-home-user-stale-stopped",
+      "/home/user/stale-stopped",
+      "sid4",
+    );
+    const jsonlPath = join(projDir, "session.jsonl");
     // Backdate JSONL to 2 min ago so it is older than the stopped signal
     const staleMtime = new Date(Date.now() - 2 * 60 * 1000);
     utimesSync(jsonlPath, staleMtime, staleMtime);
     const payload = {
-      state: 'stopped',
+      state: "stopped",
       timestamp: new Date().toISOString(), // stopped signal is newer than JSONL
-      session_id: 'sid4',
-      working_dir: '/home/user/stale-stopped',
+      session_id: "sid4",
+      working_dir: "/home/user/stale-stopped",
     };
-    await writeFile(join(projDir, 'status.local.json'), JSON.stringify(payload));
+    await writeFile(
+      join(projDir, "status.local.json"),
+      JSON.stringify(payload),
+    );
 
     const results = await getProjectState(tmpDir);
 
     expect(results).toHaveLength(1);
-    expect(results[0].state).toBe('stopped');
+    expect(results[0].state).toBe("stopped");
   });
 
-  test('multiple projects: all returned', async () => {
-    await makeProject('-home-user-a', '/home/user/a', 'sida');
-    await makeProject('-home-user-b', '/home/user/b', 'sidb');
+  test("multiple projects: all returned", async () => {
+    await makeProject("-home-user-a", "/home/user/a", "sida");
+    await makeProject("-home-user-b", "/home/user/b", "sidb");
 
     const results = await getProjectState(tmpDir);
     expect(results).toHaveLength(2);
   });
 
-  test('R26: notificationMessage and notificationTimestamp forwarded from StatusFile', async () => {
-    const projDir = await makeProject('-home-user-notif', '/home/user/notif', 'sid-n');
+  test("R26: notificationMessage and notificationTimestamp forwarded from StatusFile", async () => {
+    const projDir = await makeProject(
+      "-home-user-notif",
+      "/home/user/notif",
+      "sid-n",
+    );
     const payload = {
-      state: 'stopped',
+      state: "stopped",
       timestamp: new Date().toISOString(),
-      session_id: 'sid-n',
-      working_dir: '/home/user/notif',
-      notificationMessage: 'You have a notification',
-      notificationTimestamp: '2026-02-22T10:00:00.000Z',
+      session_id: "sid-n",
+      working_dir: "/home/user/notif",
+      notificationMessage: "You have a notification",
+      notificationTimestamp: "2026-02-22T10:00:00.000Z",
     };
-    await writeFile(join(projDir, 'status.local.json'), JSON.stringify(payload));
+    await writeFile(
+      join(projDir, "status.local.json"),
+      JSON.stringify(payload),
+    );
 
     const results = await getProjectState(tmpDir);
     expect(results).toHaveLength(1);
-    expect(results[0].notificationMessage).toBe('You have a notification');
-    expect(results[0].notificationTimestamp).toBe('2026-02-22T10:00:00.000Z');
+    expect(results[0].notificationMessage).toBe("You have a notification");
+    expect(results[0].notificationTimestamp).toBe("2026-02-22T10:00:00.000Z");
   });
 
-  test('R26: notificationMessage absent when status has none', async () => {
-    const projDir = await makeProject('-home-user-nonotif', '/home/user/nonotif', 'sid-nn');
+  test("R26: notificationMessage absent when status has none", async () => {
+    const projDir = await makeProject(
+      "-home-user-nonotif",
+      "/home/user/nonotif",
+      "sid-nn",
+    );
     const payload = {
-      state: 'stopped',
+      state: "stopped",
       timestamp: new Date().toISOString(),
-      session_id: 'sid-nn',
-      working_dir: '/home/user/nonotif',
+      session_id: "sid-nn",
+      working_dir: "/home/user/nonotif",
     };
-    await writeFile(join(projDir, 'status.local.json'), JSON.stringify(payload));
+    await writeFile(
+      join(projDir, "status.local.json"),
+      JSON.stringify(payload),
+    );
 
     const results = await getProjectState(tmpDir);
     expect(results).toHaveLength(1);
@@ -538,47 +654,56 @@ describe('getProjectState', () => {
     expect(results[0].notificationTimestamp).toBeUndefined();
   });
 
-  test('R2: invalid status.timestamp for waiting_for_permission treated as stale (NaN guard)', async () => {
+  test("R2: invalid status.timestamp for waiting_for_permission treated as stale (NaN guard)", async () => {
     // NaN guard: an unparseable timestamp on a waiting_for_permission signal must not
     // be treated as perpetually fresh — it falls through to the next priority.
-    const projDir = await makeProject('-home-user-nan-ts', '/home/user/nan-ts', 'sid-nan');
+    const projDir = await makeProject(
+      "-home-user-nan-ts",
+      "/home/user/nan-ts",
+      "sid-nan",
+    );
     // Backdate the JSONL so it is not within the 60s active threshold
-    const jsonlPath = join(projDir, 'session.jsonl');
+    const jsonlPath = join(projDir, "session.jsonl");
     const staleMtime = new Date(Date.now() - 2 * 60 * 1000);
     utimesSync(jsonlPath, staleMtime, staleMtime);
     const payload = {
-      state: 'waiting_for_permission',
-      timestamp: 'not-a-date',
-      session_id: 'sid-nan',
-      working_dir: '/home/user/nan-ts',
+      state: "waiting_for_permission",
+      timestamp: "not-a-date",
+      session_id: "sid-nan",
+      working_dir: "/home/user/nan-ts",
     };
-    await writeFile(join(projDir, 'status.local.json'), JSON.stringify(payload));
+    await writeFile(
+      join(projDir, "status.local.json"),
+      JSON.stringify(payload),
+    );
 
     const results = await getProjectState(tmpDir);
     expect(results).toHaveLength(1);
     // NaN age on permission signal treated as stale → falls through to priority 4 → stopped
-    expect(results[0].state).toBe('stopped');
+    expect(results[0].state).toBe("stopped");
   });
 });
 
 // ─── filterStaleProjects NaN guard ───────────────────────────────────────────
 
-describe('filterStaleProjects NaN guard (R18)', () => {
-  function makeProject(lastUpdated: string | null): import('../src/sessions').ProjectState {
+describe("filterStaleProjects NaN guard (R18)", () => {
+  function makeProject(
+    lastUpdated: string | null,
+  ): import("../src/sessions").ProjectState {
     return {
-      projectDir: 'dir',
-      cwd: '/home/user/proj',
-      projectName: 'proj',
-      sessionId: 'sid',
-      latestJSONL: '/home/user/proj/session.jsonl',
-      state: 'stopped',
+      projectDir: "dir",
+      cwd: "/home/user/proj",
+      projectName: "proj",
+      sessionId: "sid",
+      latestJSONL: "/home/user/proj/session.jsonl",
+      state: "stopped",
       lastUpdated,
     };
   }
 
-  test('R18: invalid lastUpdated string (NaN) keeps project instead of silently dropping it', () => {
+  test("R18: invalid lastUpdated string (NaN) keeps project instead of silently dropping it", () => {
     // A malformed timestamp should not cause the project to disappear from the dashboard.
-    const projects = [makeProject('not-a-date')];
+    const projects = [makeProject("not-a-date")];
     const result = filterStaleProjects(projects, 1);
     expect(result).toHaveLength(1);
   });
@@ -586,229 +711,259 @@ describe('filterStaleProjects NaN guard (R18)', () => {
 
 // ─── mapHookEventToState ──────────────────────────────────────────────────────
 
-describe('mapHookEventToState', () => {
-  test('UserPromptSubmit → running', () => {
-    expect(mapHookEventToState('UserPromptSubmit')).toBe('running');
+describe("mapHookEventToState", () => {
+  test("UserPromptSubmit → running", () => {
+    expect(mapHookEventToState("UserPromptSubmit")).toBe("running");
   });
 
-  test('PostToolUse → running', () => {
-    expect(mapHookEventToState('PostToolUse')).toBe('running');
+  test("PostToolUse → running", () => {
+    expect(mapHookEventToState("PostToolUse")).toBe("running");
   });
 
-  test('PermissionRequest → waiting_for_permission', () => {
-    expect(mapHookEventToState('PermissionRequest')).toBe('waiting_for_permission');
+  test("PermissionRequest → waiting_for_permission", () => {
+    expect(mapHookEventToState("PermissionRequest")).toBe(
+      "waiting_for_permission",
+    );
   });
 
-  test('Stop → stopped', () => {
-    expect(mapHookEventToState('Stop')).toBe('stopped');
+  test("Stop → stopped", () => {
+    expect(mapHookEventToState("Stop")).toBe("stopped");
   });
 
-  test('SessionEnd → stopped', () => {
-    expect(mapHookEventToState('SessionEnd')).toBe('stopped');
+  test("SessionEnd → stopped", () => {
+    expect(mapHookEventToState("SessionEnd")).toBe("stopped");
   });
 
-  test('unknown event → null', () => {
-    expect(mapHookEventToState('SomeUnknownEvent')).toBeNull();
-    expect(mapHookEventToState('')).toBeNull();
+  test("unknown event → null", () => {
+    expect(mapHookEventToState("SomeUnknownEvent")).toBeNull();
+    expect(mapHookEventToState("")).toBeNull();
   });
 });
 
 // ─── writeStatus ─────────────────────────────────────────────────────────────
 
-describe('writeStatus', () => {
+describe("writeStatus", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-write-status');
+    tmpDir = await makeTempDir("ccmon-write-status");
   });
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test('writes status.local.json with correct content', async () => {
+  test("writes status.local.json with correct content", async () => {
     const status = {
-      state: 'running' as const,
-      timestamp: '2026-02-20T12:00:00.000Z',
-      session_id: 'test-session-id',
-      working_dir: '/home/user/project',
+      state: "running" as const,
+      timestamp: "2026-02-20T12:00:00.000Z",
+      session_id: "test-session-id",
+      working_dir: "/home/user/project",
     };
 
     await writeStatus(tmpDir, status);
 
-    const raw = await Bun.file(join(tmpDir, 'status.local.json')).text();
+    const raw = await Bun.file(join(tmpDir, "status.local.json")).text();
     const parsed = JSON.parse(raw);
-    expect(parsed.state).toBe('running');
-    expect(parsed.timestamp).toBe('2026-02-20T12:00:00.000Z');
-    expect(parsed.session_id).toBe('test-session-id');
-    expect(parsed.working_dir).toBe('/home/user/project');
+    expect(parsed.state).toBe("running");
+    expect(parsed.timestamp).toBe("2026-02-20T12:00:00.000Z");
+    expect(parsed.session_id).toBe("test-session-id");
+    expect(parsed.working_dir).toBe("/home/user/project");
   });
 
-  test('round-trip: writeStatus output is parseable by readStatus', async () => {
+  test("round-trip: writeStatus output is parseable by readStatus", async () => {
     const status = {
-      state: 'waiting_for_permission' as const,
+      state: "waiting_for_permission" as const,
       timestamp: new Date().toISOString(),
-      session_id: 'round-trip-id',
-      working_dir: '/home/user/rt',
+      session_id: "round-trip-id",
+      working_dir: "/home/user/rt",
     };
 
     await writeStatus(tmpDir, status);
     const result = await readStatus(tmpDir);
 
     expect(result).not.toBeNull();
-    expect(result!.state).toBe('waiting_for_permission');
-    expect(result!.session_id).toBe('round-trip-id');
-    expect(result!.working_dir).toBe('/home/user/rt');
+    expect(result?.state).toBe("waiting_for_permission");
+    expect(result?.session_id).toBe("round-trip-id");
+    expect(result?.working_dir).toBe("/home/user/rt");
   });
 });
 
 // ─── mapHookEventToState (Notification) ──────────────────────────────────────
 
-describe('mapHookEventToState (R26)', () => {
-  test('Notification → null (does not change state)', () => {
-    expect(mapHookEventToState('Notification')).toBeNull();
+describe("mapHookEventToState (R26)", () => {
+  test("Notification → null (does not change state)", () => {
+    expect(mapHookEventToState("Notification")).toBeNull();
   });
 });
 
 // ─── writeNotificationStatus ──────────────────────────────────────────────────
 
-describe('writeNotificationStatus (R26)', () => {
+describe("writeNotificationStatus (R26)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-notif-status');
+    tmpDir = await makeTempDir("ccmon-notif-status");
   });
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test('R26.1: writes notificationMessage and notificationTimestamp, preserves existing state', async () => {
+  test("R26.1: writes notificationMessage and notificationTimestamp, preserves existing state", async () => {
     const existing = {
-      state: 'running' as const,
-      timestamp: '2026-02-20T12:00:00.000Z',
-      session_id: 'sess-1',
-      working_dir: '/home/user/proj',
+      state: "running" as const,
+      timestamp: "2026-02-20T12:00:00.000Z",
+      session_id: "sess-1",
+      working_dir: "/home/user/proj",
     };
-    await writeFile(join(tmpDir, 'status.local.json'), JSON.stringify(existing));
+    await writeFile(
+      join(tmpDir, "status.local.json"),
+      JSON.stringify(existing),
+    );
 
     const before = Date.now();
-    await writeNotificationStatus(tmpDir, 'Claude needs attention', 'idle_prompt');
+    await writeNotificationStatus(
+      tmpDir,
+      "Claude needs attention",
+      "idle_prompt",
+    );
 
     const result = await readStatus(tmpDir);
     expect(result).not.toBeNull();
-    expect(result!.state).toBe('running');
-    expect(result!.session_id).toBe('sess-1');
-    expect(result!.notificationMessage).toBe('Claude needs attention');
-    expect(result!.notificationTimestamp).toBeDefined();
-    expect(new Date(result!.notificationTimestamp!).getTime()).toBeGreaterThanOrEqual(before);
+    expect(result?.state).toBe("running");
+    expect(result?.session_id).toBe("sess-1");
+    expect(result?.notificationMessage).toBe("Claude needs attention");
+    expect(result?.notificationTimestamp).toBeDefined();
+    expect(
+      new Date(result?.notificationTimestamp as string).getTime(),
+    ).toBeGreaterThanOrEqual(before);
   });
 
-  test('R26.3: permission_prompt suppressed when state is waiting_for_permission', async () => {
+  test("R26.3: permission_prompt suppressed when state is waiting_for_permission", async () => {
     const existing = {
-      state: 'waiting_for_permission' as const,
-      timestamp: '2026-02-20T12:00:00.000Z',
-      session_id: 'sess-2',
-      working_dir: '/home/user/proj',
+      state: "waiting_for_permission" as const,
+      timestamp: "2026-02-20T12:00:00.000Z",
+      session_id: "sess-2",
+      working_dir: "/home/user/proj",
     };
-    await writeFile(join(tmpDir, 'status.local.json'), JSON.stringify(existing));
+    await writeFile(
+      join(tmpDir, "status.local.json"),
+      JSON.stringify(existing),
+    );
 
-    await writeNotificationStatus(tmpDir, 'Permission needed', 'permission_prompt');
+    await writeNotificationStatus(
+      tmpDir,
+      "Permission needed",
+      "permission_prompt",
+    );
 
     const result = await readStatus(tmpDir);
     // File unchanged — no notificationMessage added
-    expect(result!.state).toBe('waiting_for_permission');
-    expect(result!.notificationMessage).toBeUndefined();
-    expect(result!.notificationTimestamp).toBeUndefined();
+    expect(result?.state).toBe("waiting_for_permission");
+    expect(result?.notificationMessage).toBeUndefined();
+    expect(result?.notificationTimestamp).toBeUndefined();
   });
 
-  test('R26.3: permission_prompt writes through when state is not waiting_for_permission', async () => {
+  test("R26.3: permission_prompt writes through when state is not waiting_for_permission", async () => {
     const existing = {
-      state: 'running' as const,
-      timestamp: '2026-02-20T12:00:00.000Z',
-      session_id: 'sess-3',
-      working_dir: '/home/user/proj',
+      state: "running" as const,
+      timestamp: "2026-02-20T12:00:00.000Z",
+      session_id: "sess-3",
+      working_dir: "/home/user/proj",
     };
-    await writeFile(join(tmpDir, 'status.local.json'), JSON.stringify(existing));
+    await writeFile(
+      join(tmpDir, "status.local.json"),
+      JSON.stringify(existing),
+    );
 
-    await writeNotificationStatus(tmpDir, 'Permission needed', 'permission_prompt');
+    await writeNotificationStatus(
+      tmpDir,
+      "Permission needed",
+      "permission_prompt",
+    );
 
     const result = await readStatus(tmpDir);
-    expect(result!.state).toBe('running');
-    expect(result!.notificationMessage).toBe('Permission needed');
-    expect(result!.notificationTimestamp).toBeDefined();
+    expect(result?.state).toBe("running");
+    expect(result?.notificationMessage).toBe("Permission needed");
+    expect(result?.notificationTimestamp).toBeDefined();
   });
 
-  test('R26.1: idle_prompt writes notificationMessage regardless of state', async () => {
+  test("R26.1: idle_prompt writes notificationMessage regardless of state", async () => {
     const existing = {
-      state: 'waiting_for_permission' as const,
-      timestamp: '2026-02-20T12:00:00.000Z',
-      session_id: 'sess-4',
-      working_dir: '/home/user/proj',
+      state: "waiting_for_permission" as const,
+      timestamp: "2026-02-20T12:00:00.000Z",
+      session_id: "sess-4",
+      working_dir: "/home/user/proj",
     };
-    await writeFile(join(tmpDir, 'status.local.json'), JSON.stringify(existing));
+    await writeFile(
+      join(tmpDir, "status.local.json"),
+      JSON.stringify(existing),
+    );
 
-    await writeNotificationStatus(tmpDir, 'Idle notification', 'idle_prompt');
+    await writeNotificationStatus(tmpDir, "Idle notification", "idle_prompt");
 
     const result = await readStatus(tmpDir);
-    expect(result!.notificationMessage).toBe('Idle notification');
-    expect(result!.notificationTimestamp).toBeDefined();
+    expect(result?.notificationMessage).toBe("Idle notification");
+    expect(result?.notificationTimestamp).toBeDefined();
   });
 
-  test('R26.1: no existing status file — writes with state stopped', async () => {
-    await writeNotificationStatus(tmpDir, 'Hello', 'auth_success');
+  test("R26.1: no existing status file — writes with state stopped", async () => {
+    await writeNotificationStatus(tmpDir, "Hello", "auth_success");
 
     const result = await readStatus(tmpDir);
     expect(result).not.toBeNull();
-    expect(result!.state).toBe('stopped');
-    expect(result!.notificationMessage).toBe('Hello');
-    expect(result!.notificationTimestamp).toBeDefined();
+    expect(result?.state).toBe("stopped");
+    expect(result?.notificationMessage).toBe("Hello");
+    expect(result?.notificationTimestamp).toBeDefined();
   });
 });
 
 // ─── filterStaleProjects ──────────────────────────────────────────────────────
 
-describe('filterStaleProjects', () => {
-  function makeProject(lastUpdated: string | null): import('../src/sessions').ProjectState {
+describe("filterStaleProjects", () => {
+  function makeProject(
+    lastUpdated: string | null,
+  ): import("../src/sessions").ProjectState {
     return {
-      projectDir: 'dir',
-      cwd: '/home/user/proj',
-      projectName: 'proj',
-      sessionId: 'sid',
-      latestJSONL: '/home/user/proj/session.jsonl',
-      state: 'stopped',
+      projectDir: "dir",
+      cwd: "/home/user/proj",
+      projectName: "proj",
+      sessionId: "sid",
+      latestJSONL: "/home/user/proj/session.jsonl",
+      state: "stopped",
       lastUpdated,
     };
   }
 
-  test('recent lastUpdated: project is kept', () => {
+  test("recent lastUpdated: project is kept", () => {
     const recent = new Date(Date.now() - 1000).toISOString(); // 1 second ago
     const projects = [makeProject(recent)];
     const result = filterStaleProjects(projects, 1);
     expect(result).toHaveLength(1);
   });
 
-  test('old lastUpdated: project is removed', () => {
+  test("old lastUpdated: project is removed", () => {
     const old = new Date(Date.now() - 5 * 3600 * 1000).toISOString(); // 5 hours ago
     const projects = [makeProject(old)];
     const result = filterStaleProjects(projects, 1);
     expect(result).toHaveLength(0);
   });
 
-  test('null lastUpdated: project is removed', () => {
+  test("null lastUpdated: project is removed", () => {
     const projects = [makeProject(null)];
     const result = filterStaleProjects(projects, 1);
     expect(result).toHaveLength(0);
   });
 
-  test('maxInactivityHours = 0: all projects returned (filter disabled)', () => {
+  test("maxInactivityHours = 0: all projects returned (filter disabled)", () => {
     const old = new Date(Date.now() - 100 * 3600 * 1000).toISOString();
     const projects = [makeProject(null), makeProject(old)];
     const result = filterStaleProjects(projects, 0);
     expect(result).toHaveLength(2);
   });
 
-  test('maxInactivityHours = Infinity: all projects returned (filter disabled)', () => {
+  test("maxInactivityHours = Infinity: all projects returned (filter disabled)", () => {
     const old = new Date(Date.now() - 100 * 3600 * 1000).toISOString();
     const projects = [makeProject(null), makeProject(old)];
     const result = filterStaleProjects(projects, Infinity);
@@ -818,11 +973,11 @@ describe('filterStaleProjects', () => {
 
 // ─── session enrichment ───────────────────────────────────────────────────────
 
-describe('session enrichment', () => {
+describe("session enrichment", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-enrichment');
+    tmpDir = await makeTempDir("ccmon-enrichment");
   });
 
   afterEach(async () => {
@@ -831,40 +986,52 @@ describe('session enrichment', () => {
 
   // ── gitBranch ──
 
-  test('gitBranch flows from index entry through ProjectInfo', async () => {
-    const projDir = join(tmpDir, '-home-user-branchtest');
+  test("gitBranch flows from index entry through ProjectInfo", async () => {
+    const projDir = join(tmpDir, "-home-user-branchtest");
     await mkdir(projDir, { recursive: true });
 
     const entry = {
-      sessionId: 'branch-sess',
-      fullPath: join(projDir, 'branch-sess.jsonl'),
+      sessionId: "branch-sess",
+      fullPath: join(projDir, "branch-sess.jsonl"),
       fileMtime: 1_700_000_000_000,
-      projectPath: '/home/user/branchtest',
+      projectPath: "/home/user/branchtest",
       isSidechain: false,
-      gitBranch: 'main',
+      gitBranch: "main",
     };
-    await writeFile(join(projDir, 'sessions-index.json'), JSON.stringify({ version: 1, entries: [entry] }));
-    await writeFile(entry.fullPath, makeFirstLine('/home/user/branchtest', 'branch-sess') + '\n');
+    await writeFile(
+      join(projDir, "sessions-index.json"),
+      JSON.stringify({ version: 1, entries: [entry] }),
+    );
+    await writeFile(
+      entry.fullPath,
+      `${makeFirstLine("/home/user/branchtest", "branch-sess")}\n`,
+    );
 
     const results = await scanProjects(tmpDir);
     expect(results).toHaveLength(1);
-    expect(results[0].gitBranch).toBe('main');
+    expect(results[0].gitBranch).toBe("main");
   });
 
-  test('gitBranch is undefined when not present in index entry', async () => {
-    const projDir = join(tmpDir, '-home-user-nobranch');
+  test("gitBranch is undefined when not present in index entry", async () => {
+    const projDir = join(tmpDir, "-home-user-nobranch");
     await mkdir(projDir, { recursive: true });
 
     const entry = {
-      sessionId: 'nobranch-sess',
-      fullPath: join(projDir, 'nobranch-sess.jsonl'),
+      sessionId: "nobranch-sess",
+      fullPath: join(projDir, "nobranch-sess.jsonl"),
       fileMtime: 1_700_000_000_000,
-      projectPath: '/home/user/nobranch',
+      projectPath: "/home/user/nobranch",
       isSidechain: false,
       // no gitBranch
     };
-    await writeFile(join(projDir, 'sessions-index.json'), JSON.stringify({ version: 1, entries: [entry] }));
-    await writeFile(entry.fullPath, makeFirstLine('/home/user/nobranch', 'nobranch-sess') + '\n');
+    await writeFile(
+      join(projDir, "sessions-index.json"),
+      JSON.stringify({ version: 1, entries: [entry] }),
+    );
+    await writeFile(
+      entry.fullPath,
+      `${makeFirstLine("/home/user/nobranch", "nobranch-sess")}\n`,
+    );
 
     const results = await scanProjects(tmpDir);
     expect(results).toHaveLength(1);
@@ -874,20 +1041,23 @@ describe('session enrichment', () => {
   // ── readSessionTail ──
 
   function makeUserEntry(content: string | object[]): string {
-    const message = typeof content === 'string' ? { role: 'user', content } : { role: 'user', content };
-    return JSON.stringify({ type: 'user', message });
+    const message =
+      typeof content === "string"
+        ? { role: "user", content }
+        : { role: "user", content };
+    return JSON.stringify({ type: "user", message });
   }
 
   function makeAssistantEntry(model: string, contentBlocks: object[]): string {
     return JSON.stringify({
-      type: 'assistant',
-      message: { role: 'assistant', model, content: contentBlocks },
+      type: "assistant",
+      message: { role: "assistant", model, content: contentBlocks },
     });
   }
 
   function makeProgressEntry(contentBlocks: object[]): string {
     return JSON.stringify({
-      type: 'progress',
+      type: "progress",
       data: {
         message: {
           message: {
@@ -898,134 +1068,134 @@ describe('session enrichment', () => {
     });
   }
 
-  test('readSessionTail: extracts latestUserActivity, model, latestAssistantActivity', async () => {
-    const jsonlPath = join(tmpDir, 'tail-test.jsonl');
+  test("readSessionTail: extracts latestUserActivity, model, latestAssistantActivity", async () => {
+    const jsonlPath = join(tmpDir, "tail-test.jsonl");
     const lines = [
-      makeUserEntry('what is X'),
-      makeUserEntry('<command-message>ctx-load</command-message>'),
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'Read', input: {} },
-        { type: 'text', text: 'some text' },
+      makeUserEntry("what is X"),
+      makeUserEntry("<command-message>ctx-load</command-message>"),
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "Read", input: {} },
+        { type: "text", text: "some text" },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestUserActivity?.text).toBe('what is X');
+    expect(result.latestUserActivity?.text).toBe("what is X");
     expect(result.latestUserActivity?.isCommand).toBe(false);
-    expect(result.model).toBe('claude-sonnet-4-6');
-    expect(result.latestAssistantActivity?.tool).toBe('Read');
-    expect(result.latestAssistantActivity?.text).toBe('some text');
+    expect(result.model).toBe("claude-sonnet-4-6");
+    expect(result.latestAssistantActivity?.tool).toBe("Read");
+    expect(result.latestAssistantActivity?.text).toBe("some text");
   });
 
-  test('readSessionTail: non-command <-prefixed content sets no latestUserActivity', async () => {
-    const jsonlPath = join(tmpDir, 'slash-cmd-test.jsonl');
+  test("readSessionTail: non-command <-prefixed content sets no latestUserActivity", async () => {
+    const jsonlPath = join(tmpDir, "slash-cmd-test.jsonl");
     const lines = [
-      makeUserEntry('<command-message>ctx-load</command-message>'),
+      makeUserEntry("<command-message>ctx-load</command-message>"),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     expect(result.latestUserActivity).toBeUndefined();
   });
 
-  test('readSessionTail: message truncated to 200 chars', async () => {
-    const jsonlPath = join(tmpDir, 'truncate-test.jsonl');
-    const longMessage = 'A'.repeat(300);
-    await writeFile(jsonlPath, makeUserEntry(longMessage) + '\n');
+  test("readSessionTail: message truncated to 200 chars", async () => {
+    const jsonlPath = join(tmpDir, "truncate-test.jsonl");
+    const longMessage = "A".repeat(300);
+    await writeFile(jsonlPath, `${makeUserEntry(longMessage)}\n`);
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestUserActivity?.text).toBe('A'.repeat(200));
+    expect(result.latestUserActivity?.text).toBe("A".repeat(200));
     expect(result.latestUserActivity?.isCommand).toBe(false);
   });
 
-  test('readSessionTail: missing file returns empty object', async () => {
-    const result = await readSessionTail(join(tmpDir, 'nonexistent.jsonl'));
+  test("readSessionTail: missing file returns empty object", async () => {
+    const result = await readSessionTail(join(tmpDir, "nonexistent.jsonl"));
     expect(result.latestUserActivity).toBeUndefined();
     expect(result.model).toBeUndefined();
     expect(result.latestAssistantActivity).toBeUndefined();
   });
 
-  test('readSessionTail: corrupt lines are skipped, valid lines parsed', async () => {
-    const jsonlPath = join(tmpDir, 'corrupt-lines-test.jsonl');
+  test("readSessionTail: corrupt lines are skipped, valid lines parsed", async () => {
+    const jsonlPath = join(tmpDir, "corrupt-lines-test.jsonl");
     const lines = [
-      'not valid json {{{',
-      makeUserEntry('valid message'),
-      'also broken',
+      "not valid json {{{",
+      makeUserEntry("valid message"),
+      "also broken",
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestUserActivity?.text).toBe('valid message');
+    expect(result.latestUserActivity?.text).toBe("valid message");
     expect(result.latestUserActivity?.isCommand).toBe(false);
   });
 
-  test('readSessionTail: picks most recent assistant entry (last in file)', async () => {
-    const jsonlPath = join(tmpDir, 'multi-tool-test.jsonl');
+  test("readSessionTail: picks most recent assistant entry (last in file)", async () => {
+    const jsonlPath = join(tmpDir, "multi-tool-test.jsonl");
     const lines = [
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'Bash', input: {} },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "Bash", input: {} },
       ]),
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'Edit', input: {} },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "Edit", input: {} },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // Reversed scan picks Edit (last in file = first found from end)
-    expect(result.latestAssistantActivity?.tool).toBe('Edit');
+    expect(result.latestAssistantActivity?.tool).toBe("Edit");
     expect(result.latestAssistantActivity?.text).toBeUndefined();
   });
 
-  test('readSessionTail: TodoWrite present with mixed statuses → correct tasksDone and tasksTotal', async () => {
-    const jsonlPath = join(tmpDir, 'todowrite-mixed.jsonl');
+  test("readSessionTail: TodoWrite present with mixed statuses → correct tasksDone and tasksTotal", async () => {
+    const jsonlPath = join(tmpDir, "todowrite-mixed.jsonl");
     const todos = [
-      { content: 'Task A', status: 'completed' },
-      { content: 'Task B', status: 'in_progress' },
-      { content: 'Task C', status: 'completed' },
-      { content: 'Task D', status: 'pending' },
+      { content: "Task A", status: "completed" },
+      { content: "Task B", status: "in_progress" },
+      { content: "Task C", status: "completed" },
+      { content: "Task D", status: "pending" },
     ];
     const lines = [
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'TodoWrite', input: { todos } },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "TodoWrite", input: { todos } },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     expect(result.tasksTotal).toBe(4);
     expect(result.tasksDone).toBe(2);
   });
 
-  test('readSessionTail: TodoWrite absent → tasksDone and tasksTotal both undefined', async () => {
-    const jsonlPath = join(tmpDir, 'todowrite-absent.jsonl');
+  test("readSessionTail: TodoWrite absent → tasksDone and tasksTotal both undefined", async () => {
+    const jsonlPath = join(tmpDir, "todowrite-absent.jsonl");
     const lines = [
-      makeUserEntry('do something'),
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'Bash', input: { command: 'ls' } },
+      makeUserEntry("do something"),
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "Bash", input: { command: "ls" } },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     expect(result.tasksDone).toBeUndefined();
     expect(result.tasksTotal).toBeUndefined();
   });
 
-  test('readSessionTail: TodoWrite all completed → tasksDone equals tasksTotal', async () => {
-    const jsonlPath = join(tmpDir, 'todowrite-all-done.jsonl');
+  test("readSessionTail: TodoWrite all completed → tasksDone equals tasksTotal", async () => {
+    const jsonlPath = join(tmpDir, "todowrite-all-done.jsonl");
     const todos = [
-      { content: 'Step 1', status: 'completed' },
-      { content: 'Step 2', status: 'completed' },
-      { content: 'Step 3', status: 'completed' },
+      { content: "Step 1", status: "completed" },
+      { content: "Step 2", status: "completed" },
+      { content: "Step 3", status: "completed" },
     ];
     const lines = [
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'TodoWrite', input: { todos } },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "TodoWrite", input: { todos } },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     expect(result.tasksTotal).toBe(3);
@@ -1033,26 +1203,26 @@ describe('session enrichment', () => {
     expect(result.tasksDone).toBe(result.tasksTotal);
   });
 
-  test('readSessionTail: multiple assistant entries, most recent TodoWrite is used', async () => {
-    const jsonlPath = join(tmpDir, 'todowrite-most-recent.jsonl');
+  test("readSessionTail: multiple assistant entries, most recent TodoWrite is used", async () => {
+    const jsonlPath = join(tmpDir, "todowrite-most-recent.jsonl");
     const olderTodos = [
-      { content: 'Old task A', status: 'pending' },
-      { content: 'Old task B', status: 'pending' },
+      { content: "Old task A", status: "pending" },
+      { content: "Old task B", status: "pending" },
     ];
     const newerTodos = [
-      { content: 'New task A', status: 'completed' },
-      { content: 'New task B', status: 'completed' },
-      { content: 'New task C', status: 'in_progress' },
+      { content: "New task A", status: "completed" },
+      { content: "New task B", status: "completed" },
+      { content: "New task C", status: "in_progress" },
     ];
     const lines = [
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'TodoWrite', input: { todos: olderTodos } },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "TodoWrite", input: { todos: olderTodos } },
       ]),
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'TodoWrite', input: { todos: newerTodos } },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "TodoWrite", input: { todos: newerTodos } },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // Backward scan finds the newer (last in file) entry first
@@ -1060,46 +1230,46 @@ describe('session enrichment', () => {
     expect(result.tasksDone).toBe(2);
   });
 
-  test('readSessionTail: TodoWrite in progress-type entry → correct tasksDone and tasksTotal', async () => {
-    const jsonlPath = join(tmpDir, 'todowrite-progress.jsonl');
+  test("readSessionTail: TodoWrite in progress-type entry → correct tasksDone and tasksTotal", async () => {
+    const jsonlPath = join(tmpDir, "todowrite-progress.jsonl");
     const todos = [
-      { content: 'Task A', status: 'completed' },
-      { content: 'Task B', status: 'in_progress' },
-      { content: 'Task C', status: 'pending' },
+      { content: "Task A", status: "completed" },
+      { content: "Task B", status: "in_progress" },
+      { content: "Task C", status: "pending" },
     ];
     const lines = [
-      makeUserEntry('implement the feature'),
+      makeUserEntry("implement the feature"),
       makeProgressEntry([
-        { type: 'tool_use', name: 'TodoWrite', input: { todos } },
+        { type: "tool_use", name: "TodoWrite", input: { todos } },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     expect(result.tasksTotal).toBe(3);
     expect(result.tasksDone).toBe(1);
   });
 
-  test('readSessionTail: progress-type TodoWrite preferred over older assistant-type when both present', async () => {
-    const jsonlPath = join(tmpDir, 'todowrite-progress-vs-assistant.jsonl');
+  test("readSessionTail: progress-type TodoWrite preferred over older assistant-type when both present", async () => {
+    const jsonlPath = join(tmpDir, "todowrite-progress-vs-assistant.jsonl");
     const olderTodos = [
-      { content: 'Old A', status: 'completed' },
-      { content: 'Old B', status: 'completed' },
+      { content: "Old A", status: "completed" },
+      { content: "Old B", status: "completed" },
     ];
     const newerTodos = [
-      { content: 'New A', status: 'completed' },
-      { content: 'New B', status: 'in_progress' },
-      { content: 'New C', status: 'pending' },
+      { content: "New A", status: "completed" },
+      { content: "New B", status: "in_progress" },
+      { content: "New C", status: "pending" },
     ];
     const lines = [
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'TodoWrite', input: { todos: olderTodos } },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "TodoWrite", input: { todos: olderTodos } },
       ]),
       makeProgressEntry([
-        { type: 'tool_use', name: 'TodoWrite', input: { todos: newerTodos } },
+        { type: "tool_use", name: "TodoWrite", input: { todos: newerTodos } },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // Backward scan finds the progress entry (last in file) first
@@ -1107,27 +1277,27 @@ describe('session enrichment', () => {
     expect(result.tasksDone).toBe(1);
   });
 
-  test('readSessionTail (R27): first read parses full file, tasks reflect last TodoWrite', async () => {
-    const jsonlPath = join(tmpDir, 'r27-full-parse.jsonl');
+  test("readSessionTail (R27): first read parses full file, tasks reflect last TodoWrite", async () => {
+    const jsonlPath = join(tmpDir, "r27-full-parse.jsonl");
     const earlyTodos = [
-      { content: 'Early A', status: 'pending' },
-      { content: 'Early B', status: 'pending' },
+      { content: "Early A", status: "pending" },
+      { content: "Early B", status: "pending" },
     ];
     const lateTodos = [
-      { content: 'Late A', status: 'completed' },
-      { content: 'Late B', status: 'completed' },
-      { content: 'Late C', status: 'in_progress' },
+      { content: "Late A", status: "completed" },
+      { content: "Late B", status: "completed" },
+      { content: "Late C", status: "in_progress" },
     ];
     const lines = [
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'TodoWrite', input: { todos: earlyTodos } },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "TodoWrite", input: { todos: earlyTodos } },
       ]),
-      makeUserEntry('do more work'),
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'TodoWrite', input: { todos: lateTodos } },
+      makeUserEntry("do more work"),
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "TodoWrite", input: { todos: lateTodos } },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // Backward scan finds the later TodoWrite first (3 tasks, 2 done)
@@ -1135,277 +1305,284 @@ describe('session enrichment', () => {
     expect(result.tasksDone).toBe(2);
   });
 
-  test('readSessionTail (R27): delta read merges new content, preserves old', async () => {
+  test("readSessionTail (R27): delta read merges new content, preserves old", async () => {
     _resetCachesForTesting();
-    const jsonlPath = join(tmpDir, 'r27-delta.jsonl');
+    const jsonlPath = join(tmpDir, "r27-delta.jsonl");
 
     // Initial file with a user message and TodoWrite
-    const initialTodos = [{ content: 'Step 1', status: 'completed' }];
+    const initialTodos = [{ content: "Step 1", status: "completed" }];
     const initialLines = [
-      makeUserEntry('initial prompt'),
-      makeAssistantEntry('claude-opus-4-6', [
-        { type: 'tool_use', name: 'TodoWrite', input: { todos: initialTodos } },
+      makeUserEntry("initial prompt"),
+      makeAssistantEntry("claude-opus-4-6", [
+        { type: "tool_use", name: "TodoWrite", input: { todos: initialTodos } },
       ]),
     ];
-    await writeFile(jsonlPath, initialLines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${initialLines.join("\n")}\n`);
 
     const first = await readSessionTail(jsonlPath);
-    expect(first.latestUserActivity?.text).toBe('initial prompt');
+    expect(first.latestUserActivity?.text).toBe("initial prompt");
     expect(first.latestUserActivity?.isCommand).toBe(false);
-    expect(first.model).toBe('claude-opus-4-6');
+    expect(first.model).toBe("claude-opus-4-6");
     expect(first.tasksTotal).toBe(1);
     expect(first.tasksDone).toBe(1);
 
     // Append new lines (delta): a new user message and updated TodoWrite
     await Bun.sleep(10); // ensure mtime changes
     const appendedTodos = [
-      { content: 'Step 1', status: 'completed' },
-      { content: 'Step 2', status: 'in_progress' },
+      { content: "Step 1", status: "completed" },
+      { content: "Step 2", status: "in_progress" },
     ];
     const appendedLines = [
-      makeUserEntry('follow-up prompt'),
-      makeAssistantEntry('claude-opus-4-6', [
-        { type: 'tool_use', name: 'TodoWrite', input: { todos: appendedTodos } },
+      makeUserEntry("follow-up prompt"),
+      makeAssistantEntry("claude-opus-4-6", [
+        {
+          type: "tool_use",
+          name: "TodoWrite",
+          input: { todos: appendedTodos },
+        },
       ]),
     ];
     // Append to existing file
     const existingContent = await Bun.file(jsonlPath).text();
-    await Bun.write(jsonlPath, existingContent + appendedLines.join('\n') + '\n');
+    await Bun.write(
+      jsonlPath,
+      `${existingContent + appendedLines.join("\n")}\n`,
+    );
 
     const second = await readSessionTail(jsonlPath);
     // Delta read: newer latestUserActivity overrides
-    expect(second.latestUserActivity?.text).toBe('follow-up prompt');
+    expect(second.latestUserActivity?.text).toBe("follow-up prompt");
     // Tasks updated from new delta
     expect(second.tasksTotal).toBe(2);
     expect(second.tasksDone).toBe(1);
     // Model preserved from delta (same value, but not lost)
-    expect(second.model).toBe('claude-opus-4-6');
+    expect(second.model).toBe("claude-opus-4-6");
   });
 
-  test('readSessionTail (R27): file shrink triggers full re-read', async () => {
+  test("readSessionTail (R27): file shrink triggers full re-read", async () => {
     _resetCachesForTesting();
-    const jsonlPath = join(tmpDir, 'r27-shrink.jsonl');
+    const jsonlPath = join(tmpDir, "r27-shrink.jsonl");
 
     // First: write a large-ish file
-    const firstTodos = [{ content: 'Old task', status: 'completed' }];
+    const firstTodos = [{ content: "Old task", status: "completed" }];
     const firstLines = [
-      makeUserEntry('old session message'),
-      makeAssistantEntry('claude-opus-4-6', [
-        { type: 'tool_use', name: 'TodoWrite', input: { todos: firstTodos } },
+      makeUserEntry("old session message"),
+      makeAssistantEntry("claude-opus-4-6", [
+        { type: "tool_use", name: "TodoWrite", input: { todos: firstTodos } },
       ]),
     ];
-    await writeFile(jsonlPath, firstLines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${firstLines.join("\n")}\n`);
 
     const first = await readSessionTail(jsonlPath);
-    expect(first.latestUserActivity?.text).toBe('old session message');
+    expect(first.latestUserActivity?.text).toBe("old session message");
     expect(first.tasksTotal).toBe(1);
 
     // Replace with a smaller new-session file (simulates session restart)
     await Bun.sleep(10);
     const newTodos = [
-      { content: 'New A', status: 'pending' },
-      { content: 'New B', status: 'pending' },
+      { content: "New A", status: "pending" },
+      { content: "New B", status: "pending" },
     ];
     const newLines = [
-      makeUserEntry('new session start'),
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'TodoWrite', input: { todos: newTodos } },
+      makeUserEntry("new session start"),
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "TodoWrite", input: { todos: newTodos } },
       ]),
     ];
     // Write shorter content (file shrinks)
-    await Bun.write(jsonlPath, newLines[0] + '\n');
+    await Bun.write(jsonlPath, `${newLines[0]}\n`);
 
     const second = await readSessionTail(jsonlPath);
     // Full re-read: should see only new content
-    expect(second.latestUserActivity?.text).toBe('new session start');
+    expect(second.latestUserActivity?.text).toBe("new session start");
     expect(second.model).toBeUndefined();
     expect(second.tasksTotal).toBeUndefined();
   });
 
-  test('readSessionTail (R28/R50): latestAssistantActivity text extracted and truncated', async () => {
-    const jsonlPath = join(tmpDir, 'r28-assistant-msg.jsonl');
-    const longText = 'A'.repeat(300);
+  test("readSessionTail (R28/R50): latestAssistantActivity text extracted and truncated", async () => {
+    const jsonlPath = join(tmpDir, "r28-assistant-msg.jsonl");
+    const longText = "A".repeat(300);
     const lines = [
-      makeUserEntry('user question'),
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'text', text: longText },
-        { type: 'tool_use', name: 'Bash', input: {} },
+      makeUserEntry("user question"),
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "text", text: longText },
+        { type: "tool_use", name: "Bash", input: {} },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestAssistantActivity?.text).toBe('A'.repeat(200));
-    expect(result.latestAssistantActivity?.tool).toBe('Bash');
+    expect(result.latestAssistantActivity?.text).toBe("A".repeat(200));
+    expect(result.latestAssistantActivity?.tool).toBe("Bash");
   });
 
-  test('readSessionTail (R28/R50): latestAssistantActivity and latestUserActivity both extracted', async () => {
-    const jsonlPath = join(tmpDir, 'r28-both-messages.jsonl');
+  test("readSessionTail (R28/R50): latestAssistantActivity and latestUserActivity both extracted", async () => {
+    const jsonlPath = join(tmpDir, "r28-both-messages.jsonl");
     const lines = [
-      makeUserEntry('user input here'),
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'text', text: 'assistant reply here' },
+      makeUserEntry("user input here"),
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "text", text: "assistant reply here" },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestUserActivity?.text).toBe('user input here');
+    expect(result.latestUserActivity?.text).toBe("user input here");
     expect(result.latestUserActivity?.isCommand).toBe(false);
-    expect(result.latestAssistantActivity?.text).toBe('assistant reply here');
+    expect(result.latestAssistantActivity?.text).toBe("assistant reply here");
     expect(result.latestAssistantActivity?.tool).toBeUndefined();
   });
 
-  test('readSessionTail (R28/R50): assistant entry without text block yields no text in latestAssistantActivity', async () => {
-    const jsonlPath = join(tmpDir, 'r28-no-text-block.jsonl');
+  test("readSessionTail (R28/R50): assistant entry without text block yields no text in latestAssistantActivity", async () => {
+    const jsonlPath = join(tmpDir, "r28-no-text-block.jsonl");
     const lines = [
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'Bash', input: {} },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "Bash", input: {} },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     expect(result.latestAssistantActivity?.text).toBeUndefined();
-    expect(result.latestAssistantActivity?.tool).toBe('Bash');
+    expect(result.latestAssistantActivity?.tool).toBe("Bash");
   });
 
   // ── latestAssistantActivity (R50) ──
 
-  test('readSessionTail (R50): assistant entry with only text block', async () => {
-    const jsonlPath = join(tmpDir, 'r50-text-only.jsonl');
+  test("readSessionTail (R50): assistant entry with only text block", async () => {
+    const jsonlPath = join(tmpDir, "r50-text-only.jsonl");
     const lines = [
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'text', text: 'thinking out loud' },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "text", text: "thinking out loud" },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestAssistantActivity?.text).toBe('thinking out loud');
+    expect(result.latestAssistantActivity?.text).toBe("thinking out loud");
     expect(result.latestAssistantActivity?.tool).toBeUndefined();
   });
 
-  test('readSessionTail (R50): assistant entry with only tool_use', async () => {
-    const jsonlPath = join(tmpDir, 'r50-tool-only.jsonl');
+  test("readSessionTail (R50): assistant entry with only tool_use", async () => {
+    const jsonlPath = join(tmpDir, "r50-tool-only.jsonl");
     const lines = [
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'Bash', input: {} },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "Bash", input: {} },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     expect(result.latestAssistantActivity?.text).toBeUndefined();
-    expect(result.latestAssistantActivity?.tool).toBe('Bash');
+    expect(result.latestAssistantActivity?.tool).toBe("Bash");
   });
 
-  test('readSessionTail (R50): assistant entry with both text and tool_use', async () => {
-    const jsonlPath = join(tmpDir, 'r50-both.jsonl');
+  test("readSessionTail (R50): assistant entry with both text and tool_use", async () => {
+    const jsonlPath = join(tmpDir, "r50-both.jsonl");
     const lines = [
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'text', text: 'here is my plan' },
-        { type: 'tool_use', name: 'Bash', input: {} },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "text", text: "here is my plan" },
+        { type: "tool_use", name: "Bash", input: {} },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestAssistantActivity?.text).toBe('here is my plan');
-    expect(result.latestAssistantActivity?.tool).toBe('Bash');
+    expect(result.latestAssistantActivity?.text).toBe("here is my plan");
+    expect(result.latestAssistantActivity?.tool).toBe("Bash");
   });
 
-  test('readSessionTail (R50): temporal ordering — newer entry wins even if older has text', async () => {
-    const jsonlPath = join(tmpDir, 'r50-temporal.jsonl');
+  test("readSessionTail (R50): temporal ordering — newer entry wins even if older has text", async () => {
+    const jsonlPath = join(tmpDir, "r50-temporal.jsonl");
     const lines = [
       // older entry: has text but no tool
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'text', text: 'older text reply' },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "text", text: "older text reply" },
       ]),
       // newer entry: tool only
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'tool_use', name: 'Read', input: {} },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "tool_use", name: "Read", input: {} },
       ]),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // Reversed scan finds newer (last in file) first — tool-only entry wins
-    expect(result.latestAssistantActivity?.tool).toBe('Read');
+    expect(result.latestAssistantActivity?.tool).toBe("Read");
     expect(result.latestAssistantActivity?.text).toBeUndefined();
   });
 
-  test('readSessionTail (R50): delta-read merge preserves latestAssistantActivity from base when scan has none', async () => {
+  test("readSessionTail (R50): delta-read merge preserves latestAssistantActivity from base when scan has none", async () => {
     _resetCachesForTesting();
-    const jsonlPath = join(tmpDir, 'r50-delta-merge.jsonl');
+    const jsonlPath = join(tmpDir, "r50-delta-merge.jsonl");
 
     // First read: assistant entry sets latestAssistantActivity
     const firstLines = [
-      makeAssistantEntry('claude-sonnet-4-6', [
-        { type: 'text', text: 'initial response' },
-        { type: 'tool_use', name: 'Bash', input: {} },
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "text", text: "initial response" },
+        { type: "tool_use", name: "Bash", input: {} },
       ]),
     ];
-    await writeFile(jsonlPath, firstLines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${firstLines.join("\n")}\n`);
     const first = await readSessionTail(jsonlPath);
-    expect(first.latestAssistantActivity?.text).toBe('initial response');
-    expect(first.latestAssistantActivity?.tool).toBe('Bash');
+    expect(first.latestAssistantActivity?.text).toBe("initial response");
+    expect(first.latestAssistantActivity?.tool).toBe("Bash");
 
     // Append user-only line (no new assistant entry) — delta scan finds no assistant entry
-    const userLine = makeUserEntry('follow-up question');
-    await Bun.write(jsonlPath, firstLines.join('\n') + '\n' + userLine + '\n');
+    const userLine = makeUserEntry("follow-up question");
+    await Bun.write(jsonlPath, `${firstLines.join("\n")}\n${userLine}\n`);
 
     const second = await readSessionTail(jsonlPath);
     // latestAssistantActivity must be preserved from base (delta merge)
-    expect(second.latestAssistantActivity?.text).toBe('initial response');
-    expect(second.latestAssistantActivity?.tool).toBe('Bash');
+    expect(second.latestAssistantActivity?.text).toBe("initial response");
+    expect(second.latestAssistantActivity?.tool).toBe("Bash");
   });
 
   // ── getSubagentInfos (R29) ──
 
-  test('getSubagentInfos (R29): returns SubagentInfo array with enrichment', async () => {
+  test("getSubagentInfos (R29): returns SubagentInfo array with enrichment", async () => {
     _resetCachesForTesting();
-    const sessionId = 'r29-enrichment-session';
+    const sessionId = "r29-enrichment-session";
     const sessionDir = join(tmpDir, sessionId);
-    const subagentsDir = join(sessionDir, 'subagents');
+    const subagentsDir = join(sessionDir, "subagents");
     await mkdir(subagentsDir, { recursive: true });
 
     // Write a sub-agent JSONL with content readable by readSessionTail
-    const agentPath = join(subagentsDir, 'agent-abc123.jsonl');
+    const agentPath = join(subagentsDir, "agent-abc123.jsonl");
     const agentLines = [
-      makeUserEntry('agent task'),
-      makeAssistantEntry('claude-opus-4-6', [
-        { type: 'tool_use', name: 'Read', input: {} },
-        { type: 'text', text: 'agent response' },
+      makeUserEntry("agent task"),
+      makeAssistantEntry("claude-opus-4-6", [
+        { type: "tool_use", name: "Read", input: {} },
+        { type: "text", text: "agent response" },
       ]),
     ];
-    await writeFile(agentPath, agentLines.join('\n') + '\n');
+    await writeFile(agentPath, `${agentLines.join("\n")}\n`);
 
     const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
     const infos = await getSubagentInfos(jsonlPath);
 
     expect(infos).toHaveLength(1);
-    expect(infos[0].agentId).toBe('abc123');
+    expect(infos[0].agentId).toBe("abc123");
     expect(infos[0].jsonlPath).toBe(agentPath);
     expect(infos[0].isActive).toBe(true);
-    expect(infos[0].model).toBe('claude-opus-4-6');
-    expect(infos[0].latestAssistantActivity?.tool).toBe('Read');
-    expect(infos[0].latestUserActivity?.text).toBe('agent task');
+    expect(infos[0].model).toBe("claude-opus-4-6");
+    expect(infos[0].latestAssistantActivity?.tool).toBe("Read");
+    expect(infos[0].latestUserActivity?.text).toBe("agent task");
     expect(infos[0].latestUserActivity?.isCommand).toBe(false);
-    expect(infos[0].latestAssistantActivity?.text).toBe('agent response');
+    expect(infos[0].latestAssistantActivity?.text).toBe("agent response");
   });
 
-  test('getSubagentInfos (R29): isActive respects 45s threshold', async () => {
+  test("getSubagentInfos (R29): isActive respects 45s threshold", async () => {
     _resetCachesForTesting();
-    const sessionId = 'r29-active-threshold';
+    const sessionId = "r29-active-threshold";
     const sessionDir = join(tmpDir, sessionId);
-    const subagentsDir = join(sessionDir, 'subagents');
+    const subagentsDir = join(sessionDir, "subagents");
     await mkdir(subagentsDir, { recursive: true });
 
-    const activeAgent = join(subagentsDir, 'agent-live.jsonl');
-    const staleAgent = join(subagentsDir, 'agent-old.jsonl');
-    await writeFile(activeAgent, makeUserEntry('live') + '\n');
-    await writeFile(staleAgent, makeUserEntry('stale') + '\n');
+    const activeAgent = join(subagentsDir, "agent-live.jsonl");
+    const staleAgent = join(subagentsDir, "agent-old.jsonl");
+    await writeFile(activeAgent, `${makeUserEntry("live")}\n`);
+    await writeFile(staleAgent, `${makeUserEntry("stale")}\n`);
 
     // Backdate the stale agent to 60 seconds ago
     const sixtySecAgo = new Date(Date.now() - 60_000);
@@ -1415,202 +1592,244 @@ describe('session enrichment', () => {
     const infos = await getSubagentInfos(jsonlPath);
 
     expect(infos).toHaveLength(2);
-    const live = infos.find((i) => i.agentId === 'live');
-    const stale = infos.find((i) => i.agentId === 'old');
+    const live = infos.find((i) => i.agentId === "live");
+    const stale = infos.find((i) => i.agentId === "old");
     expect(live?.isActive).toBe(true);
     expect(stale?.isActive).toBe(false);
   });
 
-  test('getSubagentInfos (R29): returns empty array when no subagents dir', async () => {
-    const jsonlPath = join(tmpDir, 'r29-no-dir-session.jsonl');
+  test("getSubagentInfos (R29): returns empty array when no subagents dir", async () => {
+    const jsonlPath = join(tmpDir, "r29-no-dir-session.jsonl");
     const infos = await getSubagentInfos(jsonlPath);
     expect(infos).toHaveLength(0);
   });
 
   // ── queue-operation description extraction (R36) ──
 
-  function makeQueueOperationEnqueue(taskId: string, description: string): string {
+  function makeQueueOperationEnqueue(
+    taskId: string,
+    description: string,
+  ): string {
     return JSON.stringify({
-      type: 'queue-operation',
-      operation: 'enqueue',
-      content: JSON.stringify({ task_id: taskId, description, tool_use_id: 'tu-1', task_type: 'agent' }),
+      type: "queue-operation",
+      operation: "enqueue",
+      content: JSON.stringify({
+        task_id: taskId,
+        description,
+        tool_use_id: "tu-1",
+        task_type: "agent",
+      }),
     });
   }
 
-  test('readSessionTail (R36): agentDescriptions populated from queue-operation enqueue entries', async () => {
+  test("readSessionTail (R36): agentDescriptions populated from queue-operation enqueue entries", async () => {
     _resetCachesForTesting();
-    const jsonlPath = join(tmpDir, 'r36-queue-op.jsonl');
+    const jsonlPath = join(tmpDir, "r36-queue-op.jsonl");
     const lines = [
-      makeUserEntry('do the thing'),
-      makeQueueOperationEnqueue('ae89d86', 'Implement feature X'),
-      makeQueueOperationEnqueue('bf12c45', 'Write tests for Y'),
+      makeUserEntry("do the thing"),
+      makeQueueOperationEnqueue("ae89d86", "Implement feature X"),
+      makeQueueOperationEnqueue("bf12c45", "Write tests for Y"),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.agentDescriptions.get('ae89d86')).toBe('Implement feature X');
-    expect(result.agentDescriptions.get('bf12c45')).toBe('Write tests for Y');
+    expect(result.agentDescriptions.get("ae89d86")).toBe("Implement feature X");
+    expect(result.agentDescriptions.get("bf12c45")).toBe("Write tests for Y");
   });
 
-  test('readSessionTail (R36): delta read merges new queue-operation entries without losing previous ones', async () => {
+  test("readSessionTail (R36): delta read merges new queue-operation entries without losing previous ones", async () => {
     _resetCachesForTesting();
-    const jsonlPath = join(tmpDir, 'r36-queue-op-delta.jsonl');
+    const jsonlPath = join(tmpDir, "r36-queue-op-delta.jsonl");
 
     const initialLines = [
-      makeUserEntry('start'),
-      makeQueueOperationEnqueue('agent-1', 'First agent task'),
+      makeUserEntry("start"),
+      makeQueueOperationEnqueue("agent-1", "First agent task"),
     ];
-    await writeFile(jsonlPath, initialLines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${initialLines.join("\n")}\n`);
 
     const first = await readSessionTail(jsonlPath);
-    expect(first.agentDescriptions.get('agent-1')).toBe('First agent task');
+    expect(first.agentDescriptions.get("agent-1")).toBe("First agent task");
 
     await Bun.sleep(10);
     const existing = await Bun.file(jsonlPath).text();
-    await Bun.write(jsonlPath, existing + makeQueueOperationEnqueue('agent-2', 'Second agent task') + '\n');
+    await Bun.write(
+      jsonlPath,
+      existing +
+        makeQueueOperationEnqueue("agent-2", "Second agent task") +
+        "\n",
+    );
 
     const second = await readSessionTail(jsonlPath);
-    expect(second.agentDescriptions.get('agent-1')).toBe('First agent task');
-    expect(second.agentDescriptions.get('agent-2')).toBe('Second agent task');
+    expect(second.agentDescriptions.get("agent-1")).toBe("First agent task");
+    expect(second.agentDescriptions.get("agent-2")).toBe("Second agent task");
   });
 
-  test('getSubagentInfos (R36): attaches description from parent session agentDescriptions', async () => {
+  test("getSubagentInfos (R36): attaches description from parent session agentDescriptions", async () => {
     _resetCachesForTesting();
-    const sessionId = 'r36-desc-session';
+    const sessionId = "r36-desc-session";
     const sessionDir = join(tmpDir, sessionId);
-    const subagentsDir = join(sessionDir, 'subagents');
+    const subagentsDir = join(sessionDir, "subagents");
     await mkdir(subagentsDir, { recursive: true });
 
     // Write sub-agent JSONL
-    const agentPath = join(subagentsDir, 'agent-abc123.jsonl');
-    await writeFile(agentPath, makeUserEntry('agent task') + '\n');
+    const agentPath = join(subagentsDir, "agent-abc123.jsonl");
+    await writeFile(agentPath, `${makeUserEntry("agent task")}\n`);
 
     // Write parent JSONL with a queue-operation enqueue line matching the agentId
     const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
-    await writeFile(jsonlPath, [
-      makeUserEntry('main prompt'),
-      makeQueueOperationEnqueue('abc123', 'Review the architecture'),
-    ].join('\n') + '\n');
+    await writeFile(
+      jsonlPath,
+      `${[
+        makeUserEntry("main prompt"),
+        makeQueueOperationEnqueue("abc123", "Review the architecture"),
+      ].join("\n")}\n`,
+    );
 
     const infos = await getSubagentInfos(jsonlPath);
     expect(infos).toHaveLength(1);
-    expect(infos[0].agentId).toBe('abc123');
-    expect(infos[0].description).toBe('Review the architecture');
+    expect(infos[0].agentId).toBe("abc123");
+    expect(infos[0].description).toBe("Review the architecture");
   });
 
-  test('getProjectState includes subagents array (R29)', async () => {
+  test("getProjectState includes subagents array (R29)", async () => {
     _resetCachesForTesting();
 
     // Build a project dir with a sessions-index, JSONL, and sub-agents
-    const projDir = join(tmpDir, '-home-user-r29-proj');
+    const projDir = join(tmpDir, "-home-user-r29-proj");
     await mkdir(projDir, { recursive: true });
 
-    const sessionId = 'r29-proj-session';
+    const sessionId = "r29-proj-session";
     const jsonlFile = join(projDir, `${sessionId}.jsonl`);
-    const firstLine = makeFirstLine('/home/user/r29-proj', sessionId);
-    await writeFile(jsonlFile, firstLine + '\n' + makeUserEntry('main task') + '\n');
+    const firstLine = makeFirstLine("/home/user/r29-proj", sessionId);
+    await writeFile(jsonlFile, `${firstLine}\n${makeUserEntry("main task")}\n`);
 
     // Write a status file so state is non-stopped (fresh timestamp)
     // No live process in test env → resolveState will return 'stopped', so
     // subagents won't be populated. We instead verify the field is present
     // (empty array when stopped) by checking what buildProjectState does.
     // Instead, use a sessions-index and a subagents dir.
-    const subagentsDir = join(projDir, `${sessionId}`, 'subagents');
+    const subagentsDir = join(projDir, `${sessionId}`, "subagents");
     await mkdir(subagentsDir, { recursive: true });
-    await writeFile(join(subagentsDir, 'agent-test01.jsonl'), makeUserEntry('sub task') + '\n');
+    await writeFile(
+      join(subagentsDir, "agent-test01.jsonl"),
+      `${makeUserEntry("sub task")}\n`,
+    );
 
     const entry = {
       sessionId,
       fullPath: jsonlFile,
       fileMtime: Date.now(),
-      projectPath: '/home/user/r29-proj',
+      projectPath: "/home/user/r29-proj",
       isSidechain: false,
     };
-    await writeFile(join(projDir, 'sessions-index.json'), JSON.stringify({ version: 1, entries: [entry] }));
+    await writeFile(
+      join(projDir, "sessions-index.json"),
+      JSON.stringify({ version: 1, entries: [entry] }),
+    );
 
     // Status file with fresh running state
-    await writeFile(join(projDir, 'status.local.json'), JSON.stringify({
-      state: 'running',
-      timestamp: new Date().toISOString(),
-      session_id: sessionId,
-      working_dir: '/home/user/r29-proj',
-    }));
+    await writeFile(
+      join(projDir, "status.local.json"),
+      JSON.stringify({
+        state: "running",
+        timestamp: new Date().toISOString(),
+        session_id: sessionId,
+        working_dir: "/home/user/r29-proj",
+      }),
+    );
 
     const results = await getProjectState(tmpDir);
-    const proj = results.find((p) => p.projectName === 'r29-proj');
+    const proj = results.find((p) => p.projectName === "r29-proj");
     expect(proj).toBeDefined();
 
     // In test env liveness check returns false → state resolves to 'stopped'.
     // Sub-agents are only populated for non-stopped sessions; verify accordingly.
-    if (proj!.state === 'stopped') {
-      expect(proj!.subagents).toBeUndefined();
-      expect(proj!.subagentCount).toBeUndefined();
+    if (proj?.state === "stopped") {
+      expect(proj?.subagents).toBeUndefined();
+      expect(proj?.subagentCount).toBeUndefined();
     } else {
-      expect(Array.isArray(proj!.subagents)).toBe(true);
-      expect(typeof proj!.subagentCount).toBe('number');
+      expect(Array.isArray(proj?.subagents)).toBe(true);
+      expect(typeof proj?.subagentCount).toBe("number");
     }
   });
 
-  test('R41: stopped session still exposes enrichment fields (messages, model, tokens)', async () => {
+  test("R41: stopped session still exposes enrichment fields (messages, model, tokens)", async () => {
     _resetCachesForTesting();
 
-    const projDir = join(tmpDir, '-home-user-r41-stopped');
+    const projDir = join(tmpDir, "-home-user-r41-stopped");
     await mkdir(projDir, { recursive: true });
 
-    const sessionId = 'r41-stopped-session';
+    const sessionId = "r41-stopped-session";
     const jsonlFile = join(projDir, `${sessionId}.jsonl`);
 
-    const userEntry = JSON.stringify({ type: 'user', message: { role: 'user', content: 'hello from stopped session' } });
+    const userEntry = JSON.stringify({
+      type: "user",
+      message: { role: "user", content: "hello from stopped session" },
+    });
     const assistantEntry = JSON.stringify({
-      type: 'assistant',
+      type: "assistant",
       message: {
-        role: 'assistant',
-        model: 'claude-sonnet-4-6',
-        content: [{ type: 'text', text: 'response text' }],
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content: [{ type: "text", text: "response text" }],
         usage: { input_tokens: 100, output_tokens: 50 },
       },
     });
-    await writeFile(jsonlFile, makeFirstLine('/home/user/r41-stopped', sessionId) + '\n' + userEntry + '\n' + assistantEntry + '\n');
+    await writeFile(
+      jsonlFile,
+      makeFirstLine("/home/user/r41-stopped", sessionId) +
+        "\n" +
+        userEntry +
+        "\n" +
+        assistantEntry +
+        "\n",
+    );
 
     const indexEntry = {
       sessionId,
       fullPath: jsonlFile,
       fileMtime: Date.now(),
-      projectPath: '/home/user/r41-stopped',
+      projectPath: "/home/user/r41-stopped",
       isSidechain: false,
     };
-    await writeFile(join(projDir, 'sessions-index.json'), JSON.stringify({ version: 1, entries: [indexEntry] }));
+    await writeFile(
+      join(projDir, "sessions-index.json"),
+      JSON.stringify({ version: 1, entries: [indexEntry] }),
+    );
 
     // Explicitly stopped state (stale timestamp so liveness check doesn't matter)
-    await writeFile(join(projDir, 'status.local.json'), JSON.stringify({
-      state: 'stopped',
-      timestamp: new Date().toISOString(),
-      session_id: sessionId,
-      working_dir: '/home/user/r41-stopped',
-    }));
+    await writeFile(
+      join(projDir, "status.local.json"),
+      JSON.stringify({
+        state: "stopped",
+        timestamp: new Date().toISOString(),
+        session_id: sessionId,
+        working_dir: "/home/user/r41-stopped",
+      }),
+    );
 
     const results = await getProjectState(tmpDir);
-    const proj = results.find((p) => p.projectName === 'r41-stopped');
+    const proj = results.find((p) => p.projectName === "r41-stopped");
     expect(proj).toBeDefined();
-    expect(proj!.state).toBe('stopped');
+    expect(proj?.state).toBe("stopped");
 
     // Enrichment must be present even for stopped sessions (R41)
-    expect(proj!.latestUserActivity?.text).toBe('hello from stopped session');
-    expect(proj!.latestUserActivity?.isCommand).toBe(false);
-    expect(proj!.model).toBe('claude-sonnet-4-6');
-    expect(proj!.inputTokens).toBeGreaterThan(0);
-    expect(proj!.outputTokens).toBeGreaterThan(0);
-    expect(proj!.latestAssistantActivity?.text).toBe('response text');
+    expect(proj?.latestUserActivity?.text).toBe("hello from stopped session");
+    expect(proj?.latestUserActivity?.isCommand).toBe(false);
+    expect(proj?.model).toBe("claude-sonnet-4-6");
+    expect(proj?.inputTokens).toBeGreaterThan(0);
+    expect(proj?.outputTokens).toBeGreaterThan(0);
+    expect(proj?.latestAssistantActivity?.text).toBe("response text");
   });
 });
 
 // ─── cache behaviour ──────────────────────────────────────────────────────────
 
-describe('sessionsIndexCache (R20.3)', () => {
+describe("sessionsIndexCache (R20.3)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-idx-cache');
+    tmpDir = await makeTempDir("ccmon-idx-cache");
     _resetCachesForTesting();
   });
 
@@ -1618,29 +1837,36 @@ describe('sessionsIndexCache (R20.3)', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  function makeEntry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  function makeEntry(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
     return {
-      sessionId: 'sess-cache',
-      fullPath: '/some/path/sess.jsonl',
+      sessionId: "sess-cache",
+      fullPath: "/some/path/sess.jsonl",
       fileMtime: 1_700_000_000_000,
-      projectPath: '/home/user/cached',
+      projectPath: "/home/user/cached",
       isSidechain: false,
       ...overrides,
     };
   }
 
-  test('same mtime: second call returns cached result without re-reading file', async () => {
+  test("same mtime: second call returns cached result without re-reading file", async () => {
     const entry = makeEntry();
-    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify({ entries: [entry] }));
+    await writeFile(
+      join(tmpDir, "sessions-index.json"),
+      JSON.stringify({ entries: [entry] }),
+    );
 
     const first = await readSessionsIndex(tmpDir);
     expect(first).not.toBeNull();
 
     // Overwrite file content but keep the same mtime so cache key is unchanged
-    const filePath = join(tmpDir, 'sessions-index.json');
-    const { mtimeMs } = await import('node:fs/promises').then((m) => m.stat(filePath));
+    const filePath = join(tmpDir, "sessions-index.json");
+    const { mtimeMs } = await import("node:fs/promises").then((m) =>
+      m.stat(filePath),
+    );
     const mtime = new Date(mtimeMs);
-    await writeFile(filePath, 'this is no longer valid json');
+    await writeFile(filePath, "this is no longer valid json");
     await utimes(filePath, mtime, mtime);
 
     // Should return the first (cached) result despite the file now being corrupt
@@ -1648,26 +1874,32 @@ describe('sessionsIndexCache (R20.3)', () => {
     expect(second).toBe(first); // same object reference proves cache hit
   });
 
-  test('changed mtime: re-reads the file and returns fresh data', async () => {
-    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify({ entries: [makeEntry({ sessionId: 'original' })] }));
+  test("changed mtime: re-reads the file and returns fresh data", async () => {
+    await writeFile(
+      join(tmpDir, "sessions-index.json"),
+      JSON.stringify({ entries: [makeEntry({ sessionId: "original" })] }),
+    );
 
     const first = await readSessionsIndex(tmpDir);
-    expect(first!.entries[0].sessionId).toBe('original');
+    expect(first?.entries[0].sessionId).toBe("original");
 
     // Small sleep so filesystem mtime advances
     await Bun.sleep(10);
-    await writeFile(join(tmpDir, 'sessions-index.json'), JSON.stringify({ entries: [makeEntry({ sessionId: 'updated' })] }));
+    await writeFile(
+      join(tmpDir, "sessions-index.json"),
+      JSON.stringify({ entries: [makeEntry({ sessionId: "updated" })] }),
+    );
 
     const second = await readSessionsIndex(tmpDir);
-    expect(second!.entries[0].sessionId).toBe('updated');
+    expect(second?.entries[0].sessionId).toBe("updated");
   });
 });
 
-describe('sessionTailCache (R20.4)', () => {
+describe("sessionTailCache (R20.4)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-tail-cache');
+    tmpDir = await makeTempDir("ccmon-tail-cache");
     _resetCachesForTesting();
   });
 
@@ -1676,52 +1908,59 @@ describe('sessionTailCache (R20.4)', () => {
   });
 
   function makeUserLine(content: string): string {
-    return JSON.stringify({ type: 'user', message: { role: 'user', content } });
+    return JSON.stringify({ type: "user", message: { role: "user", content } });
   }
 
-  test('same mtime: second call returns cached result without re-reading file', async () => {
-    const jsonlPath = join(tmpDir, 'tail.jsonl');
-    await writeFile(jsonlPath, makeUserLine('original message') + '\n');
+  test("same mtime: second call returns cached result without re-reading file", async () => {
+    const jsonlPath = join(tmpDir, "tail.jsonl");
+    await writeFile(jsonlPath, `${makeUserLine("original message")}\n`);
 
     const first = await readSessionTail(jsonlPath);
-    expect(first.latestUserActivity?.text).toBe('original message');
+    expect(first.latestUserActivity?.text).toBe("original message");
 
     // Overwrite content with same-size content, restore original mtime so cache key is unchanged.
     // "original message" and "replaced message" are the same length (16 chars each).
-    const { mtimeMs } = await import('node:fs/promises').then((m) => m.stat(jsonlPath));
+    const { mtimeMs } = await import("node:fs/promises").then((m) =>
+      m.stat(jsonlPath),
+    );
     const mtime = new Date(mtimeMs);
-    await writeFile(jsonlPath, makeUserLine('replaced message') + '\n');
+    await writeFile(jsonlPath, `${makeUserLine("replaced message")}\n`);
     await utimes(jsonlPath, mtime, mtime);
 
     const second = await readSessionTail(jsonlPath);
     expect(second).toBe(first); // same object reference proves cache hit
-    expect(second.latestUserActivity?.text).toBe('original message');
+    expect(second.latestUserActivity?.text).toBe("original message");
   });
 
-  test('changed mtime: file replaced with smaller content triggers full re-read', async () => {
-    const jsonlPath = join(tmpDir, 'tail-refresh.jsonl');
+  test("changed mtime: file replaced with smaller content triggers full re-read", async () => {
+    const jsonlPath = join(tmpDir, "tail-refresh.jsonl");
     // Write a larger initial file
-    await writeFile(jsonlPath, makeUserLine('this is the first and longer message') + '\n');
+    await writeFile(
+      jsonlPath,
+      `${makeUserLine("this is the first and longer message")}\n`,
+    );
 
     const first = await readSessionTail(jsonlPath);
-    expect(first.latestUserActivity?.text).toBe('this is the first and longer message');
+    expect(first.latestUserActivity?.text).toBe(
+      "this is the first and longer message",
+    );
 
     await Bun.sleep(10);
     // Replace with shorter content (file shrinks → full re-read)
-    await writeFile(jsonlPath, makeUserLine('new') + '\n');
+    await writeFile(jsonlPath, `${makeUserLine("new")}\n`);
 
     const second = await readSessionTail(jsonlPath);
-    expect(second.latestUserActivity?.text).toBe('new');
+    expect(second.latestUserActivity?.text).toBe("new");
   });
 });
 
 // ─── targeted refresh (R20.5) ──────────────────────────────────────────────────
 
-describe('getProjectState targeted refresh (R20.5)', () => {
+describe("getProjectState targeted refresh (R20.5)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-targeted');
+    tmpDir = await makeTempDir("ccmon-targeted");
     _resetCachesForTesting();
   });
 
@@ -1729,16 +1968,23 @@ describe('getProjectState targeted refresh (R20.5)', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  async function makeProject(name: string, cwd: string, sessionId: string): Promise<string> {
+  async function makeProject(
+    name: string,
+    cwd: string,
+    sessionId: string,
+  ): Promise<string> {
     const projDir = join(tmpDir, name);
     await mkdir(projDir, { recursive: true });
-    await writeFile(join(projDir, 'session.jsonl'), makeFirstLine(cwd, sessionId) + '\n');
+    await writeFile(
+      join(projDir, "session.jsonl"),
+      `${makeFirstLine(cwd, sessionId)}\n`,
+    );
     return projDir;
   }
 
-  test('targeted rescan updates only the changed project while other projects stay cached', async () => {
-    const dirA = await makeProject('-home-user-a', '/home/user/a', 'sid-a');
-    const dirB = await makeProject('-home-user-b', '/home/user/b', 'sid-b');
+  test("targeted rescan updates only the changed project while other projects stay cached", async () => {
+    const _dirA = await makeProject("-home-user-a", "/home/user/a", "sid-a");
+    const dirB = await makeProject("-home-user-b", "/home/user/b", "sid-b");
 
     // Full scan to warm the cache
     const first = await getProjectState(tmpDir);
@@ -1747,12 +1993,12 @@ describe('getProjectState targeted refresh (R20.5)', () => {
     // Write a new JSONL for project B to change its session ID via a new project file
     // (update the status to see state change — simplest observable diff)
     await writeFile(
-      join(dirB, 'status.local.json'),
+      join(dirB, "status.local.json"),
       JSON.stringify({
-        state: 'stopped',
+        state: "stopped",
         timestamp: new Date().toISOString(),
-        session_id: 'sid-b',
-        working_dir: '/home/user/b',
+        session_id: "sid-b",
+        working_dir: "/home/user/b",
       }),
     );
 
@@ -1761,24 +2007,32 @@ describe('getProjectState targeted refresh (R20.5)', () => {
     expect(second).toHaveLength(2);
 
     // Project A should still be present
-    const projA = second.find((p) => p.projectName === 'a');
-    const projB = second.find((p) => p.projectName === 'b');
+    const projA = second.find((p) => p.projectName === "a");
+    const projB = second.find((p) => p.projectName === "b");
     expect(projA).toBeDefined();
     expect(projB).toBeDefined();
   });
 
-  test('targeted rescan with cold cache falls back to full scan', async () => {
-    await makeProject('-home-user-x', '/home/user/x', 'sid-x');
+  test("targeted rescan with cold cache falls back to full scan", async () => {
+    await makeProject("-home-user-x", "/home/user/x", "sid-x");
 
     // Cache is cold (reset in beforeEach) — changedProjectDir provided but ignored
-    const results = await getProjectState(tmpDir, join(tmpDir, '-home-user-x'));
+    const results = await getProjectState(tmpDir, join(tmpDir, "-home-user-x"));
     expect(results).toHaveLength(1);
-    expect(results[0].projectName).toBe('x');
+    expect(results[0].projectName).toBe("x");
   });
 
-  test('targeted rescan of disappeared project removes it from cache', async () => {
-    const dirA = await makeProject('-home-user-gone', '/home/user/gone', 'sid-gone');
-    const dirB = await makeProject('-home-user-stay', '/home/user/stay', 'sid-stay');
+  test("targeted rescan of disappeared project removes it from cache", async () => {
+    const dirA = await makeProject(
+      "-home-user-gone",
+      "/home/user/gone",
+      "sid-gone",
+    );
+    const _dirB = await makeProject(
+      "-home-user-stay",
+      "/home/user/stay",
+      "sid-stay",
+    );
 
     // Warm the cache
     const first = await getProjectState(tmpDir);
@@ -1790,17 +2044,17 @@ describe('getProjectState targeted refresh (R20.5)', () => {
     // Targeted rescan of the now-gone project
     const second = await getProjectState(tmpDir, dirA);
     expect(second).toHaveLength(1);
-    expect(second[0].projectName).toBe('stay');
+    expect(second[0].projectName).toBe("stay");
   });
 });
 
 // ─── token usage (R32) ───────────────────────────────────────────────────────
 
-describe('readSessionTail token usage (R32)', () => {
+describe("readSessionTail token usage (R32)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-tokens');
+    tmpDir = await makeTempDir("ccmon-tokens");
     _resetCachesForTesting();
   });
 
@@ -1808,44 +2062,48 @@ describe('readSessionTail token usage (R32)', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  function makeAssistantWithUsage(model: string, inputTokens: number, outputTokens: number): string {
+  function makeAssistantWithUsage(
+    model: string,
+    inputTokens: number,
+    outputTokens: number,
+  ): string {
     return JSON.stringify({
-      type: 'assistant',
+      type: "assistant",
       message: {
-        role: 'assistant',
+        role: "assistant",
         model,
-        content: [{ type: 'text', text: 'response' }],
+        content: [{ type: "text", text: "response" }],
         usage: { input_tokens: inputTokens, output_tokens: outputTokens },
       },
     });
   }
 
   function makeUserLine(content: string): string {
-    return JSON.stringify({ type: 'user', message: { role: 'user', content } });
+    return JSON.stringify({ type: "user", message: { role: "user", content } });
   }
 
-  test('R32: single assistant entry with usage → inputTokens and outputTokens extracted', async () => {
-    const jsonlPath = join(tmpDir, 'r32-single.jsonl');
+  test("R32: single assistant entry with usage → inputTokens and outputTokens extracted", async () => {
+    const jsonlPath = join(tmpDir, "r32-single.jsonl");
     const lines = [
-      makeUserLine('what is X'),
-      makeAssistantWithUsage('claude-sonnet-4-6', 1000, 250),
+      makeUserLine("what is X"),
+      makeAssistantWithUsage("claude-sonnet-4-6", 1000, 250),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     expect(result.inputTokens).toBe(1000);
     expect(result.outputTokens).toBe(250);
   });
 
-  test('R32: multiple assistant entries → inputTokens is last value, outputTokens is sum', async () => {
-    const jsonlPath = join(tmpDir, 'r32-multi.jsonl');
+  test("R32: multiple assistant entries → inputTokens is last value, outputTokens is sum", async () => {
+    const jsonlPath = join(tmpDir, "r32-multi.jsonl");
     const lines = [
-      makeUserLine('first prompt'),
-      makeAssistantWithUsage('claude-sonnet-4-6', 500, 100),
-      makeUserLine('second prompt'),
-      makeAssistantWithUsage('claude-sonnet-4-6', 700, 200),
+      makeUserLine("first prompt"),
+      makeAssistantWithUsage("claude-sonnet-4-6", 500, 100),
+      makeUserLine("second prompt"),
+      makeAssistantWithUsage("claude-sonnet-4-6", 700, 200),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // inputTokens: last-seen value (cache_read grows monotonically, summing inflates it)
@@ -1854,37 +2112,37 @@ describe('readSessionTail token usage (R32)', () => {
     expect(result.outputTokens).toBe(300);
   });
 
-  test('R32: no usage fields → inputTokens and outputTokens undefined', async () => {
-    const jsonlPath = join(tmpDir, 'r32-no-usage.jsonl');
+  test("R32: no usage fields → inputTokens and outputTokens undefined", async () => {
+    const jsonlPath = join(tmpDir, "r32-no-usage.jsonl");
     const lines = [
-      makeUserLine('prompt'),
+      makeUserLine("prompt"),
       JSON.stringify({
-        type: 'assistant',
+        type: "assistant",
         message: {
-          role: 'assistant',
-          model: 'claude-sonnet-4-6',
-          content: [{ type: 'text', text: 'reply' }],
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [{ type: "text", text: "reply" }],
           // no usage field
         },
       }),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     expect(result.inputTokens).toBeUndefined();
     expect(result.outputTokens).toBeUndefined();
   });
 
-  test('R32: delta reads — inputTokens last-wins, outputTokens accumulates', async () => {
+  test("R32: delta reads — inputTokens last-wins, outputTokens accumulates", async () => {
     _resetCachesForTesting();
-    const jsonlPath = join(tmpDir, 'r32-delta.jsonl');
+    const jsonlPath = join(tmpDir, "r32-delta.jsonl");
 
     // Initial content
     const initialLines = [
-      makeUserLine('first'),
-      makeAssistantWithUsage('claude-sonnet-4-6', 300, 80),
+      makeUserLine("first"),
+      makeAssistantWithUsage("claude-sonnet-4-6", 300, 80),
     ];
-    await writeFile(jsonlPath, initialLines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${initialLines.join("\n")}\n`);
 
     const first = await readSessionTail(jsonlPath);
     expect(first.inputTokens).toBe(300);
@@ -1893,11 +2151,11 @@ describe('readSessionTail token usage (R32)', () => {
     // Append more content (simulates growing cache_read — new value is larger)
     await Bun.sleep(10);
     const appendedLines = [
-      makeUserLine('second'),
-      makeAssistantWithUsage('claude-sonnet-4-6', 500, 60),
+      makeUserLine("second"),
+      makeAssistantWithUsage("claude-sonnet-4-6", 500, 60),
     ];
     const existing = await Bun.file(jsonlPath).text();
-    await Bun.write(jsonlPath, existing + appendedLines.join('\n') + '\n');
+    await Bun.write(jsonlPath, `${existing + appendedLines.join("\n")}\n`);
 
     const second = await readSessionTail(jsonlPath);
     // inputTokens: new scan value replaces base (last-wins, not additive)
@@ -1906,21 +2164,27 @@ describe('readSessionTail token usage (R32)', () => {
     expect(second.outputTokens).toBe(140);
   });
 
-  test('R32: file shrink resets token counts to new content only', async () => {
+  test("R32: file shrink resets token counts to new content only", async () => {
     _resetCachesForTesting();
-    const jsonlPath = join(tmpDir, 'r32-shrink.jsonl');
+    const jsonlPath = join(tmpDir, "r32-shrink.jsonl");
 
-    await writeFile(jsonlPath, [
-      makeUserLine('old session'),
-      makeAssistantWithUsage('claude-sonnet-4-6', 1000, 300),
-    ].join('\n') + '\n');
+    await writeFile(
+      jsonlPath,
+      `${[
+        makeUserLine("old session"),
+        makeAssistantWithUsage("claude-sonnet-4-6", 1000, 300),
+      ].join("\n")}\n`,
+    );
 
     const first = await readSessionTail(jsonlPath);
     expect(first.inputTokens).toBe(1000);
 
     // Replace with shorter file (new session)
     await Bun.sleep(10);
-    await Bun.write(jsonlPath, makeAssistantWithUsage('claude-sonnet-4-6', 50, 20) + '\n');
+    await Bun.write(
+      jsonlPath,
+      `${makeAssistantWithUsage("claude-sonnet-4-6", 50, 20)}\n`,
+    );
 
     const second = await readSessionTail(jsonlPath);
     // Full re-read: only sees the new content
@@ -1931,11 +2195,11 @@ describe('readSessionTail token usage (R32)', () => {
 
 // ─── latestUserActivity extraction (R37, R49) ────────────────────────────────
 
-describe('readSessionTail latestUserActivity (R37, R49)', () => {
+describe("readSessionTail latestUserActivity (R37, R49)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-r37');
+    tmpDir = await makeTempDir("ccmon-r37");
     _resetCachesForTesting();
   });
 
@@ -1944,101 +2208,107 @@ describe('readSessionTail latestUserActivity (R37, R49)', () => {
   });
 
   function makeUserEntry(content: string): string {
-    return JSON.stringify({ type: 'user', message: { role: 'user', content } });
+    return JSON.stringify({ type: "user", message: { role: "user", content } });
   }
 
   function makeCommandEntry(name: string, args?: string): string {
-    const argsTag = args ? `<command-args>${args}</command-args>` : '';
+    const argsTag = args ? `<command-args>${args}</command-args>` : "";
     return makeUserEntry(`<command-name>${name}</command-name>${argsTag}`);
   }
 
-  test('R37: command extracted from <command-name> user entry → isCommand: true', async () => {
-    const jsonlPath = join(tmpDir, 'r37-basic.jsonl');
-    await writeFile(jsonlPath, makeCommandEntry('/ctx-load') + '\n');
+  test("R37: command extracted from <command-name> user entry → isCommand: true", async () => {
+    const jsonlPath = join(tmpDir, "r37-basic.jsonl");
+    await writeFile(jsonlPath, `${makeCommandEntry("/ctx-load")}\n`);
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestUserActivity?.text).toBe('/ctx-load');
+    expect(result.latestUserActivity?.text).toBe("/ctx-load");
     expect(result.latestUserActivity?.isCommand).toBe(true);
   });
 
-  test('R37: command includes args when <command-args> present', async () => {
-    const jsonlPath = join(tmpDir, 'r37-args.jsonl');
-    await writeFile(jsonlPath, makeCommandEntry('/ctx-load', 'some args') + '\n');
+  test("R37: command includes args when <command-args> present", async () => {
+    const jsonlPath = join(tmpDir, "r37-args.jsonl");
+    await writeFile(
+      jsonlPath,
+      `${makeCommandEntry("/ctx-load", "some args")}\n`,
+    );
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestUserActivity?.text).toBe('/ctx-load some args');
+    expect(result.latestUserActivity?.text).toBe("/ctx-load some args");
     expect(result.latestUserActivity?.isCommand).toBe(true);
   });
 
-  test('R37: <command-name> without args produces command-only string', async () => {
-    const jsonlPath = join(tmpDir, 'r37-no-args.jsonl');
-    await writeFile(jsonlPath, makeCommandEntry('/implement') + '\n');
+  test("R37: <command-name> without args produces command-only string", async () => {
+    const jsonlPath = join(tmpDir, "r37-no-args.jsonl");
+    await writeFile(jsonlPath, `${makeCommandEntry("/implement")}\n`);
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.latestUserActivity?.text).toBe('/implement');
+    expect(result.latestUserActivity?.text).toBe("/implement");
     expect(result.latestUserActivity?.isCommand).toBe(true);
   });
 
-  test('R49 single-winner ordering: command more recent than message → isCommand: true', async () => {
-    const jsonlPath = join(tmpDir, 'r49-cmd-newer.jsonl');
+  test("R49 single-winner ordering: command more recent than message → isCommand: true", async () => {
+    const jsonlPath = join(tmpDir, "r49-cmd-newer.jsonl");
     const lines = [
-      makeUserEntry('a plain user message'),
-      makeCommandEntry('/ctx-save'),
+      makeUserEntry("a plain user message"),
+      makeCommandEntry("/ctx-save"),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // Reversed scan finds the command first (most recent entry) → single winner
-    expect(result.latestUserActivity?.text).toBe('/ctx-save');
+    expect(result.latestUserActivity?.text).toBe("/ctx-save");
     expect(result.latestUserActivity?.isCommand).toBe(true);
   });
 
-  test('R49 single-winner ordering: message more recent than command → isCommand: false', async () => {
-    const jsonlPath = join(tmpDir, 'r49-msg-newer.jsonl');
+  test("R49 single-winner ordering: message more recent than command → isCommand: false", async () => {
+    const jsonlPath = join(tmpDir, "r49-msg-newer.jsonl");
     const lines = [
-      makeCommandEntry('/ctx-load'),
-      makeUserEntry('a follow-up user message'),
+      makeCommandEntry("/ctx-load"),
+      makeUserEntry("a follow-up user message"),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // Reversed scan finds the plain message first (most recent entry) → single winner
-    expect(result.latestUserActivity?.text).toBe('a follow-up user message');
+    expect(result.latestUserActivity?.text).toBe("a follow-up user message");
     expect(result.latestUserActivity?.isCommand).toBe(false);
   });
 
-  test('R37: content starting with < but no <command-name> tag → no latestUserActivity', async () => {
-    const jsonlPath = join(tmpDir, 'r37-xml-no-cmd.jsonl');
+  test("R37: content starting with < but no <command-name> tag → no latestUserActivity", async () => {
+    const jsonlPath = join(tmpDir, "r37-xml-no-cmd.jsonl");
     // Content starting with < but no <command-name> tag: excluded from plain messages, not a command
-    await writeFile(jsonlPath, makeUserEntry('<some-other-tag>value</some-other-tag>') + '\n');
+    await writeFile(
+      jsonlPath,
+      `${makeUserEntry("<some-other-tag>value</some-other-tag>")}\n`,
+    );
 
     const result = await readSessionTail(jsonlPath);
     expect(result.latestUserActivity).toBeUndefined();
   });
 
-  test('R49 single-winner: older entries do not overwrite once latestUserActivity is set', async () => {
-    const jsonlPath = join(tmpDir, 'r49-no-overwrite.jsonl');
+  test("R49 single-winner: older entries do not overwrite once latestUserActivity is set", async () => {
+    const jsonlPath = join(tmpDir, "r49-no-overwrite.jsonl");
     const lines = [
-      makeCommandEntry('/old-command'),
-      makeUserEntry('older message'),
-      makeUserEntry('most recent message'),
+      makeCommandEntry("/old-command"),
+      makeUserEntry("older message"),
+      makeUserEntry("most recent message"),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // Reversed scan: "most recent message" is found first and wins; older entries ignored
-    expect(result.latestUserActivity?.text).toBe('most recent message');
+    expect(result.latestUserActivity?.text).toBe("most recent message");
     expect(result.latestUserActivity?.isCommand).toBe(false);
   });
 });
 
 // ─── accurate token totals (R39) ─────────────────────────────────────────────
 
-describe('readSessionTail accurate token totals (R39)', () => {
+describe("readSessionTail accurate token totals (R39)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-r39');
+    tmpDir = await makeTempDir("ccmon-r39");
     _resetCachesForTesting();
   });
 
@@ -2054,66 +2324,88 @@ describe('readSessionTail accurate token totals (R39)', () => {
   }): string {
     const usage: Record<string, number> = {};
     if (opts.inputTokens !== undefined) usage.input_tokens = opts.inputTokens;
-    if (opts.cacheCreate !== undefined) usage.cache_creation_input_tokens = opts.cacheCreate;
-    if (opts.cacheRead !== undefined) usage.cache_read_input_tokens = opts.cacheRead;
-    if (opts.outputTokens !== undefined) usage.output_tokens = opts.outputTokens;
+    if (opts.cacheCreate !== undefined)
+      usage.cache_creation_input_tokens = opts.cacheCreate;
+    if (opts.cacheRead !== undefined)
+      usage.cache_read_input_tokens = opts.cacheRead;
+    if (opts.outputTokens !== undefined)
+      usage.output_tokens = opts.outputTokens;
     return JSON.stringify({
-      type: 'assistant',
+      type: "assistant",
       message: {
-        role: 'assistant',
-        model: 'claude-sonnet-4-6',
-        content: [{ type: 'text', text: 'response' }],
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content: [{ type: "text", text: "response" }],
         usage,
       },
     });
   }
 
-  test('R39: sums input + cache_creation + cache_read tokens', async () => {
-    const jsonlPath = join(tmpDir, 'r39-full.jsonl');
-    await writeFile(jsonlPath, makeAssistantWithFullUsage({
-      inputTokens: 100,
-      cacheCreate: 5000,
-      cacheRead: 200000,
-      outputTokens: 500,
-    }) + '\n');
+  test("R39: sums input + cache_creation + cache_read tokens", async () => {
+    const jsonlPath = join(tmpDir, "r39-full.jsonl");
+    await writeFile(
+      jsonlPath,
+      `${makeAssistantWithFullUsage({
+        inputTokens: 100,
+        cacheCreate: 5000,
+        cacheRead: 200000,
+        outputTokens: 500,
+      })}\n`,
+    );
 
     const result = await readSessionTail(jsonlPath);
     expect(result.inputTokens).toBe(100 + 5000 + 200000);
     expect(result.outputTokens).toBe(500);
   });
 
-  test('R39: missing cache fields treated as 0 (backward compat)', async () => {
-    const jsonlPath = join(tmpDir, 'r39-no-cache.jsonl');
-    await writeFile(jsonlPath, makeAssistantWithFullUsage({
-      inputTokens: 300,
-      outputTokens: 100,
-    }) + '\n');
+  test("R39: missing cache fields treated as 0 (backward compat)", async () => {
+    const jsonlPath = join(tmpDir, "r39-no-cache.jsonl");
+    await writeFile(
+      jsonlPath,
+      `${makeAssistantWithFullUsage({
+        inputTokens: 300,
+        outputTokens: 100,
+      })}\n`,
+    );
 
     const result = await readSessionTail(jsonlPath);
     expect(result.inputTokens).toBe(300);
     expect(result.outputTokens).toBe(100);
   });
 
-  test('R39: only cache fields present, input_tokens absent → sums cache only', async () => {
-    const jsonlPath = join(tmpDir, 'r39-cache-only.jsonl');
-    await writeFile(jsonlPath, makeAssistantWithFullUsage({
-      cacheCreate: 1000,
-      cacheRead: 50000,
-      outputTokens: 200,
-    }) + '\n');
+  test("R39: only cache fields present, input_tokens absent → sums cache only", async () => {
+    const jsonlPath = join(tmpDir, "r39-cache-only.jsonl");
+    await writeFile(
+      jsonlPath,
+      `${makeAssistantWithFullUsage({
+        cacheCreate: 1000,
+        cacheRead: 50000,
+        outputTokens: 200,
+      })}\n`,
+    );
 
     const result = await readSessionTail(jsonlPath);
     expect(result.inputTokens).toBe(51000);
     expect(result.outputTokens).toBe(200);
   });
 
-  test('R39: multiple entries — inputTokens is last-seen value, outputTokens is sum', async () => {
-    const jsonlPath = join(tmpDir, 'r39-multi.jsonl');
+  test("R39: multiple entries — inputTokens is last-seen value, outputTokens is sum", async () => {
+    const jsonlPath = join(tmpDir, "r39-multi.jsonl");
     const lines = [
-      makeAssistantWithFullUsage({ inputTokens: 100, cacheCreate: 1000, cacheRead: 10000, outputTokens: 50 }),
-      makeAssistantWithFullUsage({ inputTokens: 200, cacheCreate: 2000, cacheRead: 20000, outputTokens: 75 }),
+      makeAssistantWithFullUsage({
+        inputTokens: 100,
+        cacheCreate: 1000,
+        cacheRead: 10000,
+        outputTokens: 50,
+      }),
+      makeAssistantWithFullUsage({
+        inputTokens: 200,
+        cacheCreate: 2000,
+        cacheRead: 20000,
+        outputTokens: 75,
+      }),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // inputTokens: last-seen value (second entry = 200 + 2000 + 20000)
@@ -2125,11 +2417,11 @@ describe('readSessionTail accurate token totals (R39)', () => {
 
 // ─── input token last-value semantics (R47) ──────────────────────────────────
 
-describe('readSessionTail input token last-value semantics (R47)', () => {
+describe("readSessionTail input token last-value semantics (R47)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-r47');
+    tmpDir = await makeTempDir("ccmon-r47");
     _resetCachesForTesting();
   });
 
@@ -2137,13 +2429,16 @@ describe('readSessionTail input token last-value semantics (R47)', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  function makeAssistantWithUsage(inputTokens: number, outputTokens: number): string {
+  function makeAssistantWithUsage(
+    inputTokens: number,
+    outputTokens: number,
+  ): string {
     return JSON.stringify({
-      type: 'assistant',
+      type: "assistant",
       message: {
-        role: 'assistant',
-        model: 'claude-sonnet-4-6',
-        content: [{ type: 'text', text: 'response' }],
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content: [{ type: "text", text: "response" }],
         usage: {
           input_tokens: inputTokens,
           cache_read_input_tokens: 0,
@@ -2154,15 +2449,15 @@ describe('readSessionTail input token last-value semantics (R47)', () => {
     });
   }
 
-  test('R47: monotonically growing input_tokens → result equals last entry value', async () => {
-    const jsonlPath = join(tmpDir, 'r47-growing-input.jsonl');
+  test("R47: monotonically growing input_tokens → result equals last entry value", async () => {
+    const jsonlPath = join(tmpDir, "r47-growing-input.jsonl");
     // Simulate cache_read growing across calls (1000, 2000, 5000)
     const lines = [
       makeAssistantWithUsage(1000, 10),
       makeAssistantWithUsage(2000, 20),
       makeAssistantWithUsage(5000, 30),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // inputTokens: last-seen value (5000), not sum (1000+2000+5000=8000)
@@ -2171,14 +2466,12 @@ describe('readSessionTail input token last-value semantics (R47)', () => {
     expect(result.outputTokens).toBe(60);
   });
 
-  test('R47: delta merge — new scan value replaces base input, output accumulates', async () => {
+  test("R47: delta merge — new scan value replaces base input, output accumulates", async () => {
     _resetCachesForTesting();
-    const jsonlPath = join(tmpDir, 'r47-delta-merge.jsonl');
+    const jsonlPath = join(tmpDir, "r47-delta-merge.jsonl");
 
-    const initialLines = [
-      makeAssistantWithUsage(5000, 100),
-    ];
-    await writeFile(jsonlPath, initialLines.join('\n') + '\n');
+    const initialLines = [makeAssistantWithUsage(5000, 100)];
+    await writeFile(jsonlPath, `${initialLines.join("\n")}\n`);
 
     const first = await readSessionTail(jsonlPath);
     expect(first.inputTokens).toBe(5000);
@@ -2187,7 +2480,10 @@ describe('readSessionTail input token last-value semantics (R47)', () => {
     // Append: new call with larger input (cache grew to 6000)
     await Bun.sleep(10);
     const existing = await Bun.file(jsonlPath).text();
-    await Bun.write(jsonlPath, existing + makeAssistantWithUsage(6000, 50) + '\n');
+    await Bun.write(
+      jsonlPath,
+      `${existing + makeAssistantWithUsage(6000, 50)}\n`,
+    );
 
     const second = await readSessionTail(jsonlPath);
     // inputTokens: new value 6000 replaces base 5000 (not 11000)
@@ -2199,11 +2495,11 @@ describe('readSessionTail input token last-value semantics (R47)', () => {
 
 // ─── SubagentInfo lifecycle (R40) ────────────────────────────────────────────
 
-describe('getSubagentInfos lifecycle (R40)', () => {
+describe("getSubagentInfos lifecycle (R40)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-r40');
+    tmpDir = await makeTempDir("ccmon-r40");
     _resetCachesForTesting();
   });
 
@@ -2211,43 +2507,51 @@ describe('getSubagentInfos lifecycle (R40)', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  async function makeSubagentDir(sessionId: string): Promise<{ subagentsDir: string; jsonlPath: string }> {
+  async function makeSubagentDir(
+    sessionId: string,
+  ): Promise<{ subagentsDir: string; jsonlPath: string }> {
     const sessionDir = join(tmpDir, sessionId);
-    const subagentsDir = join(sessionDir, 'subagents');
+    const subagentsDir = join(sessionDir, "subagents");
     await mkdir(subagentsDir, { recursive: true });
     const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
     return { subagentsDir, jsonlPath };
   }
 
-  test('R40: lastMessageTime populated as ISO 8601 from file mtime', async () => {
-    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-mtime');
-    const agentPath = join(subagentsDir, 'agent-abc.jsonl');
-    await writeFile(agentPath, '{}');
+  test("R40: lastMessageTime populated as ISO 8601 from file mtime", async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir("r40-mtime");
+    const agentPath = join(subagentsDir, "agent-abc.jsonl");
+    await writeFile(agentPath, "{}");
 
     const infos = await getSubagentInfos(jsonlPath);
     expect(infos).toHaveLength(1);
     expect(infos[0].lastMessageTime).toBeDefined();
     // Should be a valid ISO 8601 string
-    expect(new Date(infos[0].lastMessageTime).toISOString()).toBe(infos[0].lastMessageTime);
+    expect(new Date(infos[0].lastMessageTime).toISOString()).toBe(
+      infos[0].lastMessageTime,
+    );
     // Should be recent (within last 10 seconds)
-    expect(Date.now() - new Date(infos[0].lastMessageTime).getTime()).toBeLessThan(10_000);
+    expect(
+      Date.now() - new Date(infos[0].lastMessageTime).getTime(),
+    ).toBeLessThan(10_000);
   });
 
-  test('R40: launchTime populated as ISO 8601 from file mtime', async () => {
-    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-launch');
-    const agentPath = join(subagentsDir, 'agent-xyz.jsonl');
-    await writeFile(agentPath, '{}');
+  test("R40: launchTime populated as ISO 8601 from file mtime", async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir("r40-launch");
+    const agentPath = join(subagentsDir, "agent-xyz.jsonl");
+    await writeFile(agentPath, "{}");
 
     const infos = await getSubagentInfos(jsonlPath);
     expect(infos).toHaveLength(1);
     expect(infos[0].launchTime).toBeDefined();
-    expect(new Date(infos[0].launchTime).toISOString()).toBe(infos[0].launchTime);
+    expect(new Date(infos[0].launchTime).toISOString()).toBe(
+      infos[0].launchTime,
+    );
   });
 
-  test('R40: completed agent older than 5m excluded from result', async () => {
-    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-expire');
-    const oldAgent = join(subagentsDir, 'agent-old.jsonl');
-    await writeFile(oldAgent, '{}');
+  test("R40: completed agent older than 5m excluded from result", async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir("r40-expire");
+    const oldAgent = join(subagentsDir, "agent-old.jsonl");
+    await writeFile(oldAgent, "{}");
 
     // Backdate to 6 minutes ago
     const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000);
@@ -2255,40 +2559,42 @@ describe('getSubagentInfos lifecycle (R40)', () => {
 
     const infos = await getSubagentInfos(jsonlPath);
     // Old inactive agent should be filtered out
-    expect(infos.find((i) => i.agentId === 'old')).toBeUndefined();
+    expect(infos.find((i) => i.agentId === "old")).toBeUndefined();
   });
 
-  test('R40: completed agent younger than 5m is included', async () => {
-    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-recent-done');
-    const recentAgent = join(subagentsDir, 'agent-recent.jsonl');
-    await writeFile(recentAgent, '{}');
+  test("R40: completed agent younger than 5m is included", async () => {
+    const { subagentsDir, jsonlPath } =
+      await makeSubagentDir("r40-recent-done");
+    const recentAgent = join(subagentsDir, "agent-recent.jsonl");
+    await writeFile(recentAgent, "{}");
 
     // Backdate to 3 minutes ago (within 5m window, but >45s so isActive=false)
     const threeMinAgo = new Date(Date.now() - 3 * 60 * 1000);
     utimesSync(recentAgent, threeMinAgo, threeMinAgo);
 
     const infos = await getSubagentInfos(jsonlPath);
-    const agent = infos.find((i) => i.agentId === 'recent');
+    const agent = infos.find((i) => i.agentId === "recent");
     expect(agent).toBeDefined();
-    expect(agent!.isActive).toBe(false);
+    expect(agent?.isActive).toBe(false);
   });
 
-  test('R40: active agent (mtime < 45s) always included regardless of expiry', async () => {
-    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-active');
-    const activeAgent = join(subagentsDir, 'agent-live.jsonl');
-    await writeFile(activeAgent, '{}');
+  test("R40: active agent (mtime < 45s) always included regardless of expiry", async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir("r40-active");
+    const activeAgent = join(subagentsDir, "agent-live.jsonl");
+    await writeFile(activeAgent, "{}");
     // mtime is now = active
 
     const infos = await getSubagentInfos(jsonlPath);
-    const agent = infos.find((i) => i.agentId === 'live');
+    const agent = infos.find((i) => i.agentId === "live");
     expect(agent).toBeDefined();
-    expect(agent!.isActive).toBe(true);
+    expect(agent?.isActive).toBe(true);
   });
 
-  test('R40: sub-agent mtime before stop (mtime 30s ago, stopped 10s ago) → isActive false', async () => {
-    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-stopped-before');
-    const agentPath = join(subagentsDir, 'agent-pre.jsonl');
-    await writeFile(agentPath, '{}');
+  test("R40: sub-agent mtime before stop (mtime 30s ago, stopped 10s ago) → isActive false", async () => {
+    const { subagentsDir, jsonlPath } =
+      await makeSubagentDir("r40-stopped-before");
+    const agentPath = join(subagentsDir, "agent-pre.jsonl");
+    await writeFile(agentPath, "{}");
 
     const now = Date.now();
     const thirtySecAgo = new Date(now - 30_000);
@@ -2296,15 +2602,16 @@ describe('getSubagentInfos lifecycle (R40)', () => {
 
     const stoppedAtMs = now - 10_000;
     const infos = await getSubagentInfos(jsonlPath, stoppedAtMs);
-    const agent = infos.find((i) => i.agentId === 'pre');
+    const agent = infos.find((i) => i.agentId === "pre");
     expect(agent).toBeDefined();
-    expect(agent!.isActive).toBe(false);
+    expect(agent?.isActive).toBe(false);
   });
 
-  test('R40: sub-agent mtime after stop (mtime 5s ago, stopped 20s ago) → isActive true', async () => {
-    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-stopped-after');
-    const agentPath = join(subagentsDir, 'agent-post.jsonl');
-    await writeFile(agentPath, '{}');
+  test("R40: sub-agent mtime after stop (mtime 5s ago, stopped 20s ago) → isActive true", async () => {
+    const { subagentsDir, jsonlPath } =
+      await makeSubagentDir("r40-stopped-after");
+    const agentPath = join(subagentsDir, "agent-post.jsonl");
+    await writeFile(agentPath, "{}");
 
     const now = Date.now();
     const fiveSecAgo = new Date(now - 5_000);
@@ -2312,24 +2619,24 @@ describe('getSubagentInfos lifecycle (R40)', () => {
 
     const stoppedAtMs = now - 20_000;
     const infos = await getSubagentInfos(jsonlPath, stoppedAtMs);
-    const agent = infos.find((i) => i.agentId === 'post');
+    const agent = infos.find((i) => i.agentId === "post");
     expect(agent).toBeDefined();
-    expect(agent!.isActive).toBe(true);
+    expect(agent?.isActive).toBe(true);
   });
 
-  test('R40: stoppedAtMs null → existing 45s threshold behavior unchanged', async () => {
-    const { subagentsDir, jsonlPath } = await makeSubagentDir('r40-no-stop');
-    const activeAgent = join(subagentsDir, 'agent-now.jsonl');
-    const staleAgent = join(subagentsDir, 'agent-old.jsonl');
-    await writeFile(activeAgent, '{}');
-    await writeFile(staleAgent, '{}');
+  test("R40: stoppedAtMs null → existing 45s threshold behavior unchanged", async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir("r40-no-stop");
+    const activeAgent = join(subagentsDir, "agent-now.jsonl");
+    const staleAgent = join(subagentsDir, "agent-old.jsonl");
+    await writeFile(activeAgent, "{}");
+    await writeFile(staleAgent, "{}");
 
     const sixtySecAgo = new Date(Date.now() - 60_000);
     utimesSync(staleAgent, sixtySecAgo, sixtySecAgo);
 
     const infos = await getSubagentInfos(jsonlPath, null);
-    const active = infos.find((i) => i.agentId === 'now');
-    const stale = infos.find((i) => i.agentId === 'old');
+    const active = infos.find((i) => i.agentId === "now");
+    const stale = infos.find((i) => i.agentId === "old");
     expect(active?.isActive).toBe(true);
     expect(stale?.isActive).toBe(false);
   });
@@ -2337,11 +2644,11 @@ describe('getSubagentInfos lifecycle (R40)', () => {
 
 // ─── SubagentInfo ordering (R43) ─────────────────────────────────────────────
 
-describe('getSubagentInfos ordering (R43)', () => {
+describe("getSubagentInfos ordering (R43)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-r43');
+    tmpDir = await makeTempDir("ccmon-r43");
     _resetCachesForTesting();
   });
 
@@ -2349,20 +2656,20 @@ describe('getSubagentInfos ordering (R43)', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test('R43: sub-agents sorted descending by launchTime', async () => {
-    const sessionId = 'r43-sort';
+  test("R43: sub-agents sorted descending by launchTime", async () => {
+    const sessionId = "r43-sort";
     const sessionDir = join(tmpDir, sessionId);
-    const subagentsDir = join(sessionDir, 'subagents');
+    const subagentsDir = join(sessionDir, "subagents");
     await mkdir(subagentsDir, { recursive: true });
     const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
 
-    const agentA = join(subagentsDir, 'agent-aaa.jsonl');
-    const agentB = join(subagentsDir, 'agent-bbb.jsonl');
-    const agentC = join(subagentsDir, 'agent-ccc.jsonl');
+    const agentA = join(subagentsDir, "agent-aaa.jsonl");
+    const agentB = join(subagentsDir, "agent-bbb.jsonl");
+    const agentC = join(subagentsDir, "agent-ccc.jsonl");
 
-    await writeFile(agentA, '{}');
-    await writeFile(agentB, '{}');
-    await writeFile(agentC, '{}');
+    await writeFile(agentA, "{}");
+    await writeFile(agentB, "{}");
+    await writeFile(agentC, "{}");
 
     // Set distinct mtimes: C is newest, A is oldest
     const now = Date.now();
@@ -2373,19 +2680,19 @@ describe('getSubagentInfos ordering (R43)', () => {
     const infos = await getSubagentInfos(jsonlPath);
     expect(infos).toHaveLength(3);
     // Descending by launchTime: C, B, A
-    expect(infos[0].agentId).toBe('ccc');
-    expect(infos[1].agentId).toBe('bbb');
-    expect(infos[2].agentId).toBe('aaa');
+    expect(infos[0].agentId).toBe("ccc");
+    expect(infos[1].agentId).toBe("bbb");
+    expect(infos[2].agentId).toBe("aaa");
   });
 });
 
 // ─── TaskCreate/TaskUpdate task parsing (R46) ─────────────────────────────────
 
-describe('readSessionTail TaskCreate/TaskUpdate task parsing (R46)', () => {
+describe("readSessionTail TaskCreate/TaskUpdate task parsing (R46)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-r46');
+    tmpDir = await makeTempDir("ccmon-r46");
     _resetCachesForTesting();
   });
 
@@ -2393,114 +2700,136 @@ describe('readSessionTail TaskCreate/TaskUpdate task parsing (R46)', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  function makeTaskCreateEntry(toolUseId: string, subject: string, activeForm?: string): string {
-    const input: Record<string, string> = { subject, description: 'some description' };
+  function makeTaskCreateEntry(
+    toolUseId: string,
+    subject: string,
+    activeForm?: string,
+  ): string {
+    const input: Record<string, string> = {
+      subject,
+      description: "some description",
+    };
     if (activeForm) input.activeForm = activeForm;
     return JSON.stringify({
-      type: 'assistant',
+      type: "assistant",
       message: {
-        role: 'assistant',
-        model: 'claude-sonnet-4-6',
-        content: [{ type: 'tool_use', id: toolUseId, name: 'TaskCreate', input }],
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content: [
+          { type: "tool_use", id: toolUseId, name: "TaskCreate", input },
+        ],
       },
     });
   }
 
   function makeTaskUpdateEntry(taskId: string, status: string): string {
     return JSON.stringify({
-      type: 'assistant',
+      type: "assistant",
       message: {
-        role: 'assistant',
-        model: 'claude-sonnet-4-6',
-        content: [{ type: 'tool_use', id: `tu-update-${taskId}`, name: 'TaskUpdate', input: { taskId, status } }],
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content: [
+          {
+            type: "tool_use",
+            id: `tu-update-${taskId}`,
+            name: "TaskUpdate",
+            input: { taskId, status },
+          },
+        ],
       },
     });
   }
 
   function makeToolResultEntry(toolUseId: string, resultText: string): string {
     return JSON.stringify({
-      type: 'user',
+      type: "user",
       message: {
-        role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: toolUseId, content: resultText }],
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: toolUseId, content: resultText },
+        ],
       },
     });
   }
 
-  test('R46: TaskCreate tool_use blocks build task map with correct subjects and IDs', async () => {
-    const jsonlPath = join(tmpDir, 'r46-create.jsonl');
+  test("R46: TaskCreate tool_use blocks build task map with correct subjects and IDs", async () => {
+    const jsonlPath = join(tmpDir, "r46-create.jsonl");
     const lines = [
-      makeTaskCreateEntry('tu-1', 'Implement feature X', 'Implementing feature X'),
-      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
-      makeTaskCreateEntry('tu-2', 'Write tests for Y'),
-      makeToolResultEntry('tu-2', 'Task #2 created successfully'),
+      makeTaskCreateEntry(
+        "tu-1",
+        "Implement feature X",
+        "Implementing feature X",
+      ),
+      makeToolResultEntry("tu-1", "Task #1 created successfully"),
+      makeTaskCreateEntry("tu-2", "Write tests for Y"),
+      makeToolResultEntry("tu-2", "Task #2 created successfully"),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     expect(result.tasks).toHaveLength(2);
-    expect(result.tasks![0].id).toBe('1');
-    expect(result.tasks![0].subject).toBe('Implement feature X');
-    expect(result.tasks![0].status).toBe('pending');
-    expect(result.tasks![0].activeForm).toBe('Implementing feature X');
-    expect(result.tasks![1].id).toBe('2');
-    expect(result.tasks![1].subject).toBe('Write tests for Y');
+    expect(result.tasks?.[0].id).toBe("1");
+    expect(result.tasks?.[0].subject).toBe("Implement feature X");
+    expect(result.tasks?.[0].status).toBe("pending");
+    expect(result.tasks?.[0].activeForm).toBe("Implementing feature X");
+    expect(result.tasks?.[1].id).toBe("2");
+    expect(result.tasks?.[1].subject).toBe("Write tests for Y");
   });
 
-  test('R46: TaskUpdate patches task status', async () => {
-    const jsonlPath = join(tmpDir, 'r46-update.jsonl');
+  test("R46: TaskUpdate patches task status", async () => {
+    const jsonlPath = join(tmpDir, "r46-update.jsonl");
     const lines = [
-      makeTaskCreateEntry('tu-1', 'Task A'),
-      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
-      makeTaskCreateEntry('tu-2', 'Task B'),
-      makeToolResultEntry('tu-2', 'Task #2 created successfully'),
-      makeTaskUpdateEntry('1', 'in_progress'),
-      makeTaskUpdateEntry('2', 'completed'),
+      makeTaskCreateEntry("tu-1", "Task A"),
+      makeToolResultEntry("tu-1", "Task #1 created successfully"),
+      makeTaskCreateEntry("tu-2", "Task B"),
+      makeToolResultEntry("tu-2", "Task #2 created successfully"),
+      makeTaskUpdateEntry("1", "in_progress"),
+      makeTaskUpdateEntry("2", "completed"),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     expect(result.tasks).toHaveLength(2);
-    expect(result.tasks!.find((t) => t.id === '1')?.status).toBe('in_progress');
-    expect(result.tasks!.find((t) => t.id === '2')?.status).toBe('completed');
+    expect(result.tasks?.find((t) => t.id === "1")?.status).toBe("in_progress");
+    expect(result.tasks?.find((t) => t.id === "2")?.status).toBe("completed");
   });
 
-  test('R46: tasksDone and tasksTotal derived correctly from tasks array', async () => {
-    const jsonlPath = join(tmpDir, 'r46-counts.jsonl');
+  test("R46: tasksDone and tasksTotal derived correctly from tasks array", async () => {
+    const jsonlPath = join(tmpDir, "r46-counts.jsonl");
     const lines = [
-      makeTaskCreateEntry('tu-1', 'Task A'),
-      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
-      makeTaskCreateEntry('tu-2', 'Task B'),
-      makeToolResultEntry('tu-2', 'Task #2 created successfully'),
-      makeTaskCreateEntry('tu-3', 'Task C'),
-      makeToolResultEntry('tu-3', 'Task #3 created successfully'),
-      makeTaskCreateEntry('tu-4', 'Task D'),
-      makeToolResultEntry('tu-4', 'Task #4 created successfully'),
-      makeTaskUpdateEntry('1', 'completed'),
-      makeTaskUpdateEntry('2', 'in_progress'),
-      makeTaskUpdateEntry('3', 'completed'),
+      makeTaskCreateEntry("tu-1", "Task A"),
+      makeToolResultEntry("tu-1", "Task #1 created successfully"),
+      makeTaskCreateEntry("tu-2", "Task B"),
+      makeToolResultEntry("tu-2", "Task #2 created successfully"),
+      makeTaskCreateEntry("tu-3", "Task C"),
+      makeToolResultEntry("tu-3", "Task #3 created successfully"),
+      makeTaskCreateEntry("tu-4", "Task D"),
+      makeToolResultEntry("tu-4", "Task #4 created successfully"),
+      makeTaskUpdateEntry("1", "completed"),
+      makeTaskUpdateEntry("2", "in_progress"),
+      makeTaskUpdateEntry("3", "completed"),
       // Task 4 stays pending
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     expect(result.tasksTotal).toBe(4);
     expect(result.tasksDone).toBe(2);
   });
 
-  test('R46: deleted tasks excluded from total count', async () => {
-    const jsonlPath = join(tmpDir, 'r46-deleted.jsonl');
+  test("R46: deleted tasks excluded from total count", async () => {
+    const jsonlPath = join(tmpDir, "r46-deleted.jsonl");
     const lines = [
-      makeTaskCreateEntry('tu-1', 'Task A'),
-      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
-      makeTaskCreateEntry('tu-2', 'Task B'),
-      makeToolResultEntry('tu-2', 'Task #2 created successfully'),
-      makeTaskCreateEntry('tu-3', 'Task C'),
-      makeToolResultEntry('tu-3', 'Task #3 created successfully'),
-      makeTaskUpdateEntry('2', 'deleted'),
-      makeTaskUpdateEntry('1', 'completed'),
+      makeTaskCreateEntry("tu-1", "Task A"),
+      makeToolResultEntry("tu-1", "Task #1 created successfully"),
+      makeTaskCreateEntry("tu-2", "Task B"),
+      makeToolResultEntry("tu-2", "Task #2 created successfully"),
+      makeTaskCreateEntry("tu-3", "Task C"),
+      makeToolResultEntry("tu-3", "Task #3 created successfully"),
+      makeTaskUpdateEntry("2", "deleted"),
+      makeTaskUpdateEntry("1", "completed"),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // Task 2 is deleted → excluded from total
@@ -2508,39 +2837,39 @@ describe('readSessionTail TaskCreate/TaskUpdate task parsing (R46)', () => {
     expect(result.tasksDone).toBe(1);
   });
 
-  test('R46: tasks sorted numerically by ID', async () => {
-    const jsonlPath = join(tmpDir, 'r46-sort.jsonl');
+  test("R46: tasks sorted numerically by ID", async () => {
+    const jsonlPath = join(tmpDir, "r46-sort.jsonl");
     const lines = [
-      makeTaskCreateEntry('tu-1', 'First'),
-      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
-      makeTaskCreateEntry('tu-2', 'Second'),
-      makeToolResultEntry('tu-2', 'Task #10 created successfully'),
-      makeTaskCreateEntry('tu-3', 'Third'),
-      makeToolResultEntry('tu-3', 'Task #2 created successfully'),
+      makeTaskCreateEntry("tu-1", "First"),
+      makeToolResultEntry("tu-1", "Task #1 created successfully"),
+      makeTaskCreateEntry("tu-2", "Second"),
+      makeToolResultEntry("tu-2", "Task #10 created successfully"),
+      makeTaskCreateEntry("tu-3", "Third"),
+      makeToolResultEntry("tu-3", "Task #2 created successfully"),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
-    expect(result.tasks!.map((t) => t.id)).toEqual(['1', '2', '10']);
+    expect(result.tasks?.map((t) => t.id)).toEqual(["1", "2", "10"]);
   });
 
-  test('R46: TodoWrite used as fallback when no TaskCreate blocks present', async () => {
-    const jsonlPath = join(tmpDir, 'r46-todowrite-fallback.jsonl');
+  test("R46: TodoWrite used as fallback when no TaskCreate blocks present", async () => {
+    const jsonlPath = join(tmpDir, "r46-todowrite-fallback.jsonl");
     const todos = [
-      { content: 'Old task A', status: 'completed' },
-      { content: 'Old task B', status: 'pending' },
+      { content: "Old task A", status: "completed" },
+      { content: "Old task B", status: "pending" },
     ];
     const lines = [
       JSON.stringify({
-        type: 'assistant',
+        type: "assistant",
         message: {
-          role: 'assistant',
-          model: 'claude-sonnet-4-6',
-          content: [{ type: 'tool_use', name: 'TodoWrite', input: { todos } }],
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [{ type: "tool_use", name: "TodoWrite", input: { todos } }],
         },
       }),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     expect(result.tasks).toBeUndefined();
@@ -2548,26 +2877,26 @@ describe('readSessionTail TaskCreate/TaskUpdate task parsing (R46)', () => {
     expect(result.tasksDone).toBe(1);
   });
 
-  test('R46: TaskCreate takes priority over TodoWrite when both present', async () => {
-    const jsonlPath = join(tmpDir, 'r46-priority.jsonl');
+  test("R46: TaskCreate takes priority over TodoWrite when both present", async () => {
+    const jsonlPath = join(tmpDir, "r46-priority.jsonl");
     const todos = [
-      { content: 'Legacy A', status: 'completed' },
-      { content: 'Legacy B', status: 'completed' },
-      { content: 'Legacy C', status: 'completed' },
+      { content: "Legacy A", status: "completed" },
+      { content: "Legacy B", status: "completed" },
+      { content: "Legacy C", status: "completed" },
     ];
     const lines = [
       JSON.stringify({
-        type: 'assistant',
+        type: "assistant",
         message: {
-          role: 'assistant',
-          model: 'claude-sonnet-4-6',
-          content: [{ type: 'tool_use', name: 'TodoWrite', input: { todos } }],
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [{ type: "tool_use", name: "TodoWrite", input: { todos } }],
         },
       }),
-      makeTaskCreateEntry('tu-1', 'Modern Task A'),
-      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
+      makeTaskCreateEntry("tu-1", "Modern Task A"),
+      makeToolResultEntry("tu-1", "Task #1 created successfully"),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // TaskCreate wins: 1 task, not 3 from TodoWrite
@@ -2576,34 +2905,41 @@ describe('readSessionTail TaskCreate/TaskUpdate task parsing (R46)', () => {
     expect(result.tasksDone).toBe(0);
   });
 
-  test('R46: TaskUpdate-only (no resolved TaskCreate) does not suppress TodoWrite fallback', async () => {
+  test("R46: TaskUpdate-only (no resolved TaskCreate) does not suppress TodoWrite fallback", async () => {
     // A TaskUpdate block with no preceding TaskCreate tool_result in the scanned window
     // must not set foundAny=true and block the TodoWrite fallback.
-    const jsonlPath = join(tmpDir, 'r46-update-only.jsonl');
+    const jsonlPath = join(tmpDir, "r46-update-only.jsonl");
     const todos = [
-      { content: 'Fallback A', status: 'completed' },
-      { content: 'Fallback B', status: 'pending' },
+      { content: "Fallback A", status: "completed" },
+      { content: "Fallback B", status: "pending" },
     ];
     const lines = [
       JSON.stringify({
-        type: 'assistant',
+        type: "assistant",
         message: {
-          role: 'assistant',
-          model: 'claude-sonnet-4-6',
-          content: [{ type: 'tool_use', name: 'TodoWrite', input: { todos } }],
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [{ type: "tool_use", name: "TodoWrite", input: { todos } }],
         },
       }),
       // TaskUpdate for an ID that has no TaskCreate in this window
       JSON.stringify({
-        type: 'assistant',
+        type: "assistant",
         message: {
-          role: 'assistant',
-          model: 'claude-sonnet-4-6',
-          content: [{ type: 'tool_use', id: 'tu-upd', name: 'TaskUpdate', input: { taskId: '99', status: 'completed' } }],
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [
+            {
+              type: "tool_use",
+              id: "tu-upd",
+              name: "TaskUpdate",
+              input: { taskId: "99", status: "completed" },
+            },
+          ],
         },
       }),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // TaskUpdate for unknown ID must not block TodoWrite; fallback should produce 2 tasks
@@ -2612,23 +2948,30 @@ describe('readSessionTail TaskCreate/TaskUpdate task parsing (R46)', () => {
     expect(result.tasks).toBeUndefined(); // TodoWrite path never sets tasks array
   });
 
-  test('R46: TaskCreate seen but no tool_result yet → tasks/counts stay undefined (no 0/0 flash)', async () => {
+  test("R46: TaskCreate seen but no tool_result yet → tasks/counts stay undefined (no 0/0 flash)", async () => {
     // Reproduces the bug where a pending TaskCreate (no matching tool_result) caused
     // scanTaskCreateUpdate to return a non-null empty Map, which triggered mergeEnrichment
     // to produce tasks=[], tasksDone=0, tasksTotal=0 instead of leaving everything undefined.
-    const jsonlPath = join(tmpDir, 'r46-pending-create.jsonl');
+    const jsonlPath = join(tmpDir, "r46-pending-create.jsonl");
     const lines = [
       // TaskCreate tool_use with no matching tool_result in the file yet
       JSON.stringify({
-        type: 'assistant',
+        type: "assistant",
         message: {
-          role: 'assistant',
-          model: 'claude-sonnet-4-6',
-          content: [{ type: 'tool_use', id: 'tu-pending', name: 'TaskCreate', input: { subject: 'Pending task' } }],
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [
+            {
+              type: "tool_use",
+              id: "tu-pending",
+              name: "TaskCreate",
+              input: { subject: "Pending task" },
+            },
+          ],
         },
       }),
     ];
-    await writeFile(jsonlPath, lines.join('\n') + '\n');
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
     const result = await readSessionTail(jsonlPath);
     // No tool_result confirms the task ID → tasks/counts must remain undefined
@@ -2640,11 +2983,11 @@ describe('readSessionTail TaskCreate/TaskUpdate task parsing (R46)', () => {
 
 // ─── readSessionTail line boundary edge case (R27) ────────────────────────────
 
-describe('readSessionTail line boundary edge case (R27)', () => {
+describe("readSessionTail line boundary edge case (R27)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-r27-boundary');
+    tmpDir = await makeTempDir("ccmon-r27-boundary");
     _resetCachesForTesting();
   });
 
@@ -2654,198 +2997,229 @@ describe('readSessionTail line boundary edge case (R27)', () => {
 
   function makeAssistantEntry(model: string, contentBlocks: object[]): string {
     return JSON.stringify({
-      type: 'assistant',
-      message: { role: 'assistant', model, content: contentBlocks },
+      type: "assistant",
+      message: { role: "assistant", model, content: contentBlocks },
     });
   }
 
-  test('R27: startOffset landing exactly on newline boundary preserves the line after it', async () => {
+  test("R27: startOffset landing exactly on newline boundary preserves the line after it", async () => {
     // Build a file where MAX_FIRST_READ is simulated by having the offset land exactly
     // on a newline. We do this by creating a file where the slice starts at '\n'.
     // We test this indirectly: write a file, read it, and ensure no lines are dropped
     // even when the file starts with a newline-terminated record.
-    const jsonlPath = join(tmpDir, 'r27-boundary.jsonl');
+    const jsonlPath = join(tmpDir, "r27-boundary.jsonl");
 
     // Write lines where the first entry is exactly followed by a newline at the boundary.
     // The key scenario: if the file read starts exactly at a '\n', the split produces
     // '' as first element which filter removes, then old code's slice(1) drops the next line.
-    const line1 = makeAssistantEntry('claude-sonnet-4-6', [{ type: 'text', text: 'line one' }]);
-    const line2 = makeAssistantEntry('claude-sonnet-4-6', [{ type: 'text', text: 'line two' }]);
+    const line1 = makeAssistantEntry("claude-sonnet-4-6", [
+      { type: "text", text: "line one" },
+    ]);
+    const line2 = makeAssistantEntry("claude-sonnet-4-6", [
+      { type: "text", text: "line two" },
+    ]);
 
     // Simulate startOffset landing on newline: write '\n' + line2 to a separate file
     // and read it (startOffset=0 but text[0]='\n'). The isDelta=false, startOffset=0
     // branch does not trigger slice(1), so this tests the filter+slice interaction.
     // More directly: write content starting with '\n' and verify nothing is dropped.
-    await writeFile(jsonlPath, '\n' + line1 + '\n' + line2 + '\n');
+    await writeFile(jsonlPath, `\n${line1}\n${line2}\n`);
 
     // Force a cap-based offset by making the file appear > MAX_FIRST_READ. We can't
     // easily do that in a unit test, so instead verify the basic read path works correctly
     // when text starts with '\n' (empty first element after split).
     const result = await readSessionTail(jsonlPath);
     // Both lines must be reachable; reversed scan finds line2 first (most recent)
-    expect(result.latestAssistantActivity?.text).toBe('line two');
+    expect(result.latestAssistantActivity?.text).toBe("line two");
   });
 });
 
 // ─── resolveState (R34) ───────────────────────────────────────────────────────
 
-describe('resolveState (R34)', () => {
+describe("resolveState (R34)", () => {
   const now = Date.now();
 
   // Helpers to build minimal StatusFile fixtures
-  function makeStatus(state: StatusFile['state'], timestampMs: number): StatusFile {
+  function makeStatus(
+    state: StatusFile["state"],
+    timestampMs: number,
+  ): StatusFile {
     return {
       state,
       timestamp: new Date(timestampMs).toISOString(),
-      session_id: 'sess',
-      working_dir: '/proj',
+      session_id: "sess",
+      working_dir: "/proj",
     };
   }
 
-  const freshPermission = makeStatus('waiting_for_permission', now - 10_000); // 10s ago
-  const stalePermission = makeStatus('waiting_for_permission', now - 10 * 60 * 1000); // 10min ago
-  const freshStopped = makeStatus('stopped', now - 10_000); // 10s ago
+  const freshPermission = makeStatus("waiting_for_permission", now - 10_000); // 10s ago
+  const stalePermission = makeStatus(
+    "waiting_for_permission",
+    now - 10 * 60 * 1000,
+  ); // 10min ago
+  const freshStopped = makeStatus("stopped", now - 10_000); // 10s ago
   const freshJsonl = now - 10_000; // 10s ago = within 60s
   const staleJsonl = now - 90_000; // 90s ago = outside 60s
 
-  test('P1: fresh waiting_for_permission status → waiting_for_permission', () => {
-    expect(resolveState(null, freshPermission)).toBe('waiting_for_permission');
+  test("P1: fresh waiting_for_permission status → waiting_for_permission", () => {
+    expect(resolveState(null, freshPermission)).toBe("waiting_for_permission");
   });
 
-  test('P1: stale waiting_for_permission status (> 5min) → falls through to stopped', () => {
+  test("P1: stale waiting_for_permission status (> 5min) → falls through to stopped", () => {
     // Stale permission signal is not honored; no JSONL mtime or stopped fallback
-    expect(resolveState(null, stalePermission)).toBe('stopped');
+    expect(resolveState(null, stalePermission)).toBe("stopped");
   });
 
-  test('P1: waiting_for_permission with NaN timestamp → falls through to stopped', () => {
-    const nanStatus: StatusFile = { ...freshPermission, timestamp: 'not-a-date' };
-    expect(resolveState(null, nanStatus)).toBe('stopped');
+  test("P1: waiting_for_permission with NaN timestamp → falls through to stopped", () => {
+    const nanStatus: StatusFile = {
+      ...freshPermission,
+      timestamp: "not-a-date",
+    };
+    expect(resolveState(null, nanStatus)).toBe("stopped");
   });
 
-  test('P2: fresh JSONL mtime, no status → running', () => {
-    expect(resolveState(freshJsonl, null)).toBe('running');
+  test("P2: fresh JSONL mtime, no status → running", () => {
+    expect(resolveState(freshJsonl, null)).toBe("running");
   });
 
-  test('P2: fresh JSONL mtime, status is not stopped → running', () => {
+  test("P2: fresh JSONL mtime, status is not stopped → running", () => {
     // Any non-stopped state that is not waiting_for_permission (or stale) defers to JSONL
-    const runningStatus = makeStatus('running' as StatusFile['state'], now - 10_000);
-    expect(resolveState(freshJsonl, runningStatus)).toBe('running');
+    const runningStatus = makeStatus(
+      "running" as StatusFile["state"],
+      now - 10_000,
+    );
+    expect(resolveState(freshJsonl, runningStatus)).toBe("running");
   });
 
-  test('P2: fresh JSONL mtime, status stopped but JSONL is much newer (>5s grace) → running (activity resumed)', () => {
+  test("P2: fresh JSONL mtime, status stopped but JSONL is much newer (>5s grace) → running (activity resumed)", () => {
     // JSONL mtime (now - 10s) is 20s after stopped timestamp (now - 30s): activity resumed
-    const stoppedEarlier = makeStatus('stopped', now - 30_000);
-    expect(resolveState(freshJsonl, stoppedEarlier)).toBe('running');
+    const stoppedEarlier = makeStatus("stopped", now - 30_000);
+    expect(resolveState(freshJsonl, stoppedEarlier)).toBe("running");
   });
 
-  test('P2+P3: fresh JSONL mtime, status stopped, JSONL only slightly newer (within 5s grace) → stopped', () => {
+  test("P2+P3: fresh JSONL mtime, status stopped, JSONL only slightly newer (within 5s grace) → stopped", () => {
     // Claude writes a system entry ~8ms after Stop hook fires; the tiny gap must not
     // keep the session showing as running for 60s.
-    const stoppedJustNow = makeStatus('stopped', now - 100);   // stopped 100ms ago
-    const jsonlSlightlyNewer = now - 100 + 8;                  // JSONL 8ms after stop
-    expect(resolveState(jsonlSlightlyNewer, stoppedJustNow)).toBe('stopped');
+    const stoppedJustNow = makeStatus("stopped", now - 100); // stopped 100ms ago
+    const jsonlSlightlyNewer = now - 100 + 8; // JSONL 8ms after stop
+    expect(resolveState(jsonlSlightlyNewer, stoppedJustNow)).toBe("stopped");
   });
 
-  test('P2+P3: fresh JSONL mtime, status stopped and stopped is newer than JSONL → stopped', () => {
+  test("P2+P3: fresh JSONL mtime, status stopped and stopped is newer than JSONL → stopped", () => {
     // stopped timestamp (now - 5s) is after JSONL mtime (now - 30s): stop wins
     const jsonlBeforeStop = now - 30_000;
-    const stoppedAfter = makeStatus('stopped', now - 5_000);
-    expect(resolveState(jsonlBeforeStop, stoppedAfter)).toBe('stopped');
+    const stoppedAfter = makeStatus("stopped", now - 5_000);
+    expect(resolveState(jsonlBeforeStop, stoppedAfter)).toBe("stopped");
   });
 
-  test('P2: fresh JSONL mtime, status stopped with NaN timestamp → running (NaN treated as JSONL newer)', () => {
+  test("P2: fresh JSONL mtime, status stopped with NaN timestamp → running (NaN treated as JSONL newer)", () => {
     // NaN stopped timestamp cannot establish order; JSONL mtime wins
-    const nanStopped: StatusFile = { ...freshStopped, timestamp: 'not-a-date' };
-    expect(resolveState(freshJsonl, nanStopped)).toBe('running');
+    const nanStopped: StatusFile = { ...freshStopped, timestamp: "not-a-date" };
+    expect(resolveState(freshJsonl, nanStopped)).toBe("running");
   });
 
-  test('P3: stale JSONL mtime, status stopped → stopped', () => {
-    expect(resolveState(staleJsonl, freshStopped)).toBe('stopped');
+  test("P3: stale JSONL mtime, status stopped → stopped", () => {
+    expect(resolveState(staleJsonl, freshStopped)).toBe("stopped");
   });
 
-  test('P4: null JSONL mtime, null status → stopped', () => {
-    expect(resolveState(null, null)).toBe('stopped');
+  test("P4: null JSONL mtime, null status → stopped", () => {
+    expect(resolveState(null, null)).toBe("stopped");
   });
 
-  test('P4: stale JSONL mtime, no status → stopped', () => {
-    expect(resolveState(staleJsonl, null)).toBe('stopped');
+  test("P4: stale JSONL mtime, no status → stopped", () => {
+    expect(resolveState(staleJsonl, null)).toBe("stopped");
   });
 
-  test('P1/Bug2: fresh waiting_for_permission but JSONL mtime newer than permission timestamp → running', () => {
+  test("P1/Bug2: fresh waiting_for_permission but JSONL mtime newer than permission timestamp → running", () => {
     // Simulates user answering a permission request: Claude resumes and writes to JSONL,
     // making JSONL mtime clearly newer than the permission signal.
     const permissionTs = now - 30_000; // permission 30s ago
-    const freshPermissionStatus = makeStatus('waiting_for_permission', permissionTs);
+    const freshPermissionStatus = makeStatus(
+      "waiting_for_permission",
+      permissionTs,
+    );
     // JSONL written 20s after permission (10s ago), well beyond STOP_GRACE_MS (5s)
     const jsonlAfterPermission = now - 10_000;
-    expect(resolveState(jsonlAfterPermission, freshPermissionStatus)).toBe('running');
+    expect(resolveState(jsonlAfterPermission, freshPermissionStatus)).toBe(
+      "running",
+    );
   });
 
-  test('P1/Bug2: fresh waiting_for_permission with JSONL mtime older than permission timestamp → waiting_for_permission', () => {
+  test("P1/Bug2: fresh waiting_for_permission with JSONL mtime older than permission timestamp → waiting_for_permission", () => {
     // JSONL predates the permission request — Claude has not yet responded to the prompt.
     const permissionTs = now - 10_000; // permission 10s ago
-    const freshPermissionStatus = makeStatus('waiting_for_permission', permissionTs);
+    const freshPermissionStatus = makeStatus(
+      "waiting_for_permission",
+      permissionTs,
+    );
     const jsonlBeforePermission = now - 60_000; // JSONL written 60s ago (before permission)
-    expect(resolveState(jsonlBeforePermission, freshPermissionStatus)).toBe('waiting_for_permission');
+    expect(resolveState(jsonlBeforePermission, freshPermissionStatus)).toBe(
+      "waiting_for_permission",
+    );
   });
 
-  test('P1/Bug2: fresh waiting_for_permission with null JSONL mtime → waiting_for_permission', () => {
+  test("P1/Bug2: fresh waiting_for_permission with null JSONL mtime → waiting_for_permission", () => {
     // No JSONL at all — permission must be honored.
-    expect(resolveState(null, freshPermission)).toBe('waiting_for_permission');
+    expect(resolveState(null, freshPermission)).toBe("waiting_for_permission");
   });
 
-  test('P1/Bug2: fresh waiting_for_permission with JSONL mtime within grace period of permission → waiting_for_permission', () => {
+  test("P1/Bug2: fresh waiting_for_permission with JSONL mtime within grace period of permission → waiting_for_permission", () => {
     // JSONL written 2s after permission — within STOP_GRACE_MS (5s), so permission still wins.
     const permissionTs = now - 20_000;
-    const freshPermissionStatus = makeStatus('waiting_for_permission', permissionTs);
+    const freshPermissionStatus = makeStatus(
+      "waiting_for_permission",
+      permissionTs,
+    );
     const jsonlWithinGrace = permissionTs + 2_000; // 2s after permission, within 5s grace
-    expect(resolveState(jsonlWithinGrace, freshPermissionStatus)).toBe('waiting_for_permission');
+    expect(resolveState(jsonlWithinGrace, freshPermissionStatus)).toBe(
+      "waiting_for_permission",
+    );
   });
 
-  test('P2/hook-running: fresh running status (< 30s), no stopped signal → running', () => {
-    const freshRunning = makeStatus('running', now - 5_000); // 5s ago
-    expect(resolveState(null, freshRunning)).toBe('running');
+  test("P2/hook-running: fresh running status (< 30s), no stopped signal → running", () => {
+    const freshRunning = makeStatus("running", now - 5_000); // 5s ago
+    expect(resolveState(null, freshRunning)).toBe("running");
   });
 
-  test('P2/hook-running: fresh running status + stopped signal newer than running → stopped', () => {
+  test("P2/hook-running: fresh running status + stopped signal newer than running → stopped", () => {
     const runningTs = now - 20_000; // running 20s ago
-    const freshRunning = makeStatus('running', runningTs);
+    const _freshRunning = makeStatus("running", runningTs);
     // stopped signal fired 10s ago, after the running hook
-    const stoppedNewer = makeStatus('stopped', now - 10_000);
+    const stoppedNewer = makeStatus("stopped", now - 10_000);
     // resolveState only reads status once, so we need to test the priority ordering
     // by passing the stopped status (stopped overrides running hook when newer)
-    expect(resolveState(null, stoppedNewer)).toBe('stopped');
+    expect(resolveState(null, stoppedNewer)).toBe("stopped");
   });
 
-  test('P2/hook-running: stale running status (> 30s) → falls through to JSONL/default', () => {
-    const staleRunning = makeStatus('running', now - 35_000); // 35s ago, beyond 30s TTL
-    expect(resolveState(null, staleRunning)).toBe('stopped');
+  test("P2/hook-running: stale running status (> 30s) → falls through to JSONL/default", () => {
+    const staleRunning = makeStatus("running", now - 35_000); // 35s ago, beyond 30s TTL
+    expect(resolveState(null, staleRunning)).toBe("stopped");
   });
 
-  test('P2/hook-running: fresh running status, but stopped signal is older → running wins', () => {
-    const stoppedOlder = makeStatus('stopped', now - 60_000); // stopped 60s ago
-    const runningNewer = makeStatus('running', now - 5_000);  // running hook 5s ago (after stop)
+  test("P2/hook-running: fresh running status, but stopped signal is older → running wins", () => {
+    const _stoppedOlder = makeStatus("stopped", now - 60_000); // stopped 60s ago
+    const runningNewer = makeStatus("running", now - 5_000); // running hook 5s ago (after stop)
     // running hook is newer than stopped → should return running
     // but resolveState only takes one status; simulate by verifying running-status path
     // when stoppedAtMs would be null (no stopped status):
-    expect(resolveState(null, runningNewer)).toBe('running');
+    expect(resolveState(null, runningNewer)).toBe("running");
   });
 
-  test('P1/P2: fresh waiting_for_permission newer than fresh running hook → waiting_for_permission', () => {
+  test("P1/P2: fresh waiting_for_permission newer than fresh running hook → waiting_for_permission", () => {
     // permission fires after the running hook; permission takes priority when it's fresh
-    const permissionStatus = makeStatus('waiting_for_permission', now - 5_000);
+    const permissionStatus = makeStatus("waiting_for_permission", now - 5_000);
     // No JSONL newer than permission
-    expect(resolveState(null, permissionStatus)).toBe('waiting_for_permission');
+    expect(resolveState(null, permissionStatus)).toBe("waiting_for_permission");
   });
 });
 
 // ─── delta read task completions (R46 / Bug 1) ────────────────────────────────
 
-describe('readSessionTail delta task completion (R46 Bug 1)', () => {
+describe("readSessionTail delta task completion (R46 Bug 1)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir('ccmon-r46-delta');
+    tmpDir = await makeTempDir("ccmon-r46-delta");
     _resetCachesForTesting();
   });
 
@@ -2855,46 +3229,62 @@ describe('readSessionTail delta task completion (R46 Bug 1)', () => {
 
   function makeTaskCreateEntry(toolUseId: string, subject: string): string {
     return JSON.stringify({
-      type: 'assistant',
+      type: "assistant",
       message: {
-        role: 'assistant',
-        model: 'claude-sonnet-4-6',
-        content: [{ type: 'tool_use', id: toolUseId, name: 'TaskCreate', input: { subject, description: 'd' } }],
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content: [
+          {
+            type: "tool_use",
+            id: toolUseId,
+            name: "TaskCreate",
+            input: { subject, description: "d" },
+          },
+        ],
       },
     });
   }
 
   function makeTaskUpdateEntry(taskId: string, status: string): string {
     return JSON.stringify({
-      type: 'assistant',
+      type: "assistant",
       message: {
-        role: 'assistant',
-        model: 'claude-sonnet-4-6',
-        content: [{ type: 'tool_use', id: `tu-upd-${taskId}`, name: 'TaskUpdate', input: { taskId, status } }],
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content: [
+          {
+            type: "tool_use",
+            id: `tu-upd-${taskId}`,
+            name: "TaskUpdate",
+            input: { taskId, status },
+          },
+        ],
       },
     });
   }
 
   function makeToolResultEntry(toolUseId: string, resultText: string): string {
     return JSON.stringify({
-      type: 'user',
+      type: "user",
       message: {
-        role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: toolUseId, content: resultText }],
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: toolUseId, content: resultText },
+        ],
       },
     });
   }
 
-  test('R46/Bug1: TaskUpdate in delta read resolves tasks created in earlier read → tasksDone increments', async () => {
-    const jsonlPath = join(tmpDir, 'r46-delta-update.jsonl');
+  test("R46/Bug1: TaskUpdate in delta read resolves tasks created in earlier read → tasksDone increments", async () => {
+    const jsonlPath = join(tmpDir, "r46-delta-update.jsonl");
 
     // First read: TaskCreate lines only
-    const firstBatch = [
-      makeTaskCreateEntry('tu-1', 'Task A'),
-      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
-      makeTaskCreateEntry('tu-2', 'Task B'),
-      makeToolResultEntry('tu-2', 'Task #2 created successfully'),
-    ].join('\n') + '\n';
+    const firstBatch = `${[
+      makeTaskCreateEntry("tu-1", "Task A"),
+      makeToolResultEntry("tu-1", "Task #1 created successfully"),
+      makeTaskCreateEntry("tu-2", "Task B"),
+      makeToolResultEntry("tu-2", "Task #2 created successfully"),
+    ].join("\n")}\n`;
     await writeFile(jsonlPath, firstBatch);
 
     // Stamp mtime in the past so the second write is detected as a delta.
@@ -2906,7 +3296,7 @@ describe('readSessionTail delta task completion (R46 Bug 1)', () => {
     expect(first.tasksTotal).toBe(2);
 
     // Second read: append TaskUpdate completing Task #1.
-    const secondBatch = makeTaskUpdateEntry('1', 'completed') + '\n';
+    const secondBatch = `${makeTaskUpdateEntry("1", "completed")}\n`;
     const existing = await Bun.file(jsonlPath).text();
     await writeFile(jsonlPath, existing + secondBatch);
 
@@ -2915,14 +3305,14 @@ describe('readSessionTail delta task completion (R46 Bug 1)', () => {
     expect(second.tasksTotal).toBe(2);
   });
 
-  test('R46/Bug1: TaskUpdate in delta for unknown task ID is silently ignored (no crash, no phantom task)', async () => {
-    const jsonlPath = join(tmpDir, 'r46-delta-unknown.jsonl');
+  test("R46/Bug1: TaskUpdate in delta for unknown task ID is silently ignored (no crash, no phantom task)", async () => {
+    const jsonlPath = join(tmpDir, "r46-delta-unknown.jsonl");
 
     // First read: one task created
-    const firstBatch = [
-      makeTaskCreateEntry('tu-1', 'Task A'),
-      makeToolResultEntry('tu-1', 'Task #1 created successfully'),
-    ].join('\n') + '\n';
+    const firstBatch = `${[
+      makeTaskCreateEntry("tu-1", "Task A"),
+      makeToolResultEntry("tu-1", "Task #1 created successfully"),
+    ].join("\n")}\n`;
     await writeFile(jsonlPath, firstBatch);
 
     const pastTime = new Date(Date.now() - 5_000);
@@ -2932,7 +3322,7 @@ describe('readSessionTail delta task completion (R46 Bug 1)', () => {
     expect(first.tasksTotal).toBe(1);
 
     // Second read: TaskUpdate for task ID 99 which was never created
-    const secondBatch = makeTaskUpdateEntry('99', 'completed') + '\n';
+    const secondBatch = `${makeTaskUpdateEntry("99", "completed")}\n`;
     const existing = await Bun.file(jsonlPath).text();
     await writeFile(jsonlPath, existing + secondBatch);
 
@@ -2940,14 +3330,14 @@ describe('readSessionTail delta task completion (R46 Bug 1)', () => {
     // Task 99 must not appear; only original task remains
     expect(second.tasksTotal).toBe(1);
     expect(second.tasksDone).toBe(0);
-    expect(second.tasks?.find((t) => t.id === '99')).toBeUndefined();
+    expect(second.tasks?.find((t) => t.id === "99")).toBeUndefined();
   });
 });
 
 // ─── mapHookEventToState (R35 / Bug 3) ───────────────────────────────────────
 
-describe('mapHookEventToState (R35 Bug 3)', () => {
-  test('SessionStart → null (unrecognized event returns null)', () => {
-    expect(mapHookEventToState('SessionStart')).toBeNull();
+describe("mapHookEventToState (R35 Bug 3)", () => {
+  test("SessionStart → null (unrecognized event returns null)", () => {
+    expect(mapHookEventToState("SessionStart")).toBeNull();
   });
 });

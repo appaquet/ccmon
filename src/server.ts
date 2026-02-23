@@ -1,16 +1,20 @@
-import type { ServerWebSocket } from 'bun';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { hostname as osHostname } from 'node:os';
-import { getProjectState, filterStaleProjects, DEFAULT_CLAUDE_DIR } from './sessions';
-import type { ProjectState } from './sessions';
-import { DEFAULT_CONFIG } from './config';
-import { watchForChanges } from './watcher';
+import { readFileSync } from "node:fs";
+import { hostname as osHostname } from "node:os";
+import { join } from "node:path";
+import type { ServerWebSocket } from "bun";
+import { DEFAULT_CONFIG } from "./config";
+import type { ProjectState } from "./sessions";
+import {
+  DEFAULT_CLAUDE_DIR,
+  filterStaleProjects,
+  getProjectState,
+} from "./sessions";
+import { watchForChanges } from "./watcher";
 
-const htmlPath = join(import.meta.dir, '..', 'public', 'index.html');
+const htmlPath = join(import.meta.dir, "..", "public", "index.html");
 let html: string;
 try {
-  html = readFileSync(htmlPath, 'utf8');
+  html = readFileSync(htmlPath, "utf8");
 } catch {
   throw new Error(`ccmon: public/index.html not found at ${htmlPath}`);
 }
@@ -27,11 +31,16 @@ export interface ServerOptions {
  * Returns the actual port (useful when port 0 is passed for OS assignment), a stop function,
  * and a `ready` promise that resolves after the initial state map scan completes.
  */
-export function startServer(options: ServerOptions = {}): { port: number; stop: () => void; ready: Promise<void> } {
+export function startServer(options: ServerOptions = {}): {
+  port: number;
+  stop: () => void;
+  ready: Promise<void>;
+} {
   const port = options.port ?? DEFAULT_CONFIG.port;
   const hostname = options.hostname ?? DEFAULT_CONFIG.host;
   const claudeDir = options.claudeDir ?? DEFAULT_CLAUDE_DIR;
-  const maxInactivityHours = options.maxInactivityHours ?? DEFAULT_CONFIG.maxInactivityHours;
+  const maxInactivityHours =
+    options.maxInactivityHours ?? DEFAULT_CONFIG.maxInactivityHours;
 
   const clients = new Set<ServerWebSocket<unknown>>();
 
@@ -46,7 +55,10 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
 
   function broadcastCurrent(): void {
     if (clients.size === 0) return;
-    const payload = JSON.stringify({ hostname: osHostname(), projects: currentFilteredState() });
+    const payload = JSON.stringify({
+      hostname: osHostname(),
+      projects: currentFilteredState(),
+    });
     for (const ws of clients) {
       ws.send(payload);
     }
@@ -103,7 +115,12 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
       open(ws) {
         clients.add(ws);
         // Send current map contents — no rescan.
-        ws.send(JSON.stringify({ hostname: osHostname(), projects: currentFilteredState() }));
+        ws.send(
+          JSON.stringify({
+            hostname: osHostname(),
+            projects: currentFilteredState(),
+          }),
+        );
       },
       message(_ws, _data) {
         // clients do not send messages to the server
@@ -115,32 +132,32 @@ export function startServer(options: ServerOptions = {}): { port: number; stop: 
     fetch(req, srv) {
       const url = new URL(req.url);
 
-      if (url.pathname === '/ws') {
+      if (url.pathname === "/ws") {
         const upgraded = srv.upgrade(req);
         if (!upgraded) {
-          return new Response('WebSocket upgrade failed', { status: 400 });
+          return new Response("WebSocket upgrade failed", { status: 400 });
         }
         // upgrade() returns undefined when successful; Response must not be returned
         return undefined;
       }
 
-      if (url.pathname === '/api/state') {
+      if (url.pathname === "/api/state") {
         // Return map contents — no rescan.
         return Response.json(currentFilteredState());
       }
 
-      if (url.pathname === '/') {
+      if (url.pathname === "/") {
         return new Response(html, {
-          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+          headers: { "Content-Type": "text/html; charset=utf-8" },
         });
       }
 
-      return new Response('Not Found', { status: 404 });
+      return new Response("Not Found", { status: 404 });
     },
   });
 
   return {
-    port: server.port,
+    port: server.port!,
     ready,
     stop(): void {
       watcher?.stop();

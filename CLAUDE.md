@@ -45,6 +45,17 @@ WebSocket client that connects to a running `ccmon serve` and prints each state 
 bun test                       # Run tests
 ```
 
+### lint
+```bash
+bun run lint          # Check for lint/format violations (Biome)
+bun run lint:fix      # Auto-fix violations
+```
+
+### typecheck
+```bash
+bun run typecheck     # TypeScript type checking (tsc --noEmit)
+```
+
 ### integration check
 ```bash
 bun run dump --no-filter   # must return ≥ 1 project; 0 = session scanning broken

@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 export interface CcmonConfig {
   maxInactivityHours: number;
@@ -9,7 +9,7 @@ export interface CcmonConfig {
 
 export const DEFAULT_CONFIG: CcmonConfig = {
   maxInactivityHours: 3,
-  host: '0.0.0.0',
+  host: "0.0.0.0",
   port: 8080,
 };
 
@@ -23,7 +23,7 @@ export function loadConfig(configPath?: string): CcmonConfig {
 
   let raw: string;
   try {
-    raw = readFileSync(path, 'utf8');
+    raw = readFileSync(path, "utf8");
   } catch {
     return { ...DEFAULT_CONFIG };
   }
@@ -65,13 +65,13 @@ function resolveConfigPath(): string {
   if (envPath) return envPath;
 
   const xdgConfigHome = process.env.XDG_CONFIG_HOME;
-  const base = xdgConfigHome ?? join(process.env.HOME ?? '/root', '.config');
-  return join(base, 'ccmon', 'config.json');
+  const base = xdgConfigHome ?? join(process.env.HOME ?? "/root", ".config");
+  return join(base, "ccmon", "config.json");
 }
 
 // Accepts any non-null object; mergeWithDefaults does per-field type narrowing.
 function isCcmonConfig(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null;
+  return typeof v === "object" && v !== null;
 }
 
 /**
@@ -81,10 +81,10 @@ function isCcmonConfig(v: unknown): v is Record<string, unknown> {
 function mergeWithDefaults(partial: Record<string, unknown>): CcmonConfig {
   return {
     maxInactivityHours:
-      typeof partial.maxInactivityHours === 'number'
+      typeof partial.maxInactivityHours === "number"
         ? partial.maxInactivityHours
         : DEFAULT_CONFIG.maxInactivityHours,
-    host: typeof partial.host === 'string' ? partial.host : DEFAULT_CONFIG.host,
-    port: typeof partial.port === 'number' ? partial.port : DEFAULT_CONFIG.port,
+    host: typeof partial.host === "string" ? partial.host : DEFAULT_CONFIG.host,
+    port: typeof partial.port === "number" ? partial.port : DEFAULT_CONFIG.port,
   };
 }
