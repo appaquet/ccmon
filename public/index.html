@@ -714,14 +714,14 @@
       for (const proj of all) {
         const key = projKey(proj);
         const prev = prevState.get(key);
-        if (prev !== undefined && prev !== 'stopped' && proj.state === 'stopped') {
+        if (prev === 'running' && proj.state === 'stopped') {
           flashStopped.set(key, now);
         }
         prevState.set(key, proj.state);
 
         const prevTs = prevNotificationTimestamp.get(key);
         const curTs = proj.notificationTimestamp;
-        if (curTs && curTs !== prevTs) {
+        if (prevTs !== undefined && curTs && curTs !== prevTs) {
           flashNotification.set(key, now);
         }
         if (curTs !== undefined) {

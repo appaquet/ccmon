@@ -8,9 +8,13 @@ A lightweight monitoring dashboard that reads Claude Code session data and hook-
 
 Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will extend that script to also write `status.local.json` to each project's working directory.
 
+## Inbox
+
+- [ ] Launching a command that has context: fork doesn't notify back when it's done
+
 ## Checkpoint
 
-Phases 23, 24, 25 implemented. Phase 23: `▶`/`◀` triangles. Phase 24: time-based sort with 30s throttle. Phase 25: stopped flash persistence (5s TTL Maps). 198 tests pass, lint + typecheck clean. All pending visual verification.
+Phases 23-25 implemented. Planning phase 26: SubagentStop hook for immediate sub-agent completion detection + rename `status.local.json` → `ccmon-status.json`.
 
 ## Requirements
 
@@ -32,6 +36,7 @@ Phases 23, 24, 25 implemented. Phase 23: `▶`/`◀` triangles. Phase 24: time-b
     - `PermissionRequest` → `waiting_for_permission`
     - `Stop` → `stopped` (Claude idle, matches tmux indicator behavior)
     - `SessionEnd` → `stopped`
+    - `SubagentStop` → writes per-sub-agent `ccmon-status.json` + updates session-level status
   - R3.2: `status.local.json` contains: `state`, `timestamp`, `session_id`, `working_dir`
   - R3.3: File written to `~/.claude/projects/{dir}/status.local.json` (project dir found via `sessions-index.json` lookup or path encoding fallback)
   - R3.4: Reads hook JSON from stdin (cwd, session_id, hook_event_name), maps event to state, resolves cwd to project dir
@@ -375,6 +380,12 @@ Sort dashboard projects by most recently active (`lastUpdated` descending) inste
 [23-ui-triangle-arrows](23-ui-triangle-arrows.md)
 
 Replace ASCII `>` / `<` message direction indicators with UTF-8 solid triangles (`▶` / `◀`) in dashboard cards.
+
+### ⬜ 26 Phase: SubagentStop Hook + Status File Rename
+
+[26-subagent-stop-hook](26-subagent-stop-hook.md)
+
+Add `SubagentStop` hook for immediate sub-agent completion detection (replaces 45s mtime polling). Rename `status.local.json` → `ccmon-status.json`. Add per-sub-agent status files alongside JSONL.
 
 ## Files
 
