@@ -46,7 +46,13 @@ See [00-ccmon](00-ccmon.md). Add support for connecting the dashboard to multipl
 - [x] Remove server: close WS, remove from localStorage, remove from backends, re-merge and render (R56.4)
 - [x] Toggle on pill/cog click, close on outside click (R57.3)
 
-### 5. Validation
+### 5. Bug fixes
+
+- [x] `Cache-Control: no-cache` added to HTML response in `src/server.ts` (browser was serving stale index.html)
+- [x] `sub --host` flag added to `runSub()` (REVIEW: was hard-coded to localhost)
+- [x] Usage string in `src/cli.ts` converted to multi-line template literal (REVIEW: was single long line)
+
+### 6. Validation
 
 - [ ] Manual test: start two `ccmon serve` on different ports, add second server URL in menu, verify projects from both appear
 - [ ] Manual test: stop one server, verify "Partially connected" state, projects from remaining server still shown
@@ -54,7 +60,8 @@ See [00-ccmon](00-ccmon.md). Add support for connecting the dashboard to multipl
 
 ## Files
 
-- **src/server.ts**: Added `os.hostname()` import; wrapped WS sends in `{ hostname, projects }` envelope
-- **src/cli.ts**: Updated `sub` command to parse new envelope with backward-compat fallback for raw arrays
+- **src/server.ts**: Added `os.hostname()` import; wrapped WS sends in `{ hostname, projects }` envelope; `Cache-Control: no-cache` on HTML response
+- **src/cli.ts**: Updated `sub` command to parse new envelope with backward-compat fallback; `sub --host` flag; multi-line usage string
 - **tests/server.test.ts**: Updated 5 WS parse sites to unwrap envelope; added hostname field test (11 tests passing)
 - **public/index.html**: `BackendManager` object with N-backend connections, `mergeAndRender()`, aggregate status pill (Connected/Partial/Disconnected), cog icon + settings dropdown menu
+- **CLAUDE.md**: sub --host flag documented

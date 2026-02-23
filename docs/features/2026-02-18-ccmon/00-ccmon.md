@@ -14,7 +14,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 20 (GitHub Actions CI) complete. `.github/workflows/ci.yml` created — push/PR trigger, ubuntu-latest, setup-bun, lint + typecheck + test as separate named steps. 198 tests passing.
+Phases 18–20 and review fixes complete. Phase 18 (Multi-Backend WS): server sends `{ hostname, projects }` envelope; frontend `BackendManager` manages N connections; connection status pill; settings dropdown; `Cache-Control: no-cache` added to HTML response; pending manual live validation. Phase 19 (Linting): Biome + tsc, `test`/`lint`/`lint:fix`/`typecheck` scripts, CLAUDE.md updated. Phase 20 (GHA CI): `.github/workflows/ci.yml` with lint + typecheck + test steps. REVIEW fixes: `sub` command gained `--host` flag (configurable WebSocket host); usage string converted to multi-line template literal. 198 tests passing, lint clean, typecheck clean.
 
 ## Requirements
 
@@ -89,7 +89,7 @@ Phase 20 (GitHub Actions CI) complete. `.github/workflows/ci.yml` created — pu
   - R16.2: Covers: flake input, adding to packages, hook configuration, available commands
 
 - R17: ✅ `ccmon sub` CLI subcommand connects to running server via WebSocket, streams state updates as NDJSON (Phase: Backend)
-  - R17.1: `--port N` flag (default 3000), exits on SIGINT or server disconnect
+  - R17.1: `--port N` flag (default 3000), `--host` flag (default localhost); exits on SIGINT or server disconnect
   - R17.2: Used for smoke-testing server stack and background monitoring
 - R18: ✅ Config file system with stale project filter (Phase: Backend)
   - R18.1: `filterStaleProjects()` excludes projects with `lastUpdated` null or older than `maxInactivityHours` (default 3h)
@@ -348,22 +348,24 @@ GHA workflow running lint, typecheck, and tests on every push and pull request.
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
-- **CLAUDE.md**: Development instructions; integration check section added — run `dump --no-filter` after sessions.ts changes (Phase: Session Detection, Packaging, Review Fixes)
+- **CLAUDE.md**: Development instructions; integration check section; lint/typecheck command docs; sub --host flag doc (Phase: Session Detection, Packaging, Review Fixes, Linting Setup)
 - **README.md**: Install guide, hook config, commands reference (Phase: Packaging)
 - **flake.nix**: Nix devShell + packages/apps outputs for ccmon (Phase: Session Detection, Packaging)
 - **.envrc**: direnv config — `use flake` (Phase: Session Detection)
 - **.gitignore**: Excludes `.direnv/` and `*.local.log` (Phase: Session Detection)
-- **package.json**: Bun project config — `"type": "module"`, `@types/bun`, `dump` script (Phase: Session Detection)
+- **package.json**: Bun project config — `"type": "module"`, `@types/bun`, `dump` script; `test`, `lint`, `lint:fix`, `typecheck` scripts; Biome + TypeScript devDeps (Phase: Session Detection, Linting Setup)
 - **tsconfig.json**: IDE TypeScript support — ESNext, moduleResolution bundler (Phase: Session Detection)
-- **bun.lock**: Bun lockfile (Phase: Session Detection)
+- **bun.lock**: Bun lockfile (Phase: Session Detection, Linting Setup)
+- **biome.json**: Biome linter + formatter config — 2-space indent, recommended rules (Phase: Linting Setup)
+- **.github/workflows/ci.yml**: GHA CI workflow — lint + typecheck + test on push and pull_request (Phase: GitHub Actions CI)
 - **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed (Phase: Backend, Review Fixes)
 - **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()`; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback; `STOP_GRACE_MS` grace period in `resolveState()`; `scanTaskCreateUpdate` base tasks param for delta reads; `resolveState` permission override fix (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed (Phase: Session Detection, Review Fixes)
-- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner; `sub` parses new WS envelope with backward compat (Phase: Session Detection, Backend, Review Fixes, Multi-Backend)
-- **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init; WS payload wrapped in `{ hostname, projects }` envelope (Phase: Backend, Review Fixes, Multi-Backend)
+- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner; `sub` parses new WS envelope with backward compat; `sub --host` flag; multi-line usage string (Phase: Session Detection, Backend, Review Fixes, Multi-Backend)
+- **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init; WS payload wrapped in `{ hostname, projects }` envelope; `Cache-Control: no-cache` on HTML response (Phase: Backend, Review Fixes, Multi-Backend)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
-- **tests/sessions.test.ts**: 197 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes)
+- **tests/sessions.test.ts**: 198 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
 - **tests/cli.test.ts**: 18 tests for cli.ts — 4 new arg-validation cases, status, dump --watch, --project filter (Phase: Review Fixes)
 - **tests/config.test.ts**: Config loading tests; 22+ tests covering partial config, invalid types (Phase: Review Fixes 2)
