@@ -96,6 +96,9 @@ export function startServer(options: ServerOptions = {}): {
         const fullPath = join(claudeDir, s.projectDir);
         stateMap.set(fullPath, s);
       }
+      // Clients that connected before the initial scan completed received an empty
+      // project list. Broadcast now that the map is populated.
+      broadcastCurrent();
       watcher = watchForChanges(claudeDir, (projectDir: string) => {
         updateProject(projectDir).catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -148,7 +151,10 @@ export function startServer(options: ServerOptions = {}): {
 
       if (url.pathname === "/") {
         return new Response(html, {
-          headers: { "Content-Type": "text/html; charset=utf-8" },
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-cache",
+          },
         });
       }
 
