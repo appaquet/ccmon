@@ -92,9 +92,22 @@ if (subcommand === "dump") {
     process.exit(0);
   });
 } else {
-  // REVIEW: Let's clean that up. Shouldn't we use a multi-line string?
   process.stderr.write(
-    "Usage: ccmon <subcommand>\n\nSubcommands:\n  dump                   Print current Claude Code project state as JSON\n  dump --watch           Watch for changes and print updates\n  dump --max-age <hours> Override maxInactivityHours from config\n  dump --no-filter       Disable inactivity filter\n  status                 Read hook event from stdin and write status file\n  serve                  Start HTTP + WebSocket server\n  serve --host <addr>    Listen on custom host (default: 0.0.0.0)\n  serve --port <N>       Listen on custom port (default: 8080)\n  sub                    Connect to running server, stream state as NDJSON\n",
+    `Usage: ccmon <subcommand>
+
+Subcommands:
+  dump                   Print current Claude Code project state as JSON
+  dump --watch           Watch for changes and print updates
+  dump --max-age <hours> Override maxInactivityHours from config
+  dump --no-filter       Disable inactivity filter
+  status                 Read hook event from stdin and write status file
+  serve                  Start HTTP + WebSocket server
+  serve --host <addr>    Listen on custom host (default: 0.0.0.0)
+  serve --port <N>       Listen on custom port (default: 8080)
+  sub                    Connect to running server, stream state as NDJSON
+  sub --host <addr>      Connect to custom host (default: localhost)
+  sub --port <N>         Connect to custom port (default: 3000)
+`,
   );
   process.exit(1);
 }
@@ -271,8 +284,15 @@ async function runSub(): Promise<void> {
     exit(1);
   }
 
-  // REVIEW: Make host configurable too
-  const ws = new WebSocket(`ws://localhost:${port}/ws`);
+  const hostArg = process.argv.indexOf("--host");
+  const host =
+    hostArg !== -1 ? (process.argv[hostArg + 1] ?? null) : "localhost";
+  if (hostArg !== -1 && !host) {
+    process.stderr.write("Error: --host requires a value\n");
+    exit(1);
+  }
+
+  const ws = new WebSocket(`ws://${host}:${port}/ws`);
 
   ws.onmessage = (event) => {
     const parsed = JSON.parse(event.data.toString());
