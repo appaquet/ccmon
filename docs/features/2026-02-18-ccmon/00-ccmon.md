@@ -207,6 +207,9 @@ Phases 18–21 complete. Phase 21: CLAUDE.md trimmed 181 → 114 lines (37% toke
   - R57.2: Status pill: Connected (all up) / Partially connected (some up) / Disconnected (none up)
   - R57.3: Cog icon + clickable pill open server management menu; add/remove servers; main server cannot be removed
 
+- R58: ⬜ Same-named projects across backends are disambiguated with composite key and hostname prefix (Phase: Multi-Backend Naming)
+  - R58.1: Card header shows `hostname:projectName` when the same `projectName` exists on multiple backends
+
 #### Out of Scope
 
 - Authentication / multi-user support
@@ -348,6 +351,12 @@ GHA workflow running lint, typecheck, and tests on every push and pull request.
 [21-claude-md-trim](21-claude-md-trim.md)
 
 Reduced CLAUDE.md from 181 to 114 lines (37%) by removing JSON schema examples and redundant prose. Commands and architecture sections kept intact.
+
+### ⬜ 22 Phase: Multi-Backend Project Naming
+
+[22-multi-backend-naming](22-multi-backend-naming.md)
+
+Fix same-named projects across backends causing double flash. Use composite `hostname::projectName` key in frontend state maps. Show hostname prefix in card header when names collide.
 
 ## Files
 
