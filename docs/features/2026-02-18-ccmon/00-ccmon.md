@@ -8,10 +8,6 @@ A lightweight monitoring dashboard that reads Claude Code session data and hook-
 
 Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will extend that script to also write `status.local.json` to each project's working directory.
 
-## Inbox
-
-- [ ] Running -> Stopped: should flash for a few seconds like when requiring permissions
-
 ## Checkpoint
 
 Phases 18–21 complete. Phase 21: CLAUDE.md trimmed 181 → 114 lines (37% token reduction) by removing JSON schema examples and redundant prose. Phases 15 (stop detection), 17 (sub-agent stop/resume), 18 (multi-backend) are implemented but have pending manual validation tasks. 198 tests passing, lint clean, typecheck clean.
@@ -154,50 +150,50 @@ Phases 18–21 complete. Phase 21: CLAUDE.md trimmed 181 → 114 lines (37% toke
 
 ### UI Polish
 
-- R37: 🔄 Latest slash command/skill displayed in UI alongside latest user message; UI shows whichever is more recent (Phase: UI Polish)
+- R37: ✅ Latest slash command/skill displayed in UI alongside latest user message; UI shows whichever is more recent (Phase: UI Polish)
   - R37.1: `latestCommand?: string` added to `SessionEnrichment`; extracted from `<command-name>` user entries during `readSessionTail()` streaming
-- R38: 🔄 Sub-agent UI shows either last tool use OR last message, not both (Phase: UI Polish)
-- R39: 🔄 Input token count reflects full provider-billed total: `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` (Phase: UI Polish)
-- R40: 🔄 Completed sub-agents auto-hidden in UI after 2m; backend stops returning them after 5m (Phase: UI Polish)
+- R38: ✅ Sub-agent UI shows either last tool use OR last message, not both (Phase: UI Polish)
+- R39: ✅ Input token count reflects full provider-billed total: `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` (Phase: UI Polish)
+- R40: ✅ Completed sub-agents auto-hidden in UI after 2m; backend stops returning them after 5m (Phase: UI Polish)
   - R40.1: `SubagentInfo` gains `lastMessageTime` (ISO 8601) from file mtime
-- R41: 🔄 Enrichment info (messages, tokens, tasks) remains visible when session transitions to stopped; only state pill updates (Phase: UI Polish)
-- R42: 🔄 Completed sub-agents show a checkmark indicator instead of active dot (Phase: UI Polish)
-- R43: 🔄 Sub-agents ordered by launch time descending in UI (Phase: UI Polish)
+- R41: ✅ Enrichment info (messages, tokens, tasks) remains visible when session transitions to stopped; only state pill updates (Phase: UI Polish)
+- R42: ✅ Completed sub-agents show a checkmark indicator instead of active dot (Phase: UI Polish)
+- R43: ✅ Sub-agents ordered by launch time descending in UI (Phase: UI Polish)
   - R43.1: `SubagentInfo` gains `launchTime` (ISO 8601) from first JSONL entry or file mtime
-- R44: 🔄 Sub-agent model (Opus/Sonnet/Haiku) displayed in sub-agent rows (Phase: UI Polish)
+- R44: ✅ Sub-agent model (Opus/Sonnet/Haiku) displayed in sub-agent rows (Phase: UI Polish)
 
 ### Sub-Agent Names
 
-- R36: 🔄 Sub-agent cards in dashboard show a meaningful description instead of raw agentId (Phase: Sub-Agent Names)
+- R36: ✅ Sub-agent cards in dashboard show a meaningful description instead of raw agentId (Phase: Sub-Agent Names)
   - R36.1: Parent JSONL `queue-operation` enqueue entries carry `{ task_id, description }` — `task_id` maps 1:1 to `agentId`
   - R36.2: `SubagentInfo` gains `description?: string`; `getSubagentInfos()` builds a description map from parent JSONL once per call
   - R36.3: UI displays `description ?? agentId` as fallback
 
 ### Dashboard Refinements
 
-- R45: 🔄 Last update timestamp displayed in card header next to project name, left of state pill (Phase: Dashboard Refinements)
-- R46: 🔄 Task list from JSONL — individual tasks with subject and status via `TaskCreate`/`TaskUpdate` parsing; `TodoWrite` as legacy fallback (Phase: Dashboard Refinements, Inbox Bug Fixes)
+- R45: ✅ Last update timestamp displayed in card header next to project name, left of state pill (Phase: Dashboard Refinements)
+- R46: ✅ Task list from JSONL — individual tasks with subject and status via `TaskCreate`/`TaskUpdate` parsing; `TodoWrite` as legacy fallback (Phase: Dashboard Refinements, Inbox Bug Fixes)
   - R46.1: `tasks?: Array<{ id, subject, status, activeForm? }>` in `SessionEnrichment`; `tasksDone`/`tasksTotal` derived from it
   - R46.2: UI shows task count summary + in-progress task subjects
   - R46.3: `TaskUpdate` entries in delta reads correctly update tasks created in earlier reads
-- R47: 🔄 Input token count takes the last assistant entry's value (not summed) — `input_tokens + cache_creation + cache_read` are per-call totals, not deltas (Phase: Dashboard Refinements)
+- R47: ✅ Input token count takes the last assistant entry's value (not summed) — `input_tokens + cache_creation + cache_read` are per-call totals, not deltas (Phase: Dashboard Refinements)
   - R47.1: `outputTokens` remains summed (per-call deltas, correct to accumulate)
-- R48: 🔄 Agents section header shows pulsing green dot when any sub-agent is active; "N/M active" text removed (Phase: Dashboard Refinements)
-- R49: 🔄 `latestUserMessage` and `latestCommand` unified into `latestUserActivity?: { text, isCommand }` — single temporal winner, no double-slash (Phase: Dashboard Refinements)
+- R48: ✅ Agents section header shows pulsing green dot when any sub-agent is active; "N/M active" text removed (Phase: Dashboard Refinements)
+- R49: ✅ `latestUserMessage` and `latestCommand` unified into `latestUserActivity?: { text, isCommand }` — single temporal winner, no double-slash (Phase: Dashboard Refinements)
   - R49.1: Backend reversed scan uses one `found` flag; first user entry chronologically sets the field
   - R49.2: UI displays `text` as-is; uses `isCommand` to choose icon only
-- R50: 🔄 `latestAssistantMessage` and `lastToolUse` unified into `latestAssistantActivity?: { text?, tool? }` — single temporal winner, JSON carries both when present (Phase: Dashboard Refinements)
+- R50: ✅ `latestAssistantMessage` and `lastToolUse` unified into `latestAssistantActivity?: { text?, tool? }` — single temporal winner, JSON carries both when present (Phase: Dashboard Refinements)
   - R50.1: Backend reversed scan uses one `foundAssistantActivity` flag; first assistant entry sets the field; within an entry text and tool extracted independently
   - R50.2: UI shows text when present, falls back to tool name; unified single-line display like `latestUserActivity`
   - R50.3: Applies to both main session and sub-agent cards
 
 ### Card Rework
 
-- R51: 🔄 Context window progress bar — input tokens / 128k max; green default, orange >100k, red >120k; numeric "Xk" label (Phase: Card Rework)
-- R52: 🔄 Task count `📋 done/total` inline on same row as context bar (Phase: Card Rework)
-- R53: 🔄 Unified agent row format — main agent and sub-agents use identical structure: pulsing dot / checkmark, label, model, `>` user line, `<` assistant line (Phase: Card Rework)
-- R54: 🔄 Sub-agent `>` line shows `latestUserActivity.text` (initial instruction from first user message) (Phase: Card Rework)
-- R55: 🔄 Card layout: header (name + state badge) → context/tasks row → agent rows; remove git branch, output tokens, standalone model/message lines (Phase: Card Rework)
+- R51: ✅ Context window progress bar — input tokens / 128k max; green default, orange >100k, red >120k; numeric "Xk" label (Phase: Card Rework)
+- R52: ✅ Task count `📋 done/total` inline on same row as context bar (Phase: Card Rework)
+- R53: ✅ Unified agent row format — main agent and sub-agents use identical structure: pulsing dot / checkmark, label, model, `>` user line, `<` assistant line (Phase: Card Rework)
+- R54: ✅ Sub-agent `>` line shows `latestUserActivity.text` (initial instruction from first user message) (Phase: Card Rework)
+- R55: ✅ Card layout: header (name + state badge) → context/tasks row → agent rows; remove git branch, output tokens, standalone model/message lines (Phase: Card Rework)
 
 ### Multi-Backend WebSocket
 
@@ -323,7 +319,7 @@ Fix stop detection race: Claude writes post-stop `system` entry to JSONL (8ms af
 
 Three bugs: task completions not reflected in WebSocket/sub (delta reads drop TaskUpdate for prior tasks), `waiting_for_permission` sticking after answering (resolveState Priority 1 blocks JSONL mtime), hook config safety verification (already safe, adding tests).
 
-### 🔄 17 Phase: Sub-Agent Stop/Resume Fix
+### ✅ 17 Phase: Sub-Agent Stop/Resume Fix
 
 [17-subagent-stop-resume](17-subagent-stop-resume.md)
 
@@ -336,16 +332,19 @@ After session stops and resumes (same UUID), old sub-agents can appear active be
 Dashboard connects to multiple ccmon servers simultaneously. Server sends `{ hostname, projects }` envelope. Frontend manages N connections with merged project view, connection status pill (Connected/Partially/Disconnected), and settings menu for adding/removing servers.
 
 ### ✅ 19 Phase: Linting Setup
+
 [19-linting](19-linting.md)
 
 Add Biome linting and TypeScript type-check. Wire `test`, `lint`, `lint:fix`, `typecheck` scripts in package.json. Document in CLAUDE.md.
 
 ### ✅ 20 Phase: GitHub Actions CI
+
 [20-gha-ci](20-gha-ci.md)
 
 GHA workflow running lint, typecheck, and tests on every push and pull request.
 
 ### ✅ 21 Phase: CLAUDE.md Trim
+
 [21-claude-md-trim](21-claude-md-trim.md)
 
 Reduced CLAUDE.md from 181 to 114 lines (37%) by removing JSON schema examples and redundant prose. Commands and architecture sections kept intact.
