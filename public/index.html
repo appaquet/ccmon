@@ -585,13 +585,13 @@
         : '';
       let userHtml = '';
       if (userActivity && userActivity.text) {
-        userHtml = `<div class="agent-msg agent-msg-in">&gt; ${esc(truncate(userActivity.text, 80))}</div>`;
+        userHtml = `<div class="agent-msg agent-msg-in">▶ ${esc(truncate(userActivity.text, 80))}</div>`;
       }
       let assistantHtml = '';
       if (assistantActivity) {
         const actText = assistantActivity.text ?? assistantActivity.tool;
         if (actText) {
-          assistantHtml = `<div class="agent-msg agent-msg-out">&lt; ${esc(truncate(actText, 80))}</div>`;
+          assistantHtml = `<div class="agent-msg agent-msg-out">◀ ${esc(truncate(actText, 80))}</div>`;
         }
       }
       return `
@@ -673,10 +673,38 @@
     // Composite key that uniquely identifies a project across multiple backends
     const projKey = (p) => p._backendKey + '::' + p.projectName;
 
+    let lastSortOrder = [];  // projKey[] — cached sort order, refreshed every 30s
+    let lastSortTime = 0;    // ms timestamp of last sort
+
+    // Returns projects sorted by lastUpdated descending, re-sorting at most every 30s.
+    // Between re-sorts, new projects are prepended and the cached order is preserved.
+    function getSortedProjects(projects) {
+      const now = Date.now();
+      if (now - lastSortTime >= 30_000) {
+        const sorted = [...projects].sort((a, b) => {
+          const ta = a.lastUpdated ? new Date(a.lastUpdated).getTime() : 0;
+          const tb = b.lastUpdated ? new Date(b.lastUpdated).getTime() : 0;
+          return tb - ta;
+        });
+        lastSortOrder = sorted.map(p => projKey(p));
+        lastSortTime = now;
+        return sorted;
+      }
+
+      // Stable pass: reorder to match cached order, prepend any new projects
+      const byKey = new Map(projects.map(p => [projKey(p), p]));
+      const known = lastSortOrder.filter(k => byKey.has(k)).map(k => byKey.get(k));
+      const knownKeys = new Set(lastSortOrder);
+      const newProjects = projects.filter(p => !knownKeys.has(projKey(p)));
+      const result = [...newProjects, ...known];
+      // Keep lastSortOrder in sync so new projects are anchored on next re-sort
+      lastSortOrder = result.map(p => projKey(p));
+      return result;
+    }
+
     function render(projects) {
       const grid = document.getElementById('project-grid');
       const all = [...projects];
-      all.sort((a, b) => a.projectName.localeCompare(b.projectName));
 
       // Compute running→stopped transitions and new notification arrivals before clearing DOM
       const flashStopped = new Set();
@@ -847,8 +875,7 @@
       const merged = BackendManager.backends.flatMap(e =>
         e.projects.map(p => ({ ...p, _backendKey: e.hostname || e.url }))
       );
-      merged.sort((a, b) => a.projectName.localeCompare(b.projectName));
-      render(merged);
+      render(getSortedProjects(merged));
     }
 
     function updateStatusPill() {

@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phases 23 (UI Triangle Arrows) and 24 (Dashboard Sort Order) planned. Both are frontend-only changes in `public/index.html`. Awaiting `/implement`.
+Phases 23 and 24 implemented. Phase 23: `▶`/`◀` triangles replace `>`/`<` in `renderAgentRow()`. Phase 24: time-based sort with 30s throttle via `getSortedProjects()`. 198 tests pass, lint + typecheck clean. Both pending visual verification.
 
 ## Requirements
 
