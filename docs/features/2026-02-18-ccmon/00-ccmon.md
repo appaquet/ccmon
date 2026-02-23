@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 22 (Multi-Backend Naming) implemented: composite `hostname::projectName` keys in frontend state maps; hostname prefix shown in card header when names collide. Pending manual validation. 198 tests passing, lint clean, typecheck clean.
+Phases 23 (UI Triangle Arrows) and 24 (Dashboard Sort Order) planned. Both are frontend-only changes in `public/index.html`. Awaiting `/implement`.
 
 ## Requirements
 
@@ -357,6 +357,18 @@ Reduced CLAUDE.md from 181 to 114 lines (37%) by removing JSON schema examples a
 [22-multi-backend-naming](22-multi-backend-naming.md)
 
 Fix same-named projects across backends causing double flash. Use composite `hostname::projectName` key in frontend state maps. Show hostname prefix in card header when names collide.
+
+### ⬜ 24 Phase: Dashboard Sort Order
+
+[24-dashboard-sort-order](24-dashboard-sort-order.md)
+
+Sort dashboard projects by most recently active (`lastUpdated` descending) instead of alphabetically. Throttle re-sorting to every 30s to prevent constant card reordering.
+
+### ⬜ 23 Phase: UI Triangle Arrows
+
+[23-ui-triangle-arrows](23-ui-triangle-arrows.md)
+
+Replace ASCII `>` / `<` message direction indicators with UTF-8 solid triangles (`▶` / `◀`) in dashboard cards.
 
 ## Files
 
