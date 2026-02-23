@@ -14,7 +14,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phases 18–20 and review fixes complete. Phase 18 (Multi-Backend WS): server sends `{ hostname, projects }` envelope; frontend `BackendManager` manages N connections; connection status pill; settings dropdown; `Cache-Control: no-cache` added to HTML response; pending manual live validation. Phase 19 (Linting): Biome + tsc, `test`/`lint`/`lint:fix`/`typecheck` scripts, CLAUDE.md updated. Phase 20 (GHA CI): `.github/workflows/ci.yml` with lint + typecheck + test steps. REVIEW fixes: `sub` command gained `--host` flag (configurable WebSocket host); usage string converted to multi-line template literal. 198 tests passing, lint clean, typecheck clean.
+Phases 18–21 complete. Phase 21: CLAUDE.md trimmed 181 → 114 lines (37% token reduction) by removing JSON schema examples and redundant prose. Phases 15 (stop detection), 17 (sub-agent stop/resume), 18 (multi-backend) are implemented but have pending manual validation tasks. 198 tests passing, lint clean, typecheck clean.
 
 ## Requirements
 
@@ -345,10 +345,10 @@ Add Biome linting and TypeScript type-check. Wire `test`, `lint`, `lint:fix`, `t
 
 GHA workflow running lint, typecheck, and tests on every push and pull request.
 
-### ⬜ 21 Phase: CLAUDE.md Trim
+### ✅ 21 Phase: CLAUDE.md Trim
 [21-claude-md-trim](21-claude-md-trim.md)
 
-Reduce CLAUDE.md from ~181 lines to ~90 by removing JSON schema examples and redundant prose. Keep essential dev context only.
+Reduced CLAUDE.md from 181 to 114 lines (37%) by removing JSON schema examples and redundant prose. Commands and architecture sections kept intact.
 
 ## Files
 
