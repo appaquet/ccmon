@@ -607,7 +607,7 @@
       `;
     }
 
-    function createCard(proj, flashStopped, flashNotification) {
+    function createCard(proj, flashStopped, flashNotification, displayName) {
       const card = document.createElement('div');
       const s = proj.state || 'stopped';
       const flashClasses = s === 'waiting_for_permission' ? ' card-flashing-waiting'
@@ -629,9 +629,10 @@
         tasksTotal = nonDeleted.length;
       }
 
+      const cardName = displayName || proj.projectName;
       let html = `
         <div class="card-header">
-          <span class="card-name" title="${esc(proj.projectName)}">${esc(proj.projectName)}</span>
+          <span class="card-name" title="${esc(cardName)}">${esc(cardName)}</span>
           <span class="badge ${badgeClass}">
             <span class="dot ${dotClass}"></span>
             ${esc(label)}
@@ -666,8 +667,11 @@
       return card;
     }
 
-    const prevState = new Map();                // projectName → last known state string
-    const prevNotificationTimestamp = new Map(); // projectName → last known notificationTimestamp
+    const prevState = new Map();                // projKey → last known state string
+    const prevNotificationTimestamp = new Map(); // projKey → last known notificationTimestamp
+
+    // Composite key that uniquely identifies a project across multiple backends
+    const projKey = (p) => p._backendKey + '::' + p.projectName;
 
     function render(projects) {
       const grid = document.getElementById('project-grid');
@@ -678,26 +682,27 @@
       const flashStopped = new Set();
       const flashNotification = new Set();
       for (const proj of all) {
-        if (prevState.get(proj.projectName) === 'running' && proj.state === 'stopped') {
-          flashStopped.add(proj.projectName);
+        const key = projKey(proj);
+        if (prevState.get(key) === 'running' && proj.state === 'stopped') {
+          flashStopped.add(key);
         }
-        prevState.set(proj.projectName, proj.state);
+        prevState.set(key, proj.state);
 
-        const prevTs = prevNotificationTimestamp.get(proj.projectName);
+        const prevTs = prevNotificationTimestamp.get(key);
         const curTs = proj.notificationTimestamp;
         if (curTs && curTs !== prevTs) {
-          flashNotification.add(proj.projectName);
+          flashNotification.add(key);
         }
         if (curTs !== undefined) {
-          prevNotificationTimestamp.set(proj.projectName, curTs);
+          prevNotificationTimestamp.set(key, curTs);
         }
       }
-      const currentNames = new Set(all.map(p => p.projectName));
-      for (const name of [...prevState.keys()]) {
-        if (!currentNames.has(name)) prevState.delete(name);
+      const currentKeys = new Set(all.map(p => projKey(p)));
+      for (const key of [...prevState.keys()]) {
+        if (!currentKeys.has(key)) prevState.delete(key);
       }
-      for (const name of [...prevNotificationTimestamp.keys()]) {
-        if (!currentNames.has(name)) prevNotificationTimestamp.delete(name);
+      for (const key of [...prevNotificationTimestamp.keys()]) {
+        if (!currentKeys.has(key)) prevNotificationTimestamp.delete(key);
       }
 
       grid.innerHTML = '';
@@ -710,11 +715,22 @@
         return;
       }
 
+      // When multiple backends share the same projectName, prefix with hostname for disambiguation
+      const nameCounts = new Map();
       for (const proj of all) {
+        nameCounts.set(proj.projectName, (nameCounts.get(proj.projectName) || 0) + 1);
+      }
+
+      for (const proj of all) {
+        const key = projKey(proj);
+        const displayName = nameCounts.get(proj.projectName) > 1
+          ? proj._backendKey + ':' + proj.projectName
+          : undefined;
         grid.appendChild(createCard(
           proj,
-          flashStopped.has(proj.projectName),
-          flashNotification.has(proj.projectName),
+          flashStopped.has(key),
+          flashNotification.has(key),
+          displayName,
         ));
       }
     }
@@ -828,7 +844,9 @@
     };
 
     function mergeAndRender() {
-      const merged = BackendManager.backends.flatMap(e => e.projects);
+      const merged = BackendManager.backends.flatMap(e =>
+        e.projects.map(p => ({ ...p, _backendKey: e.hostname || e.url }))
+      );
       merged.sort((a, b) => a.projectName.localeCompare(b.projectName));
       render(merged);
     }
