@@ -33,7 +33,7 @@ bun run serve --port <N>       # Custom port
 ```bash
 bun run sub                    # Connect to running server, stream state as NDJSON
 bun run sub --host <addr>      # Connect to custom host (default: localhost)
-bun run sub --port <N>         # Connect to custom port (default: 3000)
+bun run sub --port <N>         # Connect to custom port (default: 8080)
 ```
 
 ### test

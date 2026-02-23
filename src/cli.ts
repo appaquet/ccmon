@@ -106,7 +106,7 @@ Subcommands:
   serve --port <N>       Listen on custom port (default: 8080)
   sub                    Connect to running server, stream state as NDJSON
   sub --host <addr>      Connect to custom host (default: localhost)
-  sub --port <N>         Connect to custom port (default: 3000)
+  sub --port <N>         Connect to custom port (default: 8080)
 `,
   );
   process.exit(1);

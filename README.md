@@ -24,7 +24,7 @@ Real-time dashboard for your Claude Code sessions.
 ## Commands
 
 ```
-ccmon serve [--port N]  # HTTP + WebSocket server (default port 3000)
+ccmon serve [--port N]  # HTTP + WebSocket server (default port 8080)
 ccmon status            # Hook handler: reads event from stdin, writes status file
 ccmon dump              # Print all project states as JSON
 ccmon dump --watch      # Stream project states on change
