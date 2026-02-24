@@ -407,6 +407,12 @@ Replace single-write `ccmon-status.json` with append-only `ccmon-status.jsonl` e
 
 Fix `waiting_for_permission` persisting after user clicks "Allow". PostToolUse from the same session_id as the PermissionRequest resolves the waiting state; sub-agent PostToolUse (different session_id) does not.
 
+### ⬜ 29 Phase: Click-to-Dismiss Waiting Flash
+
+[29-waiting-dismiss](29-waiting-dismiss.md)
+
+Click on a flashing waiting card to acknowledge and stop the animation. State badge remains "Waiting". Flash re-triggers if a new PermissionRequest arrives after the state cycles.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
