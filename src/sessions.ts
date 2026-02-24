@@ -1410,12 +1410,27 @@ export function resolveState(
   const stateful = events.filter((e) => !NON_STATE_EVENTS.has(e.event));
 
   // Priority 1: scan backward for unresolved PermissionRequest.
-  // PostToolUse does NOT resolve permission — concurrent sub-agents fire PostToolUse
-  // while the main session is waiting for permission.
+  // A PermissionRequest is resolved if the same session later fires PostToolUse
+  // (the tool ran, meaning the user clicked Allow). Sub-agent PostToolUse events
+  // have different session_id values and must not resolve a main session's request.
   for (let i = stateful.length - 1; i >= 0; i--) {
     const e = stateful[i];
     if (PERMISSION_RESOLVERS.has(e.event)) break;
     if (e.event === "PermissionRequest") {
+      // Forward-scan from this position for a same-session PostToolUse.
+      const sid = e.session_id;
+      let resolved = false;
+      for (let j = i + 1; j < stateful.length; j++) {
+        if (
+          stateful[j].session_id === sid &&
+          stateful[j].event === "PostToolUse"
+        ) {
+          resolved = true;
+          break;
+        }
+      }
+      if (resolved) break;
+
       const age = Date.now() - new Date(e.timestamp).getTime();
       if (!Number.isNaN(age) && age < PERMISSION_STALE_MS) {
         return "waiting_for_permission";

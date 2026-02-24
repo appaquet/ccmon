@@ -8,12 +8,12 @@ Fix: session_id-aware PostToolUse resolution. When a `PermissionRequest` is foun
 
 ## Tasks
 
-- [ ] Modify `resolveState()` in `src/sessions.ts`: when backward scan hits `PermissionRequest`, forward-scan for same-session `PostToolUse` as resolver (R34.7)
-- [ ] Add test: PostToolUse from same session_id after PermissionRequest resolves to running
-- [ ] Add test: PostToolUse from different session_id after PermissionRequest keeps waiting_for_permission
-- [ ] Add test: PostToolUse from same session_id but PermissionRequest is stale (>5min) resolves to stopped
-- [ ] Verify existing resolveState tests still pass
-- [ ] Run lint + typecheck + tests
+- [x] Modify `resolveState()` in `src/sessions.ts`: when backward scan hits `PermissionRequest`, forward-scan for same-session `PostToolUse` as resolver (R34.7)
+- [x] Add test: PostToolUse from same session_id after PermissionRequest resolves to running
+- [x] Add test: PostToolUse from different session_id after PermissionRequest keeps waiting_for_permission
+- [x] Add test: PostToolUse from same session_id but PermissionRequest is stale (>5min) resolves to stopped
+- [x] Verify existing resolveState tests still pass
+- [x] Run lint + typecheck + tests
 
 ## Files
 

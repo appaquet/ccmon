@@ -3272,15 +3272,41 @@ describe("resolveState", () => {
     expect(resolveState(null, events)).toBe("waiting_for_permission");
   });
 
-  test("KEY RACE: PermissionRequest followed by PostToolUse(s) → still waiting_for_permission", () => {
-    // Concurrent sub-agents fire PostToolUse while main session waits for permission.
-    // PostToolUse does NOT resolve permission.
+  test("KEY RACE: PermissionRequest followed by sub-agent PostToolUse(s) → still waiting_for_permission", () => {
+    // Concurrent sub-agents fire PostToolUse (different session_id) while main session
+    // waits for permission. Sub-agent PostToolUse must NOT resolve the main session's request.
+    const subAgentEvt = (timestampMs: number): StatusEvent => ({
+      event: "PostToolUse",
+      state: "running",
+      timestamp: new Date(timestampMs).toISOString(),
+      session_id: "subagent-sess",
+      working_dir: "/proj",
+    });
+    const events = [
+      evt("PermissionRequest", "waiting_for_permission", now - 5_000),
+      subAgentEvt(now - 3_000),
+      subAgentEvt(now - 1_000),
+    ];
+    expect(resolveState(null, events)).toBe("waiting_for_permission");
+  });
+
+  test("same-session PostToolUse after PermissionRequest → resolved (running)", () => {
+    // User clicked Allow: main session fires PostToolUse with same session_id.
     const events = [
       evt("PermissionRequest", "waiting_for_permission", now - 5_000),
       evt("PostToolUse", "running", now - 3_000),
-      evt("PostToolUse", "running", now - 1_000),
     ];
-    expect(resolveState(null, events)).toBe("waiting_for_permission");
+    expect(resolveState(null, events)).toBe("running");
+  });
+
+  test("same-session PostToolUse after stale PermissionRequest (>5min) → stopped", () => {
+    // PermissionRequest is old enough to be stale; even with same-session PostToolUse,
+    // the forward-scan resolves it and we fall through to stopped.
+    const events = [
+      evt("PermissionRequest", "waiting_for_permission", now - 10 * 60_000),
+      evt("PostToolUse", "running", now - 9 * 60_000),
+    ];
+    expect(resolveState(null, events)).toBe("stopped");
   });
 
   test("PermissionRequest followed by UserPromptSubmit → running (permission resolved)", () => {
