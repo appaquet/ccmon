@@ -1,21 +1,32 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { utimesSync } from "node:fs";
-import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
-import type { StatusFile } from "../src/sessions";
+import type { StatusEvent } from "../src/sessions";
 import {
   _resetCachesForTesting,
   filterStaleProjects,
   getProjectState,
   getSubagentInfos,
+  MAX_STATUS_LOG_BYTES,
   mapHookEventToState,
   readSessionsIndex,
   readSessionTail,
-  readStatus,
+  readStatusLog,
   resolveState,
+  STATUS_FILE_LEGACY,
+  STATUS_LOG_FILE,
   scanProjects,
   writeNotificationStatus,
-  writeStatus,
+  writeStatusEvent,
+  writeStatusTruncate,
 } from "../src/sessions";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -396,9 +407,9 @@ describe("readSessionsIndex", () => {
   });
 });
 
-// ─── readStatus ──────────────────────────────────────────────────────────────
+// ─── readStatusLog ───────────────────────────────────────────────────────────
 
-describe("readStatus", () => {
+describe("readStatusLog", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
@@ -409,69 +420,100 @@ describe("readStatus", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test("valid ccmon-status.json: returns StatusFile", async () => {
-    const payload = {
+  function makeEvent(
+    event: string,
+    state: StatusEvent["state"],
+    ts = "2026-02-19T10:00:00.000Z",
+  ): StatusEvent {
+    return {
+      event,
+      state,
+      timestamp: ts,
+      session_id: "abc123",
+      working_dir: "/home/user/proj",
+    };
+  }
+
+  test("valid NDJSON: returns StatusEvent array", async () => {
+    const e1 = makeEvent("PostToolUse", "running");
+    const e2 = makeEvent("PermissionRequest", "waiting_for_permission");
+    await writeFile(
+      join(tmpDir, STATUS_LOG_FILE),
+      `${JSON.stringify(e1)}\n${JSON.stringify(e2)}\n`,
+    );
+
+    const result = await readStatusLog(tmpDir);
+    expect(result).toHaveLength(2);
+    expect(result[0].event).toBe("PostToolUse");
+    expect(result[0].state).toBe("running");
+    expect(result[1].event).toBe("PermissionRequest");
+    expect(result[1].state).toBe("waiting_for_permission");
+  });
+
+  test("missing file: returns empty array", async () => {
+    const result = await readStatusLog(tmpDir);
+    expect(result).toHaveLength(0);
+  });
+
+  test("corrupt lines: gracefully skipped", async () => {
+    const e1 = makeEvent("PostToolUse", "running");
+    await writeFile(
+      join(tmpDir, STATUS_LOG_FILE),
+      `not valid json\n${JSON.stringify(e1)}\nalso broken\n`,
+    );
+
+    const result = await readStatusLog(tmpDir);
+    expect(result).toHaveLength(1);
+    expect(result[0].event).toBe("PostToolUse");
+  });
+
+  test("migration: reads legacy ccmon-status.json and converts to single-element array", async () => {
+    const legacy = {
       state: "running",
       timestamp: "2026-02-19T10:00:00.000Z",
       session_id: "abc123",
       working_dir: "/home/user/proj",
     };
-    await writeFile(join(tmpDir, "ccmon-status.json"), JSON.stringify(payload));
+    await writeFile(join(tmpDir, STATUS_FILE_LEGACY), JSON.stringify(legacy));
 
-    const result = await readStatus(tmpDir);
-
-    expect(result).not.toBeNull();
-    expect(result?.state).toBe("running");
-    expect(result?.timestamp).toBe("2026-02-19T10:00:00.000Z");
-    expect(result?.session_id).toBe("abc123");
-    expect(result?.working_dir).toBe("/home/user/proj");
+    const result = await readStatusLog(tmpDir);
+    expect(result).toHaveLength(1);
+    expect(result[0].state).toBe("running");
+    expect(result[0].session_id).toBe("abc123");
+    expect(result[0].event).toBeDefined();
   });
 
-  test("waiting_for_permission state: accepted", async () => {
-    const payload = {
-      state: "waiting_for_permission",
+  test("NDJSON preferred over legacy JSON when both exist", async () => {
+    const ndjsonEvent = makeEvent("Stop", "stopped");
+    await writeFile(
+      join(tmpDir, STATUS_LOG_FILE),
+      `${JSON.stringify(ndjsonEvent)}\n`,
+    );
+    const legacy = {
+      state: "running",
       timestamp: "2026-02-19T10:00:00.000Z",
-      session_id: "s",
-      working_dir: "/p",
+      session_id: "abc123",
+      working_dir: "/home/user/proj",
     };
-    await writeFile(join(tmpDir, "ccmon-status.json"), JSON.stringify(payload));
-    const result = await readStatus(tmpDir);
-    expect(result?.state).toBe("waiting_for_permission");
+    await writeFile(join(tmpDir, STATUS_FILE_LEGACY), JSON.stringify(legacy));
+
+    const result = await readStatusLog(tmpDir);
+    expect(result).toHaveLength(1);
+    expect(result[0].state).toBe("stopped");
   });
 
-  test("stopped state: accepted", async () => {
-    const payload = {
-      state: "stopped",
-      timestamp: "2026-02-19T10:00:00.000Z",
-      session_id: "s",
-      working_dir: "/p",
-    };
-    await writeFile(join(tmpDir, "ccmon-status.json"), JSON.stringify(payload));
-    const result = await readStatus(tmpDir);
-    expect(result?.state).toBe("stopped");
-  });
-
-  test("missing file: returns null", async () => {
-    const result = await readStatus(tmpDir);
-    expect(result).toBeNull();
-  });
-
-  test("corrupt JSON: returns null", async () => {
-    await writeFile(join(tmpDir, "ccmon-status.json"), "not json at all");
-    const result = await readStatus(tmpDir);
-    expect(result).toBeNull();
-  });
-
-  test("unknown state value: returns null", async () => {
-    const payload = {
+  test("unknown state in event line: skipped", async () => {
+    const bad = {
+      event: "PostToolUse",
       state: "unknown_state",
-      timestamp: "2026-02-19T10:00:00.000Z",
+      timestamp: "t",
       session_id: "s",
       working_dir: "/p",
     };
-    await writeFile(join(tmpDir, "ccmon-status.json"), JSON.stringify(payload));
-    const result = await readStatus(tmpDir);
-    expect(result).toBeNull();
+    await writeFile(join(tmpDir, STATUS_LOG_FILE), `${JSON.stringify(bad)}\n`);
+
+    const result = await readStatusLog(tmpDir);
+    expect(result).toHaveLength(0);
   });
 });
 
@@ -553,16 +595,18 @@ describe("getProjectState", () => {
     const jsonlPath = join(projDir, "session.jsonl");
     const staleMtime = new Date(Date.now() - 2 * 60 * 1000);
     utimesSync(jsonlPath, staleMtime, staleMtime);
-    const payload = {
+    const event: StatusEvent = {
+      event: "Stop",
       state: "stopped",
       timestamp: new Date().toISOString(),
       session_id: "sid3",
       working_dir: "/home/user/stale",
     };
-    await writeFile(
-      join(projDir, "ccmon-status.json"),
-      JSON.stringify(payload),
-    );
+    const statusLogPath = join(projDir, STATUS_LOG_FILE);
+    await appendFile(statusLogPath, `${JSON.stringify(event)}\n`);
+    // Backdate status log so findLatestJSONL selects the session JSONL
+    const olderMtime = new Date(staleMtime.getTime() - 1000);
+    utimesSync(statusLogPath, olderMtime, olderMtime);
 
     const results = await getProjectState(tmpDir);
 
@@ -581,16 +625,18 @@ describe("getProjectState", () => {
     // Backdate JSONL to 2 min ago so it is older than the stopped signal
     const staleMtime = new Date(Date.now() - 2 * 60 * 1000);
     utimesSync(jsonlPath, staleMtime, staleMtime);
-    const payload = {
+    const event: StatusEvent = {
+      event: "Stop",
       state: "stopped",
-      timestamp: new Date().toISOString(), // stopped signal is newer than JSONL
+      timestamp: new Date().toISOString(),
       session_id: "sid4",
       working_dir: "/home/user/stale-stopped",
     };
-    await writeFile(
-      join(projDir, "ccmon-status.json"),
-      JSON.stringify(payload),
-    );
+    const statusLogPath = join(projDir, STATUS_LOG_FILE);
+    await appendFile(statusLogPath, `${JSON.stringify(event)}\n`);
+    // Backdate status log so findLatestJSONL selects the session JSONL
+    const olderMtime = new Date(staleMtime.getTime() - 1000);
+    utimesSync(statusLogPath, olderMtime, olderMtime);
 
     const results = await getProjectState(tmpDir);
 
@@ -606,13 +652,21 @@ describe("getProjectState", () => {
     expect(results).toHaveLength(2);
   });
 
-  test("R26: notificationMessage and notificationTimestamp forwarded from StatusFile", async () => {
+  test("R26: notificationMessage and notificationTimestamp forwarded from StatusEvent", async () => {
     const projDir = await makeProject(
       "-home-user-notif",
       "/home/user/notif",
       "sid-n",
     );
-    const payload = {
+    const stopEvent: StatusEvent = {
+      event: "Stop",
+      state: "stopped",
+      timestamp: new Date().toISOString(),
+      session_id: "sid-n",
+      working_dir: "/home/user/notif",
+    };
+    const notifEvent: StatusEvent = {
+      event: "Notification",
       state: "stopped",
       timestamp: new Date().toISOString(),
       session_id: "sid-n",
@@ -620,10 +674,14 @@ describe("getProjectState", () => {
       notificationMessage: "You have a notification",
       notificationTimestamp: "2026-02-22T10:00:00.000Z",
     };
-    await writeFile(
-      join(projDir, "ccmon-status.json"),
-      JSON.stringify(payload),
+    const statusLogPath = join(projDir, STATUS_LOG_FILE);
+    await appendFile(
+      statusLogPath,
+      `${JSON.stringify(stopEvent)}\n${JSON.stringify(notifEvent)}\n`,
     );
+    // Backdate status log so findLatestJSONL selects the session JSONL
+    const past = new Date(Date.now() - 5000);
+    utimesSync(statusLogPath, past, past);
 
     const results = await getProjectState(tmpDir);
     expect(results).toHaveLength(1);
@@ -631,22 +689,24 @@ describe("getProjectState", () => {
     expect(results[0].notificationTimestamp).toBe("2026-02-22T10:00:00.000Z");
   });
 
-  test("R26: notificationMessage absent when status has none", async () => {
+  test("R26: notificationMessage absent when status has no notification event", async () => {
     const projDir = await makeProject(
       "-home-user-nonotif",
       "/home/user/nonotif",
       "sid-nn",
     );
-    const payload = {
+    const event: StatusEvent = {
+      event: "Stop",
       state: "stopped",
       timestamp: new Date().toISOString(),
       session_id: "sid-nn",
       working_dir: "/home/user/nonotif",
     };
-    await writeFile(
-      join(projDir, "ccmon-status.json"),
-      JSON.stringify(payload),
-    );
+    const statusLogPath = join(projDir, STATUS_LOG_FILE);
+    await appendFile(statusLogPath, `${JSON.stringify(event)}\n`);
+    // Backdate status log so findLatestJSONL selects the session JSONL
+    const past = new Date(Date.now() - 5000);
+    utimesSync(statusLogPath, past, past);
 
     const results = await getProjectState(tmpDir);
     expect(results).toHaveLength(1);
@@ -666,16 +726,18 @@ describe("getProjectState", () => {
     const jsonlPath = join(projDir, "session.jsonl");
     const staleMtime = new Date(Date.now() - 2 * 60 * 1000);
     utimesSync(jsonlPath, staleMtime, staleMtime);
-    const payload = {
+    const event: StatusEvent = {
+      event: "PermissionRequest",
       state: "waiting_for_permission",
       timestamp: "not-a-date",
       session_id: "sid-nan",
       working_dir: "/home/user/nan-ts",
     };
-    await writeFile(
-      join(projDir, "ccmon-status.json"),
-      JSON.stringify(payload),
-    );
+    const statusLogPath = join(projDir, STATUS_LOG_FILE);
+    await appendFile(statusLogPath, `${JSON.stringify(event)}\n`);
+    // Backdate status log so findLatestJSONL selects the session JSONL
+    const olderMtime = new Date(staleMtime.getTime() - 1000);
+    utimesSync(statusLogPath, olderMtime, olderMtime);
 
     const results = await getProjectState(tmpDir);
     expect(results).toHaveLength(1);
@@ -740,9 +802,9 @@ describe("mapHookEventToState", () => {
   });
 });
 
-// ─── writeStatus ─────────────────────────────────────────────────────────────
+// ─── writeStatusEvent / writeStatusTruncate ──────────────────────────────────
 
-describe("writeStatus", () => {
+describe("writeStatusEvent", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
@@ -753,39 +815,100 @@ describe("writeStatus", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test("writes ccmon-status.json with correct content", async () => {
-    const status = {
-      state: "running" as const,
-      timestamp: "2026-02-20T12:00:00.000Z",
+  function makeEvent(event: string, state: StatusEvent["state"]): StatusEvent {
+    return {
+      event,
+      state,
+      timestamp: new Date().toISOString(),
       session_id: "test-session-id",
       working_dir: "/home/user/project",
     };
+  }
 
-    await writeStatus(tmpDir, status);
+  test("appends NDJSON line to ccmon-status.jsonl", async () => {
+    const e1 = makeEvent("PostToolUse", "running");
+    const e2 = makeEvent("PermissionRequest", "waiting_for_permission");
 
-    const raw = await Bun.file(join(tmpDir, "ccmon-status.json")).text();
-    const parsed = JSON.parse(raw);
-    expect(parsed.state).toBe("running");
-    expect(parsed.timestamp).toBe("2026-02-20T12:00:00.000Z");
-    expect(parsed.session_id).toBe("test-session-id");
-    expect(parsed.working_dir).toBe("/home/user/project");
+    await writeStatusEvent(tmpDir, e1);
+    await writeStatusEvent(tmpDir, e2);
+
+    const raw = await readFile(join(tmpDir, STATUS_LOG_FILE), "utf8");
+    const lines = raw.split("\n").filter((l) => l.trim() !== "");
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[0]).event).toBe("PostToolUse");
+    expect(JSON.parse(lines[1]).event).toBe("PermissionRequest");
   });
 
-  test("round-trip: writeStatus output is parseable by readStatus", async () => {
-    const status = {
-      state: "waiting_for_permission" as const,
+  test("round-trip: writeStatusEvent output is parseable by readStatusLog", async () => {
+    const e = makeEvent("PostToolUse", "running");
+    await writeStatusEvent(tmpDir, e);
+
+    const result = await readStatusLog(tmpDir);
+    expect(result).toHaveLength(1);
+    expect(result[0].state).toBe("running");
+    expect(result[0].session_id).toBe("test-session-id");
+  });
+
+  test("safety cap: file trimmed when exceeding MAX_STATUS_LOG_BYTES", async () => {
+    const logPath = join(tmpDir, STATUS_LOG_FILE);
+    // Write enough data to exceed 64KB
+    const bigLine = JSON.stringify(makeEvent("PostToolUse", "running"));
+    const linesNeeded =
+      Math.ceil(MAX_STATUS_LOG_BYTES / (bigLine.length + 1)) + 10;
+    let bulk = "";
+    for (let i = 0; i < linesNeeded; i++) {
+      bulk += `${bigLine}\n`;
+    }
+    await writeFile(logPath, bulk);
+
+    // One more append triggers the trim
+    await writeStatusEvent(tmpDir, makeEvent("Stop", "stopped"));
+
+    const { stat: fsStat } = await import("node:fs/promises");
+    const s = await fsStat(logPath);
+    // After trim, file should be much smaller than MAX_STATUS_LOG_BYTES
+    expect(s.size).toBeLessThan(MAX_STATUS_LOG_BYTES);
+
+    // The trimmed file should still be valid NDJSON
+    const result = await readStatusLog(tmpDir);
+    expect(result.length).toBeGreaterThan(0);
+  });
+});
+
+describe("writeStatusTruncate", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir("ccmon-write-truncate");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test("overwrites file with single NDJSON line", async () => {
+    const e1: StatusEvent = {
+      event: "PostToolUse",
+      state: "running",
       timestamp: new Date().toISOString(),
-      session_id: "round-trip-id",
-      working_dir: "/home/user/rt",
+      session_id: "s1",
+      working_dir: "/p",
+    };
+    const e2: StatusEvent = {
+      event: "SessionEnd",
+      state: "stopped",
+      timestamp: new Date().toISOString(),
+      session_id: "s1",
+      working_dir: "/p",
     };
 
-    await writeStatus(tmpDir, status);
-    const result = await readStatus(tmpDir);
+    await writeStatusEvent(tmpDir, e1);
+    await writeStatusTruncate(tmpDir, e2);
 
-    expect(result).not.toBeNull();
-    expect(result?.state).toBe("waiting_for_permission");
-    expect(result?.session_id).toBe("round-trip-id");
-    expect(result?.working_dir).toBe("/home/user/rt");
+    const raw = await readFile(join(tmpDir, STATUS_LOG_FILE), "utf8");
+    const lines = raw.split("\n").filter((l) => l.trim() !== "");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]).event).toBe("SessionEnd");
   });
 });
 
@@ -810,16 +933,18 @@ describe("writeNotificationStatus (R26)", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test("R26.1: writes notificationMessage and notificationTimestamp, preserves existing state", async () => {
-    const existing = {
-      state: "running" as const,
+  test("R26.1: appends Notification event with notificationMessage and notificationTimestamp", async () => {
+    // Write a pre-existing running event
+    const existing: StatusEvent = {
+      event: "PostToolUse",
+      state: "running",
       timestamp: "2026-02-20T12:00:00.000Z",
       session_id: "sess-1",
       working_dir: "/home/user/proj",
     };
-    await writeFile(
-      join(tmpDir, "ccmon-status.json"),
-      JSON.stringify(existing),
+    await appendFile(
+      join(tmpDir, STATUS_LOG_FILE),
+      `${JSON.stringify(existing)}\n`,
     );
 
     const before = Date.now();
@@ -829,27 +954,28 @@ describe("writeNotificationStatus (R26)", () => {
       "idle_prompt",
     );
 
-    const result = await readStatus(tmpDir);
-    expect(result).not.toBeNull();
-    expect(result?.state).toBe("running");
-    expect(result?.session_id).toBe("sess-1");
-    expect(result?.notificationMessage).toBe("Claude needs attention");
-    expect(result?.notificationTimestamp).toBeDefined();
+    const events = await readStatusLog(tmpDir);
+    expect(events).toHaveLength(2);
+    const notifEvent = events[1];
+    expect(notifEvent.event).toBe("Notification");
+    expect(notifEvent.notificationMessage).toBe("Claude needs attention");
+    expect(notifEvent.notificationTimestamp).toBeDefined();
     expect(
-      new Date(result?.notificationTimestamp as string).getTime(),
+      new Date(notifEvent.notificationTimestamp as string).getTime(),
     ).toBeGreaterThanOrEqual(before);
   });
 
-  test("R26.3: permission_prompt suppressed when state is waiting_for_permission", async () => {
-    const existing = {
-      state: "waiting_for_permission" as const,
-      timestamp: "2026-02-20T12:00:00.000Z",
+  test("R26.3: permission_prompt suppressed when last state-bearing event is waiting_for_permission", async () => {
+    const existing: StatusEvent = {
+      event: "PermissionRequest",
+      state: "waiting_for_permission",
+      timestamp: new Date().toISOString(),
       session_id: "sess-2",
       working_dir: "/home/user/proj",
     };
-    await writeFile(
-      join(tmpDir, "ccmon-status.json"),
-      JSON.stringify(existing),
+    await appendFile(
+      join(tmpDir, STATUS_LOG_FILE),
+      `${JSON.stringify(existing)}\n`,
     );
 
     await writeNotificationStatus(
@@ -858,23 +984,23 @@ describe("writeNotificationStatus (R26)", () => {
       "permission_prompt",
     );
 
-    const result = await readStatus(tmpDir);
-    // File unchanged — no notificationMessage added
-    expect(result?.state).toBe("waiting_for_permission");
-    expect(result?.notificationMessage).toBeUndefined();
-    expect(result?.notificationTimestamp).toBeUndefined();
+    const events = await readStatusLog(tmpDir);
+    // Only the original event should exist — notification was suppressed
+    expect(events).toHaveLength(1);
+    expect(events[0].event).toBe("PermissionRequest");
   });
 
   test("R26.3: permission_prompt writes through when state is not waiting_for_permission", async () => {
-    const existing = {
-      state: "running" as const,
-      timestamp: "2026-02-20T12:00:00.000Z",
+    const existing: StatusEvent = {
+      event: "PostToolUse",
+      state: "running",
+      timestamp: new Date().toISOString(),
       session_id: "sess-3",
       working_dir: "/home/user/proj",
     };
-    await writeFile(
-      join(tmpDir, "ccmon-status.json"),
-      JSON.stringify(existing),
+    await appendFile(
+      join(tmpDir, STATUS_LOG_FILE),
+      `${JSON.stringify(existing)}\n`,
     );
 
     await writeNotificationStatus(
@@ -883,39 +1009,38 @@ describe("writeNotificationStatus (R26)", () => {
       "permission_prompt",
     );
 
-    const result = await readStatus(tmpDir);
-    expect(result?.state).toBe("running");
-    expect(result?.notificationMessage).toBe("Permission needed");
-    expect(result?.notificationTimestamp).toBeDefined();
+    const events = await readStatusLog(tmpDir);
+    expect(events).toHaveLength(2);
+    expect(events[1].notificationMessage).toBe("Permission needed");
   });
 
   test("R26.1: idle_prompt writes notificationMessage regardless of state", async () => {
-    const existing = {
-      state: "waiting_for_permission" as const,
-      timestamp: "2026-02-20T12:00:00.000Z",
+    const existing: StatusEvent = {
+      event: "PermissionRequest",
+      state: "waiting_for_permission",
+      timestamp: new Date().toISOString(),
       session_id: "sess-4",
       working_dir: "/home/user/proj",
     };
-    await writeFile(
-      join(tmpDir, "ccmon-status.json"),
-      JSON.stringify(existing),
+    await appendFile(
+      join(tmpDir, STATUS_LOG_FILE),
+      `${JSON.stringify(existing)}\n`,
     );
 
     await writeNotificationStatus(tmpDir, "Idle notification", "idle_prompt");
 
-    const result = await readStatus(tmpDir);
-    expect(result?.notificationMessage).toBe("Idle notification");
-    expect(result?.notificationTimestamp).toBeDefined();
+    const events = await readStatusLog(tmpDir);
+    expect(events).toHaveLength(2);
+    expect(events[1].notificationMessage).toBe("Idle notification");
   });
 
-  test("R26.1: no existing status file — writes with state stopped", async () => {
+  test("R26.1: no existing status file — appends Notification event", async () => {
     await writeNotificationStatus(tmpDir, "Hello", "auth_success");
 
-    const result = await readStatus(tmpDir);
-    expect(result).not.toBeNull();
-    expect(result?.state).toBe("stopped");
-    expect(result?.notificationMessage).toBe("Hello");
-    expect(result?.notificationTimestamp).toBeDefined();
+    const events = await readStatusLog(tmpDir);
+    expect(events).toHaveLength(1);
+    expect(events[0].event).toBe("Notification");
+    expect(events[0].notificationMessage).toBe("Hello");
   });
 });
 
@@ -1727,16 +1852,19 @@ describe("session enrichment", () => {
       JSON.stringify({ version: 1, entries: [entry] }),
     );
 
-    // Status file with fresh running state
-    await writeFile(
-      join(projDir, "ccmon-status.json"),
-      JSON.stringify({
-        state: "running",
-        timestamp: new Date().toISOString(),
-        session_id: sessionId,
-        working_dir: "/home/user/r29-proj",
-      }),
-    );
+    // Status log with fresh running event
+    const runningEvent: StatusEvent = {
+      event: "PostToolUse",
+      state: "running",
+      timestamp: new Date().toISOString(),
+      session_id: sessionId,
+      working_dir: "/home/user/r29-proj",
+    };
+    const statusLogPath = join(projDir, STATUS_LOG_FILE);
+    await appendFile(statusLogPath, `${JSON.stringify(runningEvent)}\n`);
+    // Backdate status log so findLatestJSONL selects the session JSONL
+    const past = new Date(Date.now() - 5000);
+    utimesSync(statusLogPath, past, past);
 
     const results = await getProjectState(tmpDir);
     const proj = results.find((p) => p.projectName === "r29-proj");
@@ -1797,16 +1925,19 @@ describe("session enrichment", () => {
       JSON.stringify({ version: 1, entries: [indexEntry] }),
     );
 
-    // Explicitly stopped state (stale timestamp so liveness check doesn't matter)
-    await writeFile(
-      join(projDir, "ccmon-status.json"),
-      JSON.stringify({
-        state: "stopped",
-        timestamp: new Date().toISOString(),
-        session_id: sessionId,
-        working_dir: "/home/user/r41-stopped",
-      }),
-    );
+    // Explicitly stopped state via event log
+    const stopEvent: StatusEvent = {
+      event: "Stop",
+      state: "stopped",
+      timestamp: new Date().toISOString(),
+      session_id: sessionId,
+      working_dir: "/home/user/r41-stopped",
+    };
+    const statusLogPath = join(projDir, STATUS_LOG_FILE);
+    await appendFile(statusLogPath, `${JSON.stringify(stopEvent)}\n`);
+    // Backdate status log so findLatestJSONL selects the session JSONL
+    const past = new Date(Date.now() - 5000);
+    utimesSync(statusLogPath, past, past);
 
     const results = await getProjectState(tmpDir);
     const proj = results.find((p) => p.projectName === "r41-stopped");
@@ -1990,17 +2121,19 @@ describe("getProjectState targeted refresh (R20.5)", () => {
     const first = await getProjectState(tmpDir);
     expect(first).toHaveLength(2);
 
-    // Write a new JSONL for project B to change its session ID via a new project file
-    // (update the status to see state change — simplest observable diff)
-    await writeFile(
-      join(dirB, "ccmon-status.json"),
-      JSON.stringify({
-        state: "stopped",
-        timestamp: new Date().toISOString(),
-        session_id: "sid-b",
-        working_dir: "/home/user/b",
-      }),
-    );
+    // Write a status event for project B to see state change — simplest observable diff
+    const event: StatusEvent = {
+      event: "Stop",
+      state: "stopped",
+      timestamp: new Date().toISOString(),
+      session_id: "sid-b",
+      working_dir: "/home/user/b",
+    };
+    const statusLogPath = join(dirB, STATUS_LOG_FILE);
+    await appendFile(statusLogPath, `${JSON.stringify(event)}\n`);
+    // Backdate status log so findLatestJSONL selects the session JSONL
+    const past = new Date(Date.now() - 5000);
+    utimesSync(statusLogPath, past, past);
 
     // Targeted rescan of only project B
     const second = await getProjectState(tmpDir, dirB);
@@ -3108,17 +3241,18 @@ describe("readSessionTail line boundary edge case (R27)", () => {
   });
 });
 
-// ─── resolveState (R34) ───────────────────────────────────────────────────────
+// ─── resolveState ─────────────────────────────────────────────────────────────
 
-describe("resolveState (R34)", () => {
+describe("resolveState", () => {
   const now = Date.now();
 
-  // Helpers to build minimal StatusFile fixtures
-  function makeStatus(
-    state: StatusFile["state"],
-    timestampMs: number,
-  ): StatusFile {
+  function evt(
+    event: string,
+    state: StatusEvent["state"],
+    timestampMs = now - 10_000,
+  ): StatusEvent {
     return {
+      event,
       state,
       timestamp: new Date(timestampMs).toISOString(),
       session_id: "sess",
@@ -3126,164 +3260,120 @@ describe("resolveState (R34)", () => {
     };
   }
 
-  const freshPermission = makeStatus("waiting_for_permission", now - 10_000); // 10s ago
-  const stalePermission = makeStatus(
-    "waiting_for_permission",
-    now - 10 * 60 * 1000,
-  ); // 10min ago
-  const freshStopped = makeStatus("stopped", now - 10_000); // 10s ago
   const freshJsonl = now - 10_000; // 10s ago = within 60s
   const staleJsonl = now - 90_000; // 90s ago = outside 60s
 
-  test("P1: fresh waiting_for_permission status → waiting_for_permission", () => {
-    expect(resolveState(null, freshPermission)).toBe("waiting_for_permission");
+  test("empty events + null JSONL → stopped", () => {
+    expect(resolveState(null, [])).toBe("stopped");
   });
 
-  test("P1: stale waiting_for_permission status (> 5min) → falls through to stopped", () => {
-    // Stale permission signal is not honored; no JSONL mtime or stopped fallback
-    expect(resolveState(null, stalePermission)).toBe("stopped");
+  test("PermissionRequest as last event, fresh → waiting_for_permission", () => {
+    const events = [evt("PermissionRequest", "waiting_for_permission")];
+    expect(resolveState(null, events)).toBe("waiting_for_permission");
   });
 
-  test("P1: waiting_for_permission with NaN timestamp → falls through to stopped", () => {
-    const nanStatus: StatusFile = {
-      ...freshPermission,
+  test("KEY RACE: PermissionRequest followed by PostToolUse(s) → still waiting_for_permission", () => {
+    // Concurrent sub-agents fire PostToolUse while main session waits for permission.
+    // PostToolUse does NOT resolve permission.
+    const events = [
+      evt("PermissionRequest", "waiting_for_permission", now - 5_000),
+      evt("PostToolUse", "running", now - 3_000),
+      evt("PostToolUse", "running", now - 1_000),
+    ];
+    expect(resolveState(null, events)).toBe("waiting_for_permission");
+  });
+
+  test("PermissionRequest followed by UserPromptSubmit → running (permission resolved)", () => {
+    const events = [
+      evt("PermissionRequest", "waiting_for_permission", now - 10_000),
+      evt("UserPromptSubmit", "running", now - 5_000),
+    ];
+    expect(resolveState(null, events)).toBe("running");
+  });
+
+  test("PermissionRequest followed by Stop → stopped (permission resolved)", () => {
+    const events = [
+      evt("PermissionRequest", "waiting_for_permission", now - 10_000),
+      evt("Stop", "stopped", now - 5_000),
+    ];
+    expect(resolveState(null, events)).toBe("stopped");
+  });
+
+  test("stale PermissionRequest (> 5min) → falls through", () => {
+    const events = [
+      evt("PermissionRequest", "waiting_for_permission", now - 10 * 60_000),
+    ];
+    expect(resolveState(null, events)).toBe("stopped");
+  });
+
+  test("PermissionRequest with NaN timestamp → falls through to stopped", () => {
+    const nanEvent: StatusEvent = {
+      ...evt("PermissionRequest", "waiting_for_permission"),
       timestamp: "not-a-date",
     };
-    expect(resolveState(null, nanStatus)).toBe("stopped");
+    expect(resolveState(null, [nanEvent])).toBe("stopped");
   });
 
-  test("P2: fresh JSONL mtime, no status → running", () => {
-    expect(resolveState(freshJsonl, null)).toBe("running");
+  test("Stop as last event → stopped", () => {
+    const events = [
+      evt("PostToolUse", "running", now - 20_000),
+      evt("Stop", "stopped", now - 5_000),
+    ];
+    expect(resolveState(null, events)).toBe("stopped");
   });
 
-  test("P2: fresh JSONL mtime, status is not stopped → running", () => {
-    // Any non-stopped state that is not waiting_for_permission (or stale) defers to JSONL
-    const runningStatus = makeStatus(
-      "running" as StatusFile["state"],
-      now - 10_000,
-    );
-    expect(resolveState(freshJsonl, runningStatus)).toBe("running");
+  test("SessionEnd as last event → stopped", () => {
+    const events = [evt("SessionEnd", "stopped", now - 5_000)];
+    expect(resolveState(null, events)).toBe("stopped");
   });
 
-  test("P2: fresh JSONL mtime, status stopped but JSONL is much newer (>5s grace) → running (activity resumed)", () => {
-    // JSONL mtime (now - 10s) is 20s after stopped timestamp (now - 30s): activity resumed
-    const stoppedEarlier = makeStatus("stopped", now - 30_000);
-    expect(resolveState(freshJsonl, stoppedEarlier)).toBe("running");
+  test("PostToolUse as last event, fresh → running", () => {
+    const events = [evt("PostToolUse", "running", now - 5_000)];
+    expect(resolveState(null, events)).toBe("running");
   });
 
-  test("P2+P3: fresh JSONL mtime, status stopped, JSONL only slightly newer (within 5s grace) → stopped", () => {
-    // Claude writes a system entry ~8ms after Stop hook fires; the tiny gap must not
-    // keep the session showing as running for 60s.
-    const stoppedJustNow = makeStatus("stopped", now - 100); // stopped 100ms ago
-    const jsonlSlightlyNewer = now - 100 + 8; // JSONL 8ms after stop
-    expect(resolveState(jsonlSlightlyNewer, stoppedJustNow)).toBe("stopped");
+  test("UserPromptSubmit as last event, fresh → running", () => {
+    const events = [evt("UserPromptSubmit", "running", now - 5_000)];
+    expect(resolveState(null, events)).toBe("running");
   });
 
-  test("P2+P3: fresh JSONL mtime, status stopped and stopped is newer than JSONL → stopped", () => {
-    // stopped timestamp (now - 5s) is after JSONL mtime (now - 30s): stop wins
-    const jsonlBeforeStop = now - 30_000;
-    const stoppedAfter = makeStatus("stopped", now - 5_000);
-    expect(resolveState(jsonlBeforeStop, stoppedAfter)).toBe("stopped");
+  test("PostToolUse as last event, stale → falls to JSONL fallback", () => {
+    const events = [evt("PostToolUse", "running", now - 90_000)];
+    // No JSONL → stopped
+    expect(resolveState(null, events)).toBe("stopped");
+    // Fresh JSONL → running via fallback
+    expect(resolveState(freshJsonl, events)).toBe("running");
   });
 
-  test("P2: fresh JSONL mtime, status stopped with NaN timestamp → running (NaN treated as JSONL newer)", () => {
-    // NaN stopped timestamp cannot establish order; JSONL mtime wins
-    const nanStopped: StatusFile = { ...freshStopped, timestamp: "not-a-date" };
-    expect(resolveState(freshJsonl, nanStopped)).toBe("running");
+  test("no events, fresh JSONL → running (fallback)", () => {
+    expect(resolveState(freshJsonl, [])).toBe("running");
   });
 
-  test("P3: stale JSONL mtime, status stopped → stopped", () => {
-    expect(resolveState(staleJsonl, freshStopped)).toBe("stopped");
+  test("no events, stale JSONL → stopped", () => {
+    expect(resolveState(staleJsonl, [])).toBe("stopped");
   });
 
-  test("P4: null JSONL mtime, null status → stopped", () => {
-    expect(resolveState(null, null)).toBe("stopped");
+  test("Notification and SubagentStop events are filtered out (non-state-bearing)", () => {
+    const events = [
+      evt("PermissionRequest", "waiting_for_permission", now - 5_000),
+      {
+        ...evt("Notification", "stopped", now - 3_000),
+        notificationMessage: "msg",
+      },
+      evt("SubagentStop", "stopped", now - 1_000),
+    ];
+    // Notification and SubagentStop are filtered; PermissionRequest still unresolved
+    expect(resolveState(null, events)).toBe("waiting_for_permission");
   });
 
-  test("P4: stale JSONL mtime, no status → stopped", () => {
-    expect(resolveState(staleJsonl, null)).toBe("stopped");
-  });
-
-  test("P1/Bug2: fresh waiting_for_permission but JSONL mtime newer than permission timestamp → running", () => {
-    // Simulates user answering a permission request: Claude resumes and writes to JSONL,
-    // making JSONL mtime clearly newer than the permission signal.
-    const permissionTs = now - 30_000; // permission 30s ago
-    const freshPermissionStatus = makeStatus(
-      "waiting_for_permission",
-      permissionTs,
-    );
-    // JSONL written 20s after permission (10s ago), well beyond STOP_GRACE_MS (5s)
-    const jsonlAfterPermission = now - 10_000;
-    expect(resolveState(jsonlAfterPermission, freshPermissionStatus)).toBe(
-      "running",
-    );
-  });
-
-  test("P1/Bug2: fresh waiting_for_permission with JSONL mtime older than permission timestamp → waiting_for_permission", () => {
-    // JSONL predates the permission request — Claude has not yet responded to the prompt.
-    const permissionTs = now - 10_000; // permission 10s ago
-    const freshPermissionStatus = makeStatus(
-      "waiting_for_permission",
-      permissionTs,
-    );
-    const jsonlBeforePermission = now - 60_000; // JSONL written 60s ago (before permission)
-    expect(resolveState(jsonlBeforePermission, freshPermissionStatus)).toBe(
-      "waiting_for_permission",
-    );
-  });
-
-  test("P1/Bug2: fresh waiting_for_permission with null JSONL mtime → waiting_for_permission", () => {
-    // No JSONL at all — permission must be honored.
-    expect(resolveState(null, freshPermission)).toBe("waiting_for_permission");
-  });
-
-  test("P1/Bug2: fresh waiting_for_permission with JSONL mtime within grace period of permission → waiting_for_permission", () => {
-    // JSONL written 2s after permission — within STOP_GRACE_MS (5s), so permission still wins.
-    const permissionTs = now - 20_000;
-    const freshPermissionStatus = makeStatus(
-      "waiting_for_permission",
-      permissionTs,
-    );
-    const jsonlWithinGrace = permissionTs + 2_000; // 2s after permission, within 5s grace
-    expect(resolveState(jsonlWithinGrace, freshPermissionStatus)).toBe(
-      "waiting_for_permission",
-    );
-  });
-
-  test("P2/hook-running: fresh running status (< 30s), no stopped signal → running", () => {
-    const freshRunning = makeStatus("running", now - 5_000); // 5s ago
-    expect(resolveState(null, freshRunning)).toBe("running");
-  });
-
-  test("P2/hook-running: fresh running status + stopped signal newer than running → stopped", () => {
-    const runningTs = now - 20_000; // running 20s ago
-    const _freshRunning = makeStatus("running", runningTs);
-    // stopped signal fired 10s ago, after the running hook
-    const stoppedNewer = makeStatus("stopped", now - 10_000);
-    // resolveState only reads status once, so we need to test the priority ordering
-    // by passing the stopped status (stopped overrides running hook when newer)
-    expect(resolveState(null, stoppedNewer)).toBe("stopped");
-  });
-
-  test("P2/hook-running: stale running status (> 30s) → falls through to JSONL/default", () => {
-    const staleRunning = makeStatus("running", now - 35_000); // 35s ago, beyond 30s TTL
-    expect(resolveState(null, staleRunning)).toBe("stopped");
-  });
-
-  test("P2/hook-running: fresh running status, but stopped signal is older → running wins", () => {
-    const _stoppedOlder = makeStatus("stopped", now - 60_000); // stopped 60s ago
-    const runningNewer = makeStatus("running", now - 5_000); // running hook 5s ago (after stop)
-    // running hook is newer than stopped → should return running
-    // but resolveState only takes one status; simulate by verifying running-status path
-    // when stoppedAtMs would be null (no stopped status):
-    expect(resolveState(null, runningNewer)).toBe("running");
-  });
-
-  test("P1/P2: fresh waiting_for_permission newer than fresh running hook → waiting_for_permission", () => {
-    // permission fires after the running hook; permission takes priority when it's fresh
-    const permissionStatus = makeStatus("waiting_for_permission", now - 5_000);
-    // No JSONL newer than permission
-    expect(resolveState(null, permissionStatus)).toBe("waiting_for_permission");
+  test("multiple state-bearing events: latest wins", () => {
+    const events = [
+      evt("PermissionRequest", "waiting_for_permission", now - 30_000),
+      evt("UserPromptSubmit", "running", now - 20_000),
+      evt("PostToolUse", "running", now - 5_000),
+    ];
+    // PermissionRequest resolved by UserPromptSubmit; latest is fresh PostToolUse → running
+    expect(resolveState(null, events)).toBe("running");
   });
 });
 

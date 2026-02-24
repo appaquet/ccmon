@@ -1,25 +1,22 @@
 import type { Dirent } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { appendFile, readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-// Staleness window for waiting_for_permission signals from status.local.json.
+// Staleness window for waiting_for_permission signals.
 const PERMISSION_STALE_MS = 5 * 60 * 1000;
 
 // JSONL mtime threshold: files written within this window indicate active session.
 // Claude writes continuously during turns so 60s covers any lag.
 const JSONL_ACTIVE_THRESHOLD_MS = 60_000;
 
-// Grace period for the JSONL-vs-stopped comparison. Claude writes a system entry to
-// JSONL ~8ms after the Stop hook fires, making the JSONL mtime slightly newer than
-// the stopped timestamp. Treating a gap smaller than this as "activity resumed"
-// would keep the session showing as running for JSONL_ACTIVE_THRESHOLD_MS.
-const STOP_GRACE_MS = 5_000;
-
-// TTL for the hook-based running signal (UserPromptSubmit / PostToolUse).
-// JSONL mtime takes over naturally within this window as Claude writes.
-const RUNNING_HOOK_TTL_MS = 30_000;
-
 const JSONL_EXT = ".jsonl";
+
+export const STATUS_LOG_FILE = "ccmon-status.jsonl";
+export const STATUS_FILE_LEGACY = "ccmon-status.json";
+export const MAX_STATUS_LOG_BYTES = 64 * 1024;
+
+// Bytes to keep when trimming the status log after it exceeds MAX_STATUS_LOG_BYTES.
+const STATUS_LOG_TAIL_BYTES = 8 * 1024;
 
 // Maximum bytes to read on first access for large files (10 MB).
 const MAX_FIRST_READ = 10 * 1024 * 1024;
@@ -27,6 +24,10 @@ const MAX_FIRST_READ = 10 * 1024 * 1024;
 // Sub-agents write continuously while active; 45s covers any lag without
 // counting finished agents as still running.
 const SUBAGENT_ACTIVE_THRESHOLD_MS = 45 * 1000;
+
+// Grace period for sub-agent stopped detection: JSONL mtime slightly newer
+// than the stopped timestamp is expected (Claude writes a system entry after Stop).
+const SUBAGENT_STOP_GRACE_MS = 5_000;
 
 // Completed sub-agents are excluded from the payload after this duration
 // to keep the state map lean.
@@ -141,21 +142,32 @@ export interface SessionTailInfo extends SessionEnrichment {
   agentDescriptions: Map<string, string>;
 }
 
-export interface StatusFile {
+export interface StatusEvent {
+  event: string;
   state: SessionState;
   timestamp: string; // ISO 8601
   session_id: string;
   working_dir: string;
-  notificationMessage?: string; // set by Notification hook events
-  notificationTimestamp?: string; // ISO 8601, updated on each notification
-  lastSubagentStoppedAt?: string; // ISO 8601, updated by SubagentStop hook
+  notificationMessage?: string;
+  notificationTimestamp?: string;
+}
+
+// Legacy single-object format for migration from ccmon-status.json.
+interface StatusFileLegacy {
+  state: SessionState;
+  timestamp: string;
+  session_id: string;
+  working_dir: string;
+  notificationMessage?: string;
+  notificationTimestamp?: string;
+  lastSubagentStoppedAt?: string;
 }
 
 export interface ProjectState extends ProjectInfo, SessionEnrichment {
   state: SessionState;
   lastUpdated: string | null; // from status file timestamp, null if no status
-  notificationMessage?: string; // forwarded from StatusFile when present
-  notificationTimestamp?: string; // forwarded from StatusFile when present
+  notificationMessage?: string; // from latest Notification event
+  notificationTimestamp?: string; // from latest Notification event
   subagents?: SubagentInfo[];
   // Convenience count of active sub-agents; kept alongside subagents[] so clients
   // that don't parse the full array (e.g. simple status bars) can read a single field.
@@ -262,59 +274,80 @@ export function mapHookEventToState(hookEvent: string): SessionState | null {
 }
 
 /**
- * Handles a Notification hook event by merging notificationMessage and
- * notificationTimestamp into the existing status file without altering state.
+ * Handles a Notification hook event by appending a StatusEvent with
+ * notificationMessage and notificationTimestamp.
  *
  * Suppresses the write when notification_type is 'permission_prompt' and the
- * current state is already 'waiting_for_permission' to avoid duplicate signals.
- * When no status file exists, writes a new one with state 'stopped'.
+ * current resolved state is already 'waiting_for_permission' to avoid duplicate signals.
  */
 export async function writeNotificationStatus(
   projectDirPath: string,
   message: string,
   notificationType: string,
 ): Promise<void> {
-  const existing = await readStatus(projectDirPath);
-
   // Suppress: permission_prompt while already waiting_for_permission
-  if (
-    notificationType === "permission_prompt" &&
-    existing?.state === "waiting_for_permission"
-  ) {
-    return;
+  if (notificationType === "permission_prompt") {
+    const events = await readStatusLog(projectDirPath);
+    const currentState = resolveState(null, events);
+    if (currentState === "waiting_for_permission") return;
   }
 
-  const base: StatusFile = existing ?? {
+  const event: StatusEvent = {
+    event: "Notification",
     state: "stopped",
     timestamp: new Date().toISOString(),
     session_id: "",
     working_dir: "",
-  };
-
-  const updated: StatusFile = {
-    ...base,
     notificationMessage: message,
     notificationTimestamp: new Date().toISOString(),
   };
 
-  await writeStatus(projectDirPath, updated);
+  await writeStatusEvent(projectDirPath, event);
 }
 
 /**
- * Writes a StatusFile as JSON to {projectDirPath}/ccmon-status.json.
+ * Appends a single StatusEvent as an NDJSON line to {projectDirPath}/ccmon-status.jsonl.
+ * After appending, trims the file to the last STATUS_LOG_TAIL_BYTES if it exceeds MAX_STATUS_LOG_BYTES.
  */
-export async function writeStatus(
+export async function writeStatusEvent(
   projectDirPath: string,
-  status: StatusFile,
+  event: StatusEvent,
 ): Promise<void> {
-  const statusPath = join(projectDirPath, "ccmon-status.json");
-  await Bun.write(statusPath, JSON.stringify(status));
+  const logPath = join(projectDirPath, STATUS_LOG_FILE);
+  await appendFile(logPath, `${JSON.stringify(event)}\n`);
+
+  // Safety cap: trim to last 8KB when file exceeds 64KB.
+  try {
+    const s = await stat(logPath);
+    if (s.size > MAX_STATUS_LOG_BYTES) {
+      const file = Bun.file(logPath);
+      const tail = await file.slice(-STATUS_LOG_TAIL_BYTES).text();
+      // Drop partial first line after slicing mid-file.
+      const firstNewline = tail.indexOf("\n");
+      const trimmed = firstNewline >= 0 ? tail.slice(firstNewline + 1) : tail;
+      await Bun.write(logPath, trimmed);
+    }
+  } catch {
+    // stat or trim failed — not critical, the append already succeeded.
+  }
+}
+
+/**
+ * Overwrites {projectDirPath}/ccmon-status.jsonl with a single StatusEvent line.
+ * Used by SessionEnd to reset the log for the next session.
+ */
+export async function writeStatusTruncate(
+  projectDirPath: string,
+  event: StatusEvent,
+): Promise<void> {
+  const logPath = join(projectDirPath, STATUS_LOG_FILE);
+  await Bun.write(logPath, `${JSON.stringify(event)}\n`);
 }
 
 /**
  * Writes a stopped status to the per-sub-agent ccmon-status.json at agentStatusPath,
- * then updates the session-level ccmon-status.json with lastSubagentStoppedAt to
- * trigger the file watcher and cause a rescan.
+ * then appends a SubagentStop event to the session-level log to trigger the file
+ * watcher and cause a rescan.
  */
 export async function writeSubagentStatus(
   agentStatusPath: string,
@@ -325,13 +358,14 @@ export async function writeSubagentStatus(
     JSON.stringify({ state: "stopped", timestamp: new Date().toISOString() }),
   );
 
-  const existing = await readStatus(projectDirPath);
-  if (existing !== null) {
-    await writeStatus(projectDirPath, {
-      ...existing,
-      lastSubagentStoppedAt: new Date().toISOString(),
-    });
-  }
+  const event: StatusEvent = {
+    event: "SubagentStop",
+    state: "stopped",
+    timestamp: new Date().toISOString(),
+    session_id: "",
+    working_dir: "",
+  };
+  await writeStatusEvent(projectDirPath, event);
 }
 
 /**
@@ -364,29 +398,83 @@ export async function scanProjects(
 }
 
 /**
- * Reads and validates ccmon-status.json from projectDir.
- * Returns null if the file is missing, corrupt, or has an unknown state.
+ * Reads the status event log from {projectDir}/ccmon-status.jsonl.
+ * Returns events in chronological order (oldest first).
+ *
+ * Only reads the last STATUS_LOG_TAIL_BYTES of the file to bound I/O.
+ * Falls back to legacy ccmon-status.json if the .jsonl file is absent.
  */
-export async function readStatus(
+export async function readStatusLog(
   projectDir: string,
-): Promise<StatusFile | null> {
-  const statusPath = join(projectDir, "ccmon-status.json");
-  let raw: string;
+): Promise<StatusEvent[]> {
+  const logPath = join(projectDir, STATUS_LOG_FILE);
+
+  let raw: string | null = null;
+  let slicedMidFile = false;
   try {
-    raw = await Bun.file(statusPath).text();
+    const file = Bun.file(logPath);
+    const size = file.size;
+    if (size > STATUS_LOG_TAIL_BYTES) {
+      raw = await file.slice(-STATUS_LOG_TAIL_BYTES).text();
+      slicedMidFile = true;
+    } else {
+      raw = await file.text();
+    }
   } catch {
-    return null;
+    // .jsonl absent — try legacy .json fallback
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
+  if (raw !== null) {
+    return parseStatusLines(raw, slicedMidFile);
   }
 
-  if (!isStatusFile(parsed)) return null;
-  return parsed;
+  // Migration fallback: read legacy ccmon-status.json and convert.
+  const legacyPath = join(projectDir, STATUS_FILE_LEGACY);
+  try {
+    const legacyRaw = await Bun.file(legacyPath).text();
+    const parsed = JSON.parse(legacyRaw);
+    if (isStatusFileLegacy(parsed)) {
+      const event: StatusEvent = {
+        event: "Stop",
+        state: parsed.state,
+        timestamp: parsed.timestamp,
+        session_id: parsed.session_id,
+        working_dir: parsed.working_dir,
+      };
+      if (parsed.notificationMessage !== undefined) {
+        event.notificationMessage = parsed.notificationMessage;
+      }
+      if (parsed.notificationTimestamp !== undefined) {
+        event.notificationTimestamp = parsed.notificationTimestamp;
+      }
+      return [event];
+    }
+  } catch {
+    // Legacy file absent or corrupt — return empty.
+  }
+
+  return [];
+}
+
+/**
+ * Parses NDJSON lines into StatusEvent[], skipping corrupt lines.
+ * When slicedMidFile is true, the first line is discarded (may be partial).
+ */
+function parseStatusLines(raw: string, slicedMidFile: boolean): StatusEvent[] {
+  const lines = raw.split("\n").filter((l) => l.trim() !== "");
+  const startIdx = slicedMidFile && lines.length > 0 ? 1 : 0;
+  const events: StatusEvent[] = [];
+  for (let i = startIdx; i < lines.length; i++) {
+    try {
+      const parsed = JSON.parse(lines[i]);
+      if (isStatusEvent(parsed)) {
+        events.push(parsed);
+      }
+    } catch {
+      // Skip corrupt lines.
+    }
+  }
+  return events;
 }
 
 /**
@@ -506,7 +594,7 @@ export async function getSubagentInfos(
         : nameWithout;
 
       const stoppedRecently =
-        stoppedAtMs !== null && mtimeMs <= stoppedAtMs + STOP_GRACE_MS;
+        stoppedAtMs !== null && mtimeMs <= stoppedAtMs + SUBAGENT_STOP_GRACE_MS;
       let isActive = !stoppedRecently && mtimeMs > cutoff;
 
       // A per-agent ccmon-status.json with state "stopped" overrides mtime-based detection.
@@ -1102,7 +1190,7 @@ async function buildProjectState(
   claudeDir: string,
 ): Promise<ProjectState> {
   const projectDirPath = join(claudeDir, project.projectDir);
-  const status = await readStatus(projectDirPath);
+  const events = await readStatusLog(projectDirPath);
 
   // Stat the JSONL once: provides both the mtime for state resolution and the
   // lastUpdated fallback without a redundant second stat call.
@@ -1114,41 +1202,62 @@ async function buildProjectState(
     // JSONL disappeared or unreadable — leave null
   }
 
-  const state = resolveState(jsonlMtimeMs, status);
+  const state = resolveState(jsonlMtimeMs, events);
 
-  // JSONL mtime is the authoritative recency signal; status timestamp only used as
-  // fallback when no JSONL mtime is available.
+  // JSONL mtime is the authoritative recency signal; status event timestamps only
+  // used as fallback when no JSONL mtime is available.
+  const latestEventTs =
+    events.length > 0 ? events[events.length - 1].timestamp : null;
   const lastUpdated: string | null =
     jsonlMtimeMs !== null
       ? new Date(jsonlMtimeMs).toISOString()
-      : (status?.timestamp ?? null);
+      : latestEventTs;
 
   const base: ProjectState = { ...project, state, lastUpdated };
 
   // Fetch enrichment for all states so stopped sessions still show messages/tokens/tasks.
   // Sub-agents are only relevant for active sessions.
   const tail = await readSessionTail(project.latestJSONL);
-  const stoppedAtMs =
-    status?.state === "stopped" ? new Date(status.timestamp).getTime() : null;
+
+  // Extract stoppedAtMs from latest Stop/SessionEnd event.
+  let stoppedAtMs: number | null = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.event === "Stop" || e.event === "SessionEnd") {
+      stoppedAtMs = new Date(e.timestamp).getTime();
+      break;
+    }
+  }
+
   const subagents =
     state !== "stopped"
       ? await getSubagentInfos(project.latestJSONL, stoppedAtMs)
       : [];
   const subagentCount = subagents.filter((s) => s.isActive).length;
+
+  // Extract notification fields from latest event that has notificationMessage.
+  let notificationMessage: string | undefined;
+  let notificationTimestamp: string | undefined;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.notificationMessage !== undefined) {
+      notificationMessage = e.notificationMessage;
+      notificationTimestamp = e.notificationTimestamp;
+      break;
+    }
+  }
+
   return {
     ...base,
     latestUserActivity: tail.latestUserActivity,
     latestAssistantActivity: tail.latestAssistantActivity,
     model: tail.model,
-    // tail.tasks (the full TaskInfo[]) is intentionally not forwarded here.
-    // All current consumers (dump, serve, sub) display only the tasksDone/tasksTotal
-    // counts; the structured array is not part of the public ProjectState contract.
     tasksDone: tail.tasksDone,
     tasksTotal: tail.tasksTotal,
     inputTokens: tail.inputTokens,
     outputTokens: tail.outputTokens,
-    notificationMessage: status?.notificationMessage,
-    notificationTimestamp: status?.notificationTimestamp,
+    notificationMessage,
+    notificationTimestamp,
     subagents: subagents.length > 0 ? subagents : undefined,
     subagentCount: subagentCount > 0 ? subagentCount : undefined,
     gitBranch: project.gitBranch,
@@ -1244,6 +1353,7 @@ async function findLatestJSONL(dirPath: string): Promise<string | null> {
 
   for (const entry of entries) {
     if (!entry.endsWith(JSONL_EXT)) continue;
+    if (entry === STATUS_LOG_FILE) continue;
     const fullPath = join(dirPath, entry);
     try {
       const s = await stat(fullPath);
@@ -1269,86 +1379,91 @@ async function readFirstLine(filePath: string): Promise<string | null> {
   }
 }
 
+/** Events that don't carry session state (excluded from state resolution). */
+const NON_STATE_EVENTS = new Set(["Notification", "SubagentStop"]);
+
+/** Events that resolve an outstanding PermissionRequest. */
+const PERMISSION_RESOLVERS = new Set([
+  "Stop",
+  "SessionEnd",
+  "UserPromptSubmit",
+]);
+
 /**
- * Resolves session state using JSONL mtime as the primary running signal.
+ * Resolves session state from the status event log and JSONL mtime.
  *
  * Priority order:
- * 1. waiting_for_permission — status says so and signal is fresh (< 5 min)
- * 2. running (hook) — status is 'running' from UserPromptSubmit/PostToolUse, within 30s TTL,
- *    and no stopped signal newer than the running timestamp
- * 3. running (JSONL) — JSONL was written within 60s AND (no stopped signal OR JSONL is newer
- *    than the stopped timestamp, meaning activity resumed after stop was recorded)
- * 4. stopped — explicit stopped signal from status file (Stop/SessionEnd hook)
- * 5. stopped — default (stale JSONL, no status, or any other case)
+ * 1. Unresolved PermissionRequest (not followed by Stop/SessionEnd/UserPromptSubmit,
+ *    fresh < PERMISSION_STALE_MS) → waiting_for_permission
+ * 2. Latest state-bearing event is Stop/SessionEnd → stopped
+ * 3. Latest state-bearing event is PostToolUse/UserPromptSubmit within JSONL_ACTIVE_THRESHOLD_MS → running
+ * 4. JSONL mtime within JSONL_ACTIVE_THRESHOLD_MS → running
+ * 5. Default → stopped
  *
  * Exported for unit testing only.
  */
 export function resolveState(
   jsonlMtimeMs: number | null,
-  status: StatusFile | null,
+  events: StatusEvent[],
 ): SessionState {
-  const stoppedAtMs =
-    status?.state === "stopped" ? new Date(status.timestamp).getTime() : null;
+  // Filter to state-bearing events only.
+  const stateful = events.filter((e) => !NON_STATE_EVENTS.has(e.event));
 
-  // Priority 1: permission request wins when the signal is fresh — unless JSONL has been
-  // written after the permission timestamp (+ grace), which means the user answered and
-  // Claude resumed. In that case fall through to Priority 2.
-  if (status?.state === "waiting_for_permission") {
-    const age = Date.now() - new Date(status.timestamp).getTime();
-    // Unparseable timestamp (NaN) treated as stale.
-    if (!Number.isNaN(age) && age < PERMISSION_STALE_MS) {
-      const permissionAtMs = new Date(status.timestamp).getTime();
-      if (
-        jsonlMtimeMs === null ||
-        jsonlMtimeMs <= permissionAtMs + STOP_GRACE_MS
-      ) {
+  // Priority 1: scan backward for unresolved PermissionRequest.
+  // PostToolUse does NOT resolve permission — concurrent sub-agents fire PostToolUse
+  // while the main session is waiting for permission.
+  for (let i = stateful.length - 1; i >= 0; i--) {
+    const e = stateful[i];
+    if (PERMISSION_RESOLVERS.has(e.event)) break;
+    if (e.event === "PermissionRequest") {
+      const age = Date.now() - new Date(e.timestamp).getTime();
+      if (!Number.isNaN(age) && age < PERMISSION_STALE_MS) {
         return "waiting_for_permission";
       }
-      // Fall through: JSONL newer than permission signal → activity resumed.
+      break;
     }
   }
 
-  // Priority 2: hook-based running signal (UserPromptSubmit / PostToolUse).
-  // Gives immediate running state before JSONL mtime catches up (e.g. slash commands).
-  if (status?.state === "running") {
-    const runningAtMs = new Date(status.timestamp).getTime();
-    const age = Date.now() - runningAtMs;
-    if (!Number.isNaN(age) && age < RUNNING_HOOK_TTL_MS) {
-      // Stopped signal newer than the running hook overrides it.
-      if (
-        stoppedAtMs === null ||
-        Number.isNaN(stoppedAtMs) ||
-        runningAtMs > stoppedAtMs
-      ) {
+  // Priority 2 & 3: check latest state-bearing event.
+  if (stateful.length > 0) {
+    const latest = stateful[stateful.length - 1];
+    if (latest.event === "Stop" || latest.event === "SessionEnd") {
+      return "stopped";
+    }
+    if (latest.event === "PostToolUse" || latest.event === "UserPromptSubmit") {
+      const age = Date.now() - new Date(latest.timestamp).getTime();
+      if (!Number.isNaN(age) && age < JSONL_ACTIVE_THRESHOLD_MS) {
         return "running";
       }
     }
   }
 
-  // Priority 3: fresh JSONL mtime signals active session.
+  // Priority 4: JSONL mtime fallback.
   if (
     jsonlMtimeMs !== null &&
     jsonlMtimeMs > Date.now() - JSONL_ACTIVE_THRESHOLD_MS
   ) {
-    if (status?.state !== "stopped") return "running";
-    // JSONL written after the stopped signal means activity resumed (e.g. new session start
-    // or prompt submitted after Stop hook fired). Only treat as running in that case.
-    if (
-      stoppedAtMs === null ||
-      Number.isNaN(stoppedAtMs) ||
-      jsonlMtimeMs > stoppedAtMs + STOP_GRACE_MS
-    )
-      return "running";
+    return "running";
   }
 
-  // Priority 4: explicit stopped signal from hook.
-  if (status?.state === "stopped") return "stopped";
-
-  // Priority 5: default — no fresh JSONL and no useful status.
+  // Priority 5: default.
   return "stopped";
 }
 
-function isStatusFile(v: unknown): v is StatusFile {
+export function isStatusEvent(v: unknown): v is StatusEvent {
+  if (typeof v !== "object" || v === null) return false;
+  const obj = v as Record<string, unknown>;
+  return (
+    typeof obj.event === "string" &&
+    typeof obj.state === "string" &&
+    VALID_STATES.has(obj.state) &&
+    typeof obj.timestamp === "string" &&
+    typeof obj.session_id === "string" &&
+    typeof obj.working_dir === "string"
+  );
+}
+
+function isStatusFileLegacy(v: unknown): v is StatusFileLegacy {
   if (typeof v !== "object" || v === null) return false;
   const obj = v as Record<string, unknown>;
   return (

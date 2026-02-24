@@ -6,9 +6,11 @@ import {
   filterStaleProjects,
   getProjectState,
   mapHookEventToState,
+  type StatusEvent,
   scanProjects,
   writeNotificationStatus,
-  writeStatus,
+  writeStatusEvent,
+  writeStatusTruncate,
   writeSubagentStatus,
 } from "./sessions";
 import { watchForChanges } from "./watcher";
@@ -255,13 +257,20 @@ async function runStatus(): Promise<void> {
     process.exit(0);
   }
 
+  const event: StatusEvent = {
+    event: hook_event_name,
+    state,
+    timestamp: new Date().toISOString(),
+    session_id,
+    working_dir: cwd,
+  };
+
   try {
-    await writeStatus(projectDir, {
-      state,
-      timestamp: new Date().toISOString(),
-      session_id,
-      working_dir: cwd,
-    });
+    if (hook_event_name === "SessionEnd") {
+      await writeStatusTruncate(projectDir, event);
+    } else {
+      await writeStatusEvent(projectDir, event);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`Error writing status: ${message}\n`);

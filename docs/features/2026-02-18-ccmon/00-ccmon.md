@@ -10,11 +10,13 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Inbox
 
-- [ ] Launching a command that has context: fork doesn't notify back when it's done
+- [ ] Seems like whne losing connection to backend, frontend doesn't come back with right state
+  sometimes? I had project not showing right state, while showing connected. But then refreshed the
+  page and it was fine.
 
 ## Checkpoint
 
-Phase 26 implemented: SubagentStop hook for immediate sub-agent completion detection + renamed `ccmon-status.json` → `ccmon-status.json`. 203 tests pass, lint + typecheck clean. Hook config updated in dotfiles/settings.json.
+Phase 27 implemented: Replaced single-write `ccmon-status.json` with append-only `ccmon-status.jsonl` event log. Fixes PermissionRequest race with concurrent sub-agents. Simplified resolveState (removed STOP_GRACE_MS, RUNNING_HOOK_TTL_MS). 202 tests pass, lint + typecheck clean. Also fixed findLatestJSONL to exclude status log files.
 
 ## Requirements
 
@@ -215,7 +217,7 @@ Phase 26 implemented: SubagentStop hook for immediate sub-agent completion detec
 - R58: 🔄 Same-named projects across backends are disambiguated with composite key and hostname prefix (Phase: Multi-Backend Naming)
   - R58.1: Card header shows `hostname:projectName` when the same `projectName` exists on multiple backends
 
-- R59: ⬜ Append-only NDJSON status event log replaces single-write status JSON (Phase: Append-Only Status Log)
+- R59: 🔄 Append-only NDJSON status event log replaces single-write status JSON (Phase: Append-Only Status Log)
   - R59.1: `ccmon-status.jsonl` — each hook event appends one JSON line; no overwrites except Stop/SessionEnd which truncate
   - R59.2: `resolveState()` scans event history; PermissionRequest resolved only by UserPromptSubmit/Stop/SessionEnd (not PostToolUse)
   - R59.3: JSONL mtime retained as pure fallback for broken-hooks scenario
@@ -393,7 +395,7 @@ Replace ASCII `>` / `<` message direction indicators with UTF-8 solid triangles 
 
 Add `SubagentStop` hook for immediate sub-agent completion detection (replaces 45s mtime polling). Rename `ccmon-status.json` → `ccmon-status.json`. Add per-sub-agent status files alongside JSONL.
 
-### ⬜ 27 Phase: Append-Only Status Log
+### 🔄 27 Phase: Append-Only Status Log
 
 [27-append-only-status](27-append-only-status.md)
 
@@ -414,14 +416,14 @@ Replace single-write `ccmon-status.json` with append-only `ccmon-status.jsonl` e
 - **.github/workflows/ci.yml**: GHA CI workflow — lint + typecheck + test on push and pull_request (Phase: GitHub Actions CI)
 - **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed (Phase: Backend, Review Fixes)
-- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatus()`, `checkLiveness()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatus()`, `filterStaleProjects()`; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback; `STOP_GRACE_MS` grace period in `resolveState()`; `scanTaskCreateUpdate` base tasks param for delta reads; `resolveState` permission override fix (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes)
+- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatusLog()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatusEvent()`, `writeStatusTruncate()`, `filterStaleProjects()`; `StatusEvent` type, append-only NDJSON status log, `resolveState()` with event-scan logic; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback; `findLatestJSONL` excludes status log files (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed (Phase: Session Detection, Review Fixes)
-- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner; `sub` parses new WS envelope with backward compat; `sub --host` flag; multi-line usage string (Phase: Session Detection, Backend, Review Fixes, Multi-Backend)
+- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner; `sub` parses new WS envelope with backward compat; `sub --host` flag; status builds StatusEvent and routes to writeStatusEvent/writeStatusTruncate (Phase: Session Detection, Backend, Review Fixes, Multi-Backend, Append-Only Status Log)
 - **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init; WS payload wrapped in `{ hostname, projects }` envelope; `Cache-Control: no-cache` on HTML response (Phase: Backend, Review Fixes, Multi-Backend)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
-- **tests/sessions.test.ts**: 198 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes)
+- **tests/sessions.test.ts**: 202 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log)
 - **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
-- **tests/cli.test.ts**: 18 tests for cli.ts — 4 new arg-validation cases, status, dump --watch, --project filter (Phase: Review Fixes)
+- **tests/cli.test.ts**: CLI tests — arg-validation, status NDJSON format, dump --watch, --project filter (Phase: Review Fixes, Append-Only Status Log)
 - **tests/config.test.ts**: Config loading tests; 22+ tests covering partial config, invalid types (Phase: Review Fixes 2)
 - **tests/server.test.ts**: 11 tests for server.ts — HTTP endpoints, WebSocket, WS envelope + hostname field (Phase: Backend, Multi-Backend)
 - **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)

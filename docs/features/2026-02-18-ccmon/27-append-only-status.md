@@ -16,7 +16,7 @@ Append-only NDJSON event log. Events are never overwritten, only appended. Reade
 
 ## Tasks
 
-- [ ] Define `StatusEvent` type and write functions (R59)
+- [x]Define `StatusEvent` type and write functions (R59)
   - `StatusEvent`: `{ event, state, timestamp, session_id, working_dir, notificationMessage?, notificationTimestamp? }`
   - `STATUS_LOG_FILE = "ccmon-status.jsonl"`, legacy fallback `"ccmon-status.json"`
   - `writeStatusEvent()`: append one NDJSON line via `appendFile`. Safety cap at 64KB (trim to last 8KB on write).
@@ -25,12 +25,12 @@ Append-only NDJSON event log. Events are never overwritten, only appended. Reade
   - Update `writeNotificationStatus()` to append notification event. Suppression logic (`permission_prompt` when already `waiting_for_permission`) now requires calling `readStatusLog()` to check current state before deciding to suppress.
   - Update `writeSubagentStatus()` to append SubagentStop event to session log (per-agent file unchanged). Drop `lastSubagentStoppedAt` field — the append itself modifies the file mtime which triggers the watcher.
 
-- [ ] Add `readStatusLog()` function (R59)
+- [x]Add `readStatusLog()` function (R59)
   - Read last 8KB of `ccmon-status.jsonl`, parse NDJSON lines into `StatusEvent[]`.
   - Migration fallback: if `.jsonl` absent, read `ccmon-status.json` and convert to single-element array.
   - Return events in chronological order.
 
-- [ ] Rewrite `resolveState()` (R59)
+- [x]Rewrite `resolveState()` (R59)
   - New signature: `resolveState(jsonlMtimeMs: number | null, events: StatusEvent[]): SessionState`
   - Logic:
     1. Filter state-bearing events (exclude Notification, SubagentStop).
@@ -41,33 +41,33 @@ Append-only NDJSON event log. Events are never overwritten, only appended. Reade
   - Remove `STOP_GRACE_MS`, `RUNNING_HOOK_TTL_MS`.
   - Keep `PERMISSION_STALE_MS`, `JSONL_ACTIVE_THRESHOLD_MS`.
 
-- [ ] Update `buildProjectState()` (R59)
+- [x]Update `buildProjectState()` (R59)
   - Replace `readStatus()` with `readStatusLog()`.
   - Pass events array to new `resolveState()`.
   - Extract notification fields from latest Notification event.
   - Extract `stoppedAtMs` from latest Stop/SessionEnd event.
 
-- [ ] Update CLI write path in `src/cli.ts` (R59)
+- [x]Update CLI write path in `src/cli.ts` (R59)
   - Build `StatusEvent` from hook payload.
   - SessionEnd -> `writeStatusTruncate()`.
   - All others (including Stop) -> `writeStatusEvent()`.
   - Notification path: append event with notification fields.
   - SubagentStop path: append to session log + per-agent file (unchanged).
 
-- [ ] Update tests in `tests/sessions.test.ts` (R59)
+- [x]Update tests in `tests/sessions.test.ts` (R59)
   - Rewrite readStatus tests -> readStatusLog (NDJSON files, migration from .json).
   - Rewrite writeStatus tests -> writeStatusEvent/writeStatusTruncate (append vs overwrite).
   - Rewrite resolveState tests with new `(jsonlMtimeMs, StatusEvent[])` signature.
     - Key race test: PermissionRequest followed by PostToolUse -> still `waiting_for_permission`.
   - Update buildProjectState/getProjectState tests to write `.jsonl` format.
 
-- [ ] Update tests in `tests/cli.test.ts` (R59)
+- [x]Update tests in `tests/cli.test.ts` (R59)
   - Status command tests: read `.jsonl`, verify NDJSON format.
   - SessionEnd tests: verify file truncated to single line. Stop appends normally.
   - SubagentStop tests: per-agent file unchanged, session log appended.
   - `dump --watch` tests: update to write `.jsonl` format instead of `.json`.
 
-- [ ] Update CLAUDE.md (R59)
+- [x]Update CLAUDE.md (R59)
   - Status file section: `.json` -> `.jsonl` (append-only NDJSON event log).
   - Update file structure tree.
   - Mention truncation on SessionEnd, safety cap on write.
