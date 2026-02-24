@@ -13,10 +13,11 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 - [ ] Seems like whne losing connection to backend, frontend doesn't come back with right state
   sometimes? I had project not showing right state, while showing connected. But then refreshed the
   page and it was fine.
+- [ ] We used to show sub-agent names using their description, but it seems to show agent id now
 
 ## Checkpoint
 
-Phase 28 implemented: Fixed `waiting_for_permission` persisting after user clicks "Allow". `resolveState()` now treats `PostToolUse` from the same `session_id` as the `PermissionRequest` as a resolver; sub-agent `PostToolUse` (different session_id) still does not resolve. 204 tests pass, lint + typecheck clean.
+Phase 29 implemented: Click-to-dismiss waiting flash. Clicking a flashing waiting card acknowledges it (stops animation, keeps badge). Flash re-triggers on new PermissionRequest. 204 tests pass, lint + typecheck clean. Manual test pending user verification.
 
 ## Requirements
 
@@ -407,7 +408,7 @@ Replace single-write `ccmon-status.json` with append-only `ccmon-status.jsonl` e
 
 Fix `waiting_for_permission` persisting after user clicks "Allow". PostToolUse from the same session_id as the PermissionRequest resolves the waiting state; sub-agent PostToolUse (different session_id) does not.
 
-### ⬜ 29 Phase: Click-to-Dismiss Waiting Flash
+### 🔄 29 Phase: Click-to-Dismiss Waiting Flash
 
 [29-waiting-dismiss](29-waiting-dismiss.md)
 
