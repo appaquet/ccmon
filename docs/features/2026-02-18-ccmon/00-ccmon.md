@@ -401,6 +401,12 @@ Add `SubagentStop` hook for immediate sub-agent completion detection (replaces 4
 
 Replace single-write `ccmon-status.json` with append-only `ccmon-status.jsonl` event log to fix PermissionRequest race with concurrent sub-agents. Simplifies resolveState, removes STOP_GRACE_MS and RUNNING_HOOK_TTL_MS.
 
+### ⬜ 28 Phase: Waiting State Resolution Fix
+
+[28-waiting-state-fix](28-waiting-state-fix.md)
+
+Fix `waiting_for_permission` persisting after user clicks "Allow". PostToolUse from the same session_id as the PermissionRequest resolves the waiting state; sub-agent PostToolUse (different session_id) does not.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
