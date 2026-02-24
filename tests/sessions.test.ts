@@ -1816,6 +1816,68 @@ describe("session enrichment", () => {
     expect(infos[0].description).toBe("Review the architecture");
   });
 
+  function makeTaskToolUse(toolUseId: string, description: string): string {
+    return JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: toolUseId,
+            name: "Task",
+            input: { description, subagent_type: "Explore" },
+          },
+        ],
+      },
+    });
+  }
+
+  function makeTaskToolResult(toolUseId: string, agentId: string): string {
+    return JSON.stringify({
+      type: "user",
+      message: {
+        content: [{ type: "tool_result", tool_use_id: toolUseId }],
+      },
+      toolUseResult: { status: "completed", agentId },
+    });
+  }
+
+  test("readSessionTail (R36): agentDescriptions populated from Task tool_use/toolUseResult correlation", async () => {
+    _resetCachesForTesting();
+    const jsonlPath = join(tmpDir, "r36-task-tool.jsonl");
+    const lines = [
+      makeUserEntry("start task"),
+      makeTaskToolUse("toolu_01ABC", "Research waiting state bug"),
+      makeTaskToolResult("toolu_01ABC", "a4220fe77a021871d"),
+    ];
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.agentDescriptions.get("a4220fe77a021871d")).toBe(
+      "Research waiting state bug",
+    );
+  });
+
+  test("readSessionTail (R36): mixed queue-operation and Task tool_use entries both populate agentDescriptions", async () => {
+    _resetCachesForTesting();
+    const jsonlPath = join(tmpDir, "r36-mixed-agents.jsonl");
+    const lines = [
+      makeUserEntry("start"),
+      makeQueueOperationEnqueue("legacy-agent-1", "Legacy queue task"),
+      makeTaskToolUse("toolu_02DEF", "New Task tool agent"),
+      makeTaskToolResult("toolu_02DEF", "new-agent-abc123"),
+    ];
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.agentDescriptions.get("legacy-agent-1")).toBe(
+      "Legacy queue task",
+    );
+    expect(result.agentDescriptions.get("new-agent-abc123")).toBe(
+      "New Task tool agent",
+    );
+  });
+
   test("getProjectState includes subagents array (R29)", async () => {
     _resetCachesForTesting();
 

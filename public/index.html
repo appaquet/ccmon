@@ -661,7 +661,7 @@
 
       if (proj.subagents && proj.subagents.length > 0) {
         for (const agent of proj.subagents) {
-          const agentLabel = 'Sub: ' + (agent.description ?? agent.agentId);
+          const agentLabel = 'Sub: ' + (agent.description ?? agent.slug ?? agent.agentId);
           html += renderAgentRow({
             label: agentLabel,
             model: agent.model,
@@ -830,6 +830,9 @@
           ws.onopen = () => {
             entry.backoff = 1000;
             entry.status = 'connected';
+            // Clear stale projects so the brief window before the server's first message
+            // doesn't show data from the previous connection.
+            entry.projects = [];
             updateStatusPill();
             updateBackendMenu();
           };
@@ -853,6 +856,8 @@
           ws.onclose = ws.onerror = () => {
             if (entry.ws !== ws) return; // superseded by a later connection attempt
             entry.status = 'disconnected';
+            entry.projects = [];
+            mergeAndRender();
             updateStatusPill();
             updateBackendMenu();
             const delay = entry.backoff;

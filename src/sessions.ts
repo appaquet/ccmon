@@ -798,6 +798,12 @@ function scanEnrichment(
 ): SessionTailInfo {
   const reversed = lines.slice().reverse();
   const result: SessionTailInfo = { agentDescriptions: new Map() };
+  // Task tool correlation: assistant tool_use "Task" carries description; the paired
+  // user tool_result carries toolUseResult.agentId. Since we scan in reverse, user
+  // entries arrive before their paired assistant entries. Collect both sides and
+  // resolve after the loop.
+  const taskToolDescriptions = new Map<string, string>(); // tool_use_id → description
+  const pendingToolResults = new Map<string, string>(); // tool_use_id → agentId
   let foundUserActivity = false;
   let foundAssistantActivity = false;
   let foundModel = false;
@@ -826,6 +832,26 @@ function scanEnrichment(
     const message = entry.message as Record<string, unknown> | undefined;
 
     if (type === "user") {
+      // Collect Task tool_result + toolUseResult.agentId regardless of foundUserActivity
+      // so the full session is scanned for agent description correlations.
+      if (message && Array.isArray(message.content)) {
+        const toolUseResult = entry.toolUseResult as
+          | Record<string, unknown>
+          | undefined;
+        const agentId =
+          typeof toolUseResult?.agentId === "string"
+            ? toolUseResult.agentId
+            : undefined;
+        if (agentId !== undefined) {
+          for (const block of message.content as unknown[]) {
+            const b = block as Record<string, unknown>;
+            if (b.type === "tool_result" && typeof b.tool_use_id === "string") {
+              pendingToolResults.set(b.tool_use_id, agentId);
+            }
+          }
+        }
+      }
+
       if (!message || foundUserActivity) continue;
       const content = message.content;
       if (typeof content === "string") {
@@ -896,6 +922,21 @@ function scanEnrichment(
             foundAssistantActivity = true;
           }
         }
+
+        // Collect Task tool_use id → description for sub-agent correlation.
+        for (const block of contentBlocks) {
+          const b = block as Record<string, unknown>;
+          if (
+            b.type === "tool_use" &&
+            b.name === "Task" &&
+            typeof b.id === "string"
+          ) {
+            const input = b.input as Record<string, unknown> | undefined;
+            if (typeof input?.description === "string") {
+              taskToolDescriptions.set(b.id, input.description);
+            }
+          }
+        }
       }
     }
 
@@ -931,6 +972,15 @@ function scanEnrichment(
           // malformed content — skip
         }
       }
+    }
+  }
+
+  // Resolve Task tool_use correlations: tool_use_id links description (from assistant)
+  // to agentId (from user toolUseResult).
+  for (const [toolUseId, agentId] of pendingToolResults) {
+    const description = taskToolDescriptions.get(toolUseId);
+    if (description !== undefined) {
+      result.agentDescriptions.set(agentId, description);
     }
   }
 
