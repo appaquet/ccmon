@@ -215,6 +215,12 @@ Phase 26 implemented: SubagentStop hook for immediate sub-agent completion detec
 - R58: 🔄 Same-named projects across backends are disambiguated with composite key and hostname prefix (Phase: Multi-Backend Naming)
   - R58.1: Card header shows `hostname:projectName` when the same `projectName` exists on multiple backends
 
+- R59: ⬜ Append-only NDJSON status event log replaces single-write status JSON (Phase: Append-Only Status Log)
+  - R59.1: `ccmon-status.jsonl` — each hook event appends one JSON line; no overwrites except Stop/SessionEnd which truncate
+  - R59.2: `resolveState()` scans event history; PermissionRequest resolved only by UserPromptSubmit/Stop/SessionEnd (not PostToolUse)
+  - R59.3: JSONL mtime retained as pure fallback for broken-hooks scenario
+  - R59.4: Removes STOP_GRACE_MS and RUNNING_HOOK_TTL_MS; simplifies resolveState from 4-priority to event-scan
+
 #### Out of Scope
 
 - Authentication / multi-user support
@@ -363,29 +369,35 @@ Reduced CLAUDE.md from 181 to 114 lines (37%) by removing JSON schema examples a
 
 Fix same-named projects across backends causing double flash. Use composite `hostname::projectName` key in frontend state maps. Show hostname prefix in card header when names collide.
 
-### ⬜ 25 Phase: Stopped Flash Fix
+### ✅ 25 Phase: Stopped Flash Fix
 
 [25-stopped-flash-fix](25-stopped-flash-fix.md)
 
 Fix stopped flash persistence: promote `flashStopped`/`flashNotification` to module-level Maps with 5s TTL. Broaden transition check to any non-stopped → stopped.
 
-### ⬜ 24 Phase: Dashboard Sort Order
+### ✅ 24 Phase: Dashboard Sort Order
 
 [24-dashboard-sort-order](24-dashboard-sort-order.md)
 
 Sort dashboard projects by most recently active (`lastUpdated` descending) instead of alphabetically. Throttle re-sorting to every 30s to prevent constant card reordering.
 
-### ⬜ 23 Phase: UI Triangle Arrows
+### ✅ 23 Phase: UI Triangle Arrows
 
 [23-ui-triangle-arrows](23-ui-triangle-arrows.md)
 
 Replace ASCII `>` / `<` message direction indicators with UTF-8 solid triangles (`▶` / `◀`) in dashboard cards.
 
-### 🔄 26 Phase: SubagentStop Hook + Status File Rename
+### ✅ 26 Phase: SubagentStop Hook + Status File Rename
 
 [26-subagent-stop-hook](26-subagent-stop-hook.md)
 
 Add `SubagentStop` hook for immediate sub-agent completion detection (replaces 45s mtime polling). Rename `ccmon-status.json` → `ccmon-status.json`. Add per-sub-agent status files alongside JSONL.
+
+### ⬜ 27 Phase: Append-Only Status Log
+
+[27-append-only-status](27-append-only-status.md)
+
+Replace single-write `ccmon-status.json` with append-only `ccmon-status.jsonl` event log to fix PermissionRequest race with concurrent sub-agents. Simplifies resolveState, removes STOP_GRACE_MS and RUNNING_HOOK_TTL_MS.
 
 ## Files
 
