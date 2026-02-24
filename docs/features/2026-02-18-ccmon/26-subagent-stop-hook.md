@@ -43,7 +43,7 @@ See [00-ccmon](00-ccmon.md). Sub-agent completion currently relies on 45s mtime 
 
 - [x] Add `SubagentStop` hook entry in `~/dotfiles/home-manager/modules/claude/settings.json` calling `ccmon status`
 - [x] Update `CLAUDE.md` — add SubagentStop to hook events list, document per-sub-agent status file
-- [~] Update `00-ccmon.md` — add R3.1 SubagentStop entry, update R3.2/R3.3 for renamed file
+- [x] Update `00-ccmon.md` — add R3.1 SubagentStop entry, update R3.2/R3.3 for renamed file
 
 ### Part 5: Validation
 

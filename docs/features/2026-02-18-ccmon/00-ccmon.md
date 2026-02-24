@@ -381,7 +381,7 @@ Sort dashboard projects by most recently active (`lastUpdated` descending) inste
 
 Replace ASCII `>` / `<` message direction indicators with UTF-8 solid triangles (`▶` / `◀`) in dashboard cards.
 
-### ⬜ 26 Phase: SubagentStop Hook + Status File Rename
+### 🔄 26 Phase: SubagentStop Hook + Status File Rename
 
 [26-subagent-stop-hook](26-subagent-stop-hook.md)
 
