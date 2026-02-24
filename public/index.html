@@ -355,6 +355,7 @@
     }
     .card-flashing-waiting {
       animation: flash-waiting 1s ease-in-out infinite;
+      cursor: pointer;
     }
 
     @keyframes flash-stopped {
@@ -607,14 +608,22 @@
       `;
     }
 
-    function createCard(proj, flashStopped, flashNotification, displayName) {
+    function createCard(proj, flashStopped, flashNotification, displayName, key) {
       const card = document.createElement('div');
       const s = proj.state || 'stopped';
-      const flashClasses = s === 'waiting_for_permission' ? ' card-flashing-waiting'
+      const isWaitingFlash = s === 'waiting_for_permission' && !flashWaitingDismissed.has(key);
+      const flashClasses = isWaitingFlash ? ' card-flashing-waiting'
         : flashStopped ? ' card-flashing-stopped'
         : flashNotification ? ' card-flashing-notification'
         : '';
       card.className = 'card' + flashClasses;
+
+      if (isWaitingFlash) {
+        card.addEventListener('click', () => {
+          flashWaitingDismissed.add(key);
+          card.classList.remove('card-flashing-waiting');
+        });
+      }
 
       const badgeClass = stateBadgeClass[s] || 'badge-stopped';
       const dotClass = stateDotClass[s] || 'dot-stopped';
@@ -671,6 +680,7 @@
     const prevNotificationTimestamp = new Map(); // projKey → last known notificationTimestamp
     const flashStopped = new Map();             // projKey → timestamp when flash started (5s window)
     const flashNotification = new Map();        // projKey → timestamp when flash started (5s window)
+    const flashWaitingDismissed = new Set();    // projKey → dismissed via click-acknowledgement
 
     // Composite key that uniquely identifies a project across multiple backends
     const projKey = (p) => p._backendKey + '::' + p.projectName;
@@ -717,6 +727,10 @@
         if (prev === 'running' && proj.state === 'stopped') {
           flashStopped.set(key, now);
         }
+        // Re-enable flash if a new permission request arrives after a previous one was dismissed
+        if (prev === 'waiting_for_permission' && proj.state !== 'waiting_for_permission') {
+          flashWaitingDismissed.delete(key);
+        }
         prevState.set(key, proj.state);
 
         const prevTs = prevNotificationTimestamp.get(key);
@@ -741,6 +755,9 @@
       }
       for (const [key, ts] of [...flashNotification.entries()]) {
         if (!currentKeys.has(key) || now - ts >= flashWindow) flashNotification.delete(key);
+      }
+      for (const key of [...flashWaitingDismissed]) {
+        if (!currentKeys.has(key)) flashWaitingDismissed.delete(key);
       }
 
       grid.innerHTML = '';
@@ -769,6 +786,7 @@
           flashStopped.has(key),
           flashNotification.has(key),
           displayName,
+          key,
         ));
       }
     }
