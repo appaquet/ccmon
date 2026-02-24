@@ -10,14 +10,14 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Inbox
 
-- [ ] Seems like whne losing connection to backend, frontend doesn't come back with right state
-  sometimes? I had project not showing right state, while showing connected. But then refreshed the
-  page and it was fine.
-- [ ] We used to show sub-agent names using their description, but it seems to show agent id now
+- [x] Seems like whne losing connection to backend, frontend doesn't come back with right state
+  sometimes? → Fixed in Phase 30: clear projects on disconnect/reconnect
+- [x] We used to show sub-agent names using their description, but it seems to show agent id now
+  → Fixed in Phase 30: parse Task tool_use/toolUseResult for description correlation
 
 ## Checkpoint
 
-Phase 29 implemented: Click-to-dismiss waiting flash. Clicking a flashing waiting card acknowledges it (stops animation, keeps badge). Flash re-triggers on new PermissionRequest. 204 tests pass, lint + typecheck clean. Manual test pending user verification.
+Phase 30 implemented: Two inbox fixes — (1) clear projects on WS disconnect/reconnect to prevent stale state, (2) parse Task tool_use/toolUseResult for sub-agent description correlation (fallback: slug → agentId). 206 tests pass, lint + typecheck clean.
 
 ## Requirements
 
@@ -414,7 +414,7 @@ Fix `waiting_for_permission` persisting after user clicks "Allow". PostToolUse f
 
 Click on a flashing waiting card to acknowledge and stop the animation. State badge remains "Waiting". Flash re-triggers if a new PermissionRequest arrives after the state cycles.
 
-### ⬜ 30 Phase: Inbox Fixes
+### 🔄 30 Phase: Inbox Fixes
 
 [30-inbox-fixes](30-inbox-fixes.md)
 
