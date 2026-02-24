@@ -16,7 +16,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 27 implemented: Replaced single-write `ccmon-status.json` with append-only `ccmon-status.jsonl` event log. Fixes PermissionRequest race with concurrent sub-agents. Simplified resolveState (removed STOP_GRACE_MS, RUNNING_HOOK_TTL_MS). 202 tests pass, lint + typecheck clean. Also fixed findLatestJSONL to exclude status log files.
+Phase 28 implemented: Fixed `waiting_for_permission` persisting after user clicks "Allow". `resolveState()` now treats `PostToolUse` from the same `session_id` as the `PermissionRequest` as a resolver; sub-agent `PostToolUse` (different session_id) still does not resolve. 204 tests pass, lint + typecheck clean.
 
 ## Requirements
 
@@ -401,7 +401,7 @@ Add `SubagentStop` hook for immediate sub-agent completion detection (replaces 4
 
 Replace single-write `ccmon-status.json` with append-only `ccmon-status.jsonl` event log to fix PermissionRequest race with concurrent sub-agents. Simplifies resolveState, removes STOP_GRACE_MS and RUNNING_HOOK_TTL_MS.
 
-### ⬜ 28 Phase: Waiting State Resolution Fix
+### 🔄 28 Phase: Waiting State Resolution Fix
 
 [28-waiting-state-fix](28-waiting-state-fix.md)
 
