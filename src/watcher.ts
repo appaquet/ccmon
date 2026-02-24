@@ -8,7 +8,7 @@ const DEBOUNCE_MS = 100;
 /**
  * Watches claudeDir for project subdirectory changes and calls onUpdate when
  * any file in a project dir is modified or created (*.jsonl, sessions-index.json,
- * status.local.json).
+ * ccmon-status.json).
  *
  * For each existing and newly created project subdir, watches the directory
  * directly so JSONL session file writes trigger enrichment refreshes.

@@ -9,6 +9,7 @@ import {
   scanProjects,
   writeNotificationStatus,
   writeStatus,
+  writeSubagentStatus,
 } from "./sessions";
 import { watchForChanges } from "./watcher";
 
@@ -228,6 +229,25 @@ async function runStatus(): Promise<void> {
     process.exit(0);
   }
 
+  if (hook_event_name === "SubagentStop") {
+    const agentTranscriptPath = payload.agent_transcript_path;
+    if (agentTranscriptPath) {
+      // Derive per-sub-agent status file alongside the JSONL transcript.
+      const agentStatusPath = agentTranscriptPath.endsWith(".jsonl")
+        ? `${agentTranscriptPath.slice(0, -".jsonl".length)}.ccmon-status.json`
+        : `${agentTranscriptPath}.ccmon-status.json`;
+      try {
+        await writeSubagentStatus(agentStatusPath, projectDir);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`Error writing subagent status: ${message}\n`);
+        exit(1);
+      }
+    }
+    process.stdout.write("{}\n");
+    process.exit(0);
+  }
+
   const state = mapHookEventToState(hook_event_name);
   if (state === null) {
     // Unknown hook event — respond OK so Claude doesn't block on unrecognized events
@@ -325,6 +345,8 @@ interface HookPayload {
   hook_event_name: string;
   message?: string;
   notification_type?: string;
+  agent_id?: string;
+  agent_transcript_path?: string;
 }
 
 function isHookPayload(v: unknown): v is HookPayload {

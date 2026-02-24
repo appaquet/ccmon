@@ -221,7 +221,7 @@ describe("WebSocket server", () => {
     await Bun.sleep(100);
 
     await writeFile(
-      join(projDir, "status.local.json"),
+      join(projDir, "ccmon-status.json"),
       JSON.stringify({
         state: "running",
         timestamp: new Date().toISOString(),
@@ -484,7 +484,7 @@ describe("state propagation (R34)", () => {
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
 
     await writeFile(
-      join(projDir, "status.local.json"),
+      join(projDir, "ccmon-status.json"),
       JSON.stringify({
         state: "stopped",
         timestamp: new Date().toISOString(),

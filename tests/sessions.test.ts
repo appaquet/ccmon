@@ -107,7 +107,7 @@ describe("scanProjects", () => {
   test("no JSONL files in subdir: skips that project", async () => {
     const projDir = join(tmpDir, "-home-user-nojsonl");
     await mkdir(projDir, { recursive: true });
-    await writeFile(join(projDir, "status.local.json"), "{}");
+    await writeFile(join(projDir, "ccmon-status.json"), "{}");
 
     const results = await scanProjects(tmpDir);
     expect(results).toHaveLength(0);
@@ -409,14 +409,14 @@ describe("readStatus", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test("valid status.local.json: returns StatusFile", async () => {
+  test("valid ccmon-status.json: returns StatusFile", async () => {
     const payload = {
       state: "running",
       timestamp: "2026-02-19T10:00:00.000Z",
       session_id: "abc123",
       working_dir: "/home/user/proj",
     };
-    await writeFile(join(tmpDir, "status.local.json"), JSON.stringify(payload));
+    await writeFile(join(tmpDir, "ccmon-status.json"), JSON.stringify(payload));
 
     const result = await readStatus(tmpDir);
 
@@ -434,7 +434,7 @@ describe("readStatus", () => {
       session_id: "s",
       working_dir: "/p",
     };
-    await writeFile(join(tmpDir, "status.local.json"), JSON.stringify(payload));
+    await writeFile(join(tmpDir, "ccmon-status.json"), JSON.stringify(payload));
     const result = await readStatus(tmpDir);
     expect(result?.state).toBe("waiting_for_permission");
   });
@@ -446,7 +446,7 @@ describe("readStatus", () => {
       session_id: "s",
       working_dir: "/p",
     };
-    await writeFile(join(tmpDir, "status.local.json"), JSON.stringify(payload));
+    await writeFile(join(tmpDir, "ccmon-status.json"), JSON.stringify(payload));
     const result = await readStatus(tmpDir);
     expect(result?.state).toBe("stopped");
   });
@@ -457,7 +457,7 @@ describe("readStatus", () => {
   });
 
   test("corrupt JSON: returns null", async () => {
-    await writeFile(join(tmpDir, "status.local.json"), "not json at all");
+    await writeFile(join(tmpDir, "ccmon-status.json"), "not json at all");
     const result = await readStatus(tmpDir);
     expect(result).toBeNull();
   });
@@ -469,7 +469,7 @@ describe("readStatus", () => {
       session_id: "s",
       working_dir: "/p",
     };
-    await writeFile(join(tmpDir, "status.local.json"), JSON.stringify(payload));
+    await writeFile(join(tmpDir, "ccmon-status.json"), JSON.stringify(payload));
     const result = await readStatus(tmpDir);
     expect(result).toBeNull();
   });
@@ -560,7 +560,7 @@ describe("getProjectState", () => {
       working_dir: "/home/user/stale",
     };
     await writeFile(
-      join(projDir, "status.local.json"),
+      join(projDir, "ccmon-status.json"),
       JSON.stringify(payload),
     );
 
@@ -588,7 +588,7 @@ describe("getProjectState", () => {
       working_dir: "/home/user/stale-stopped",
     };
     await writeFile(
-      join(projDir, "status.local.json"),
+      join(projDir, "ccmon-status.json"),
       JSON.stringify(payload),
     );
 
@@ -621,7 +621,7 @@ describe("getProjectState", () => {
       notificationTimestamp: "2026-02-22T10:00:00.000Z",
     };
     await writeFile(
-      join(projDir, "status.local.json"),
+      join(projDir, "ccmon-status.json"),
       JSON.stringify(payload),
     );
 
@@ -644,7 +644,7 @@ describe("getProjectState", () => {
       working_dir: "/home/user/nonotif",
     };
     await writeFile(
-      join(projDir, "status.local.json"),
+      join(projDir, "ccmon-status.json"),
       JSON.stringify(payload),
     );
 
@@ -673,7 +673,7 @@ describe("getProjectState", () => {
       working_dir: "/home/user/nan-ts",
     };
     await writeFile(
-      join(projDir, "status.local.json"),
+      join(projDir, "ccmon-status.json"),
       JSON.stringify(payload),
     );
 
@@ -753,7 +753,7 @@ describe("writeStatus", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test("writes status.local.json with correct content", async () => {
+  test("writes ccmon-status.json with correct content", async () => {
     const status = {
       state: "running" as const,
       timestamp: "2026-02-20T12:00:00.000Z",
@@ -763,7 +763,7 @@ describe("writeStatus", () => {
 
     await writeStatus(tmpDir, status);
 
-    const raw = await Bun.file(join(tmpDir, "status.local.json")).text();
+    const raw = await Bun.file(join(tmpDir, "ccmon-status.json")).text();
     const parsed = JSON.parse(raw);
     expect(parsed.state).toBe("running");
     expect(parsed.timestamp).toBe("2026-02-20T12:00:00.000Z");
@@ -818,7 +818,7 @@ describe("writeNotificationStatus (R26)", () => {
       working_dir: "/home/user/proj",
     };
     await writeFile(
-      join(tmpDir, "status.local.json"),
+      join(tmpDir, "ccmon-status.json"),
       JSON.stringify(existing),
     );
 
@@ -848,7 +848,7 @@ describe("writeNotificationStatus (R26)", () => {
       working_dir: "/home/user/proj",
     };
     await writeFile(
-      join(tmpDir, "status.local.json"),
+      join(tmpDir, "ccmon-status.json"),
       JSON.stringify(existing),
     );
 
@@ -873,7 +873,7 @@ describe("writeNotificationStatus (R26)", () => {
       working_dir: "/home/user/proj",
     };
     await writeFile(
-      join(tmpDir, "status.local.json"),
+      join(tmpDir, "ccmon-status.json"),
       JSON.stringify(existing),
     );
 
@@ -897,7 +897,7 @@ describe("writeNotificationStatus (R26)", () => {
       working_dir: "/home/user/proj",
     };
     await writeFile(
-      join(tmpDir, "status.local.json"),
+      join(tmpDir, "ccmon-status.json"),
       JSON.stringify(existing),
     );
 
@@ -1729,7 +1729,7 @@ describe("session enrichment", () => {
 
     // Status file with fresh running state
     await writeFile(
-      join(projDir, "status.local.json"),
+      join(projDir, "ccmon-status.json"),
       JSON.stringify({
         state: "running",
         timestamp: new Date().toISOString(),
@@ -1799,7 +1799,7 @@ describe("session enrichment", () => {
 
     // Explicitly stopped state (stale timestamp so liveness check doesn't matter)
     await writeFile(
-      join(projDir, "status.local.json"),
+      join(projDir, "ccmon-status.json"),
       JSON.stringify({
         state: "stopped",
         timestamp: new Date().toISOString(),
@@ -1993,7 +1993,7 @@ describe("getProjectState targeted refresh (R20.5)", () => {
     // Write a new JSONL for project B to change its session ID via a new project file
     // (update the status to see state change — simplest observable diff)
     await writeFile(
-      join(dirB, "status.local.json"),
+      join(dirB, "ccmon-status.json"),
       JSON.stringify({
         state: "stopped",
         timestamp: new Date().toISOString(),
@@ -2639,6 +2639,80 @@ describe("getSubagentInfos lifecycle (R40)", () => {
     const stale = infos.find((i) => i.agentId === "old");
     expect(active?.isActive).toBe(true);
     expect(stale?.isActive).toBe(false);
+  });
+});
+
+// ─── getSubagentInfos status file detection ───────────────────────────────────
+
+describe("getSubagentInfos status file detection", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir("ccmon-subagent-status");
+    _resetCachesForTesting();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  async function makeSubagentDir(
+    sessionId: string,
+  ): Promise<{ subagentsDir: string; jsonlPath: string }> {
+    const sessionDir = join(tmpDir, sessionId);
+    const subagentsDir = join(sessionDir, "subagents");
+    await mkdir(subagentsDir, { recursive: true });
+    const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
+    return { subagentsDir, jsonlPath };
+  }
+
+  test("fresh mtime + stopped status file → isActive false", async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir("sa-stopped");
+    const agentPath = join(subagentsDir, "agent-abc123.jsonl");
+    await writeFile(agentPath, "{}");
+    // mtime is now = would normally be active
+
+    // Write ccmon-status.json with stopped state
+    await writeFile(
+      join(subagentsDir, "agent-abc123.ccmon-status.json"),
+      JSON.stringify({ state: "stopped", timestamp: new Date().toISOString() }),
+    );
+
+    const infos = await getSubagentInfos(jsonlPath);
+    const agent = infos.find((i) => i.agentId === "abc123");
+    expect(agent).toBeDefined();
+    expect(agent?.isActive).toBe(false);
+  });
+
+  test("no status file → mtime-based detection (fresh = active)", async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir("sa-nomfile");
+    const agentPath = join(subagentsDir, "agent-def456.jsonl");
+    await writeFile(agentPath, "{}");
+    // mtime is now, no status file
+
+    const infos = await getSubagentInfos(jsonlPath);
+    const agent = infos.find((i) => i.agentId === "def456");
+    expect(agent).toBeDefined();
+    expect(agent?.isActive).toBe(true);
+  });
+
+  test("status file with non-stopped state → mtime-based detection still applies", async () => {
+    const { subagentsDir, jsonlPath } = await makeSubagentDir("sa-running");
+    const agentPath = join(subagentsDir, "agent-ghi789.jsonl");
+    await writeFile(agentPath, "{}");
+    // mtime is now
+
+    // Write status file with non-stopped state
+    await writeFile(
+      join(subagentsDir, "agent-ghi789.ccmon-status.json"),
+      JSON.stringify({ state: "running", timestamp: new Date().toISOString() }),
+    );
+
+    const infos = await getSubagentInfos(jsonlPath);
+    const agent = infos.find((i) => i.agentId === "ghi789");
+    expect(agent).toBeDefined();
+    // Non-stopped status file → falls back to mtime, which is fresh → active
+    expect(agent?.isActive).toBe(true);
   });
 });
 

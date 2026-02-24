@@ -148,6 +148,7 @@ export interface StatusFile {
   working_dir: string;
   notificationMessage?: string; // set by Notification hook events
   notificationTimestamp?: string; // ISO 8601, updated on each notification
+  lastSubagentStoppedAt?: string; // ISO 8601, updated by SubagentStop hook
 }
 
 export interface ProjectState extends ProjectInfo, SessionEnrichment {
@@ -300,14 +301,37 @@ export async function writeNotificationStatus(
 }
 
 /**
- * Writes a StatusFile as JSON to {projectDirPath}/status.local.json.
+ * Writes a StatusFile as JSON to {projectDirPath}/ccmon-status.json.
  */
 export async function writeStatus(
   projectDirPath: string,
   status: StatusFile,
 ): Promise<void> {
-  const statusPath = join(projectDirPath, "status.local.json");
+  const statusPath = join(projectDirPath, "ccmon-status.json");
   await Bun.write(statusPath, JSON.stringify(status));
+}
+
+/**
+ * Writes a stopped status to the per-sub-agent ccmon-status.json at agentStatusPath,
+ * then updates the session-level ccmon-status.json with lastSubagentStoppedAt to
+ * trigger the file watcher and cause a rescan.
+ */
+export async function writeSubagentStatus(
+  agentStatusPath: string,
+  projectDirPath: string,
+): Promise<void> {
+  await Bun.write(
+    agentStatusPath,
+    JSON.stringify({ state: "stopped", timestamp: new Date().toISOString() }),
+  );
+
+  const existing = await readStatus(projectDirPath);
+  if (existing !== null) {
+    await writeStatus(projectDirPath, {
+      ...existing,
+      lastSubagentStoppedAt: new Date().toISOString(),
+    });
+  }
 }
 
 /**
@@ -340,13 +364,13 @@ export async function scanProjects(
 }
 
 /**
- * Reads and validates status.local.json from projectDir.
+ * Reads and validates ccmon-status.json from projectDir.
  * Returns null if the file is missing, corrupt, or has an unknown state.
  */
 export async function readStatus(
   projectDir: string,
 ): Promise<StatusFile | null> {
-  const statusPath = join(projectDir, "status.local.json");
+  const statusPath = join(projectDir, "ccmon-status.json");
   let raw: string;
   try {
     raw = await Bun.file(statusPath).text();
@@ -483,7 +507,22 @@ export async function getSubagentInfos(
 
       const stoppedRecently =
         stoppedAtMs !== null && mtimeMs <= stoppedAtMs + STOP_GRACE_MS;
-      const isActive = !stoppedRecently && mtimeMs > cutoff;
+      let isActive = !stoppedRecently && mtimeMs > cutoff;
+
+      // A per-agent ccmon-status.json with state "stopped" overrides mtime-based detection.
+      if (isActive) {
+        const agentStatusPath = join(
+          subagentsDir,
+          `${nameWithout}.ccmon-status.json`,
+        );
+        try {
+          const raw = await Bun.file(agentStatusPath).text();
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          if (parsed.state === "stopped") isActive = false;
+        } catch {
+          // Status file absent or unreadable — fall back to mtime-based detection.
+        }
+      }
 
       // Exclude completed agents older than 5 minutes to keep payload lean.
       if (!isActive && mtimeMs < expiryCutoff) return null;

@@ -51,10 +51,10 @@ describe("watchForChanges", () => {
     stop = null; // already stopped, skip afterEach cleanup
   }, 3000);
 
-  test("file change to status.local.json triggers onUpdate callback", async () => {
+  test("file change to ccmon-status.json triggers onUpdate callback", async () => {
     const projDir = join(tmpDir, "-home-user-proj");
     await mkdir(projDir, { recursive: true });
-    const statusFile = join(projDir, "status.local.json");
+    const statusFile = join(projDir, "ccmon-status.json");
     await writeFile(statusFile, makeStatusPayload());
 
     const called: string[] = [];
@@ -99,7 +99,7 @@ describe("watchForChanges", () => {
   test("debounce: multiple rapid writes produce a single callback", async () => {
     const projDir = join(tmpDir, "-home-user-debounce");
     await mkdir(projDir, { recursive: true });
-    const statusFile = join(projDir, "status.local.json");
+    const statusFile = join(projDir, "ccmon-status.json");
     await writeFile(statusFile, makeStatusPayload());
 
     const called: string[] = [];

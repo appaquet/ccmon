@@ -6,7 +6,7 @@ Claude Code Monitor - a Bun + TypeScript web app that shows the status of curren
 
 A lightweight monitoring dashboard that reads Claude Code session data and hook-reported state to show a real-time view of all Claude sessions across projects on this machine.
 
-Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will extend that script to also write `status.local.json` to each project's working directory.
+Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will extend that script to also write `ccmon-status.json` to each project's working directory.
 
 ## Inbox
 
@@ -14,7 +14,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phases 23-25 implemented. Planning phase 26: SubagentStop hook for immediate sub-agent completion detection + rename `status.local.json` → `ccmon-status.json`.
+Phase 26 implemented: SubagentStop hook for immediate sub-agent completion detection + renamed `ccmon-status.json` → `ccmon-status.json`. 203 tests pass, lint + typecheck clean. Hook config updated in dotfiles/settings.json.
 
 ## Requirements
 
@@ -24,12 +24,12 @@ Phases 23-25 implemented. Planning phase 26: SubagentStop hook for immediate sub
   - R1.1: Working directory read from `cwd` field in first line of most recent JSONL session file (directory name encoding is lossy)
   - R1.2: Project name derived from last path segment of working directory (e.g. `ccmon`)
 - R2: ✅ Determine current state of each project via layered detection (Phase: Session Detection)
-  - R2.1: Primary: read `status.local.json` (written by hooks). If absent or stale (>5min, state !== `stopped`) → treat as `stopped`
+  - R2.1: Primary: read `ccmon-status.json` (written by hooks). If absent or stale (>5min, state !== `stopped`) → treat as `stopped`
   - R2.2: Fallback: `pgrep -a claude` + `/proc/{pid}/cwd` (NixOS: `.claude-wrapped`) to detect live processes. If no process and status not `stopped` → override to `stopped`
 
 ### State Reporting via Hooks
 
-- R3: 🔄 `ccmon status` sub-command writes `status.local.json` from hook stdin (Phase: Backend)
+- R3: 🔄 `ccmon status` sub-command writes `ccmon-status.json` from hook stdin (Phase: Backend)
   - R3.1: Hook events → states:
     - `UserPromptSubmit` → `running` (Claude processing user input)
     - `PostToolUse` → `running` (Claude continuing after tool)
@@ -37,8 +37,8 @@ Phases 23-25 implemented. Planning phase 26: SubagentStop hook for immediate sub
     - `Stop` → `stopped` (Claude idle, matches tmux indicator behavior)
     - `SessionEnd` → `stopped`
     - `SubagentStop` → writes per-sub-agent `ccmon-status.json` + updates session-level status
-  - R3.2: `status.local.json` contains: `state`, `timestamp`, `session_id`, `working_dir`
-  - R3.3: File written to `~/.claude/projects/{dir}/status.local.json` (project dir found via `sessions-index.json` lookup or path encoding fallback)
+  - R3.2: `ccmon-status.json` contains: `state`, `timestamp`, `session_id`, `working_dir`, optional `lastSubagentStoppedAt`
+  - R3.3: File written to `~/.claude/projects/{dir}/ccmon-status.json` (project dir found via `sessions-index.json` lookup or path encoding fallback)
   - R3.4: Reads hook JSON from stdin (cwd, session_id, hook_event_name), maps event to state, resolves cwd to project dir
 - R14: 🔄 Use `sessions-index.json` as primary data source for project scanning (Phase: Backend)
   - R14.1: `sessions-index.json` contains `originalPath`, session entries with `summary`, `messageCount`, `firstPrompt`, `isSidechain`, `fullPath`, `fileMtime`, `gitBranch`
@@ -53,7 +53,7 @@ Phases 23-25 implemented. Planning phase 26: SubagentStop hook for immediate sub
 
 - R5: 🔄 Bun HTTP server serves the dashboard at `/` (Phase: Backend)
 - R6: 🔄 WebSocket endpoint pushes real-time state updates to connected clients (Phase: Backend)
-  - R6.1: Server watches all known `status.local.json` files for changes and broadcasts updates
+  - R6.1: Server watches all known `ccmon-status.json` files for changes and broadcasts updates
   - R6.2: On new client connect, send current state of all projects immediately
 
 ### UI
@@ -146,7 +146,7 @@ Phases 23-25 implemented. Planning phase 26: SubagentStop hook for immediate sub
   - R34.2: `stopped` from Stop/SessionEnd hooks (immediate) or JSONL mtime > 60s (crash fallback)
   - R34.6: 5s grace period on JSONL-vs-stopped comparison — Claude writes post-stop system entry to JSONL, making mtime slightly newer than hook timestamp
   - R34.7: JSONL activity after `waiting_for_permission` overrides the permission state (permission was answered)
-  - R34.3: status.local.json read for waiting_for_permission, stopped timestamp, and notification fields
+  - R34.3: ccmon-status.json read for waiting_for_permission, stopped timestamp, and notification fields
   - R34.4: pgrep/proc liveness detection removed entirely
   - R34.5: R33 debounce removed — race condition eliminated at source
 - R35: 🔄 Hook config — UserPromptSubmit/PostToolUse re-added for immediate running detection (Phase: JSONL-Primary Detection, Inbox Bug Fixes)
@@ -223,7 +223,7 @@ Phases 23-25 implemented. Planning phase 26: SubagentStop hook for immediate sub
 
 ## Questions
 
-- Q1: ✅ Status file location → per-project in working directory as `status.local.json` (same as `tmux.local.log`)
+- Q1: ✅ Status file location → per-project in working directory as `ccmon-status.json` (same as `tmux.local.log`)
 - Q2: ✅ Permission hook event → `PermissionRequest` (confirmed from existing settings.json)
 - Q3: ✅ Runtime/package manager → Bun (native TypeScript, ESM, built-in test runner `bun:test`). No tsconfig required but will add for IDE support. Types via `@types/bun`.
 - Q4: ✅ How does ccmon discover the working directory? → Read `cwd` from the first line of the most recent JSONL session file. Directory name encoding is lossy (hyphens ambiguous), so dir name decoding is not reliable.
@@ -385,7 +385,7 @@ Replace ASCII `>` / `<` message direction indicators with UTF-8 solid triangles 
 
 [26-subagent-stop-hook](26-subagent-stop-hook.md)
 
-Add `SubagentStop` hook for immediate sub-agent completion detection (replaces 45s mtime polling). Rename `status.local.json` → `ccmon-status.json`. Add per-sub-agent status files alongside JSONL.
+Add `SubagentStop` hook for immediate sub-agent completion detection (replaces 45s mtime polling). Rename `ccmon-status.json` → `ccmon-status.json`. Add per-sub-agent status files alongside JSONL.
 
 ## Files
 

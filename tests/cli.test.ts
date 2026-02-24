@@ -296,7 +296,7 @@ describe("dump --watch --project", () => {
 
     // Trigger a status file change
     await writeFile(
-      join(projDir, "status.local.json"),
+      join(projDir, "ccmon-status.json"),
       makeStatusPayload("running"),
     );
     await Bun.sleep(400);
@@ -328,7 +328,7 @@ describe("status", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test("pipe hook JSON → writes correct status.local.json", async () => {
+  test("pipe hook JSON → writes correct ccmon-status.json", async () => {
     // Set up a project dir that scanProjects() will find
     const projDir = join(tmpDir, "-home-user-myproject");
     await mkdir(projDir, { recursive: true });
@@ -350,7 +350,7 @@ describe("status", () => {
 
     expect(result.exitCode).toBe(0);
 
-    const raw = await readFile(join(projDir, "status.local.json"), "utf8");
+    const raw = await readFile(join(projDir, "ccmon-status.json"), "utf8");
     const status = JSON.parse(raw);
     expect(status.state).toBe("stopped");
     expect(status.session_id).toBe("sess-abc");
@@ -473,7 +473,7 @@ describe("status", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      const raw = await readFile(join(projDir, "status.local.json"), "utf8");
+      const raw = await readFile(join(projDir, "ccmon-status.json"), "utf8");
       const status = JSON.parse(raw);
       expect(status.state).toBe(expectedState);
     }
@@ -506,10 +506,116 @@ describe("status", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      const raw = await readFile(join(projDir, "status.local.json"), "utf8");
+      const raw = await readFile(join(projDir, "ccmon-status.json"), "utf8");
       const status = JSON.parse(raw);
       expect(status.state).toBe("running");
     }
+  });
+
+  test("SubagentStop: writes per-agent ccmon-status.json with stopped state", async () => {
+    const projDir = join(tmpDir, "-home-user-subagent");
+    await mkdir(projDir, { recursive: true });
+    const sessionId = "sess-subagent";
+    await writeFile(
+      join(projDir, "session.jsonl"),
+      `${makeFirstLine("/home/user/subagent", sessionId)}\n`,
+    );
+
+    // Write an existing session-level ccmon-status.json for updateSubagentStatus to patch
+    await writeFile(
+      join(projDir, "ccmon-status.json"),
+      JSON.stringify({
+        state: "running",
+        timestamp: new Date().toISOString(),
+        session_id: sessionId,
+        working_dir: "/home/user/subagent",
+      }),
+    );
+
+    const agentId = "ae89d86";
+    const sessionUuid = "session-uuid-1";
+    const subagentsDir = join(projDir, sessionUuid, "subagents");
+    await mkdir(subagentsDir, { recursive: true });
+    const agentJsonlPath = join(subagentsDir, `agent-${agentId}.jsonl`);
+    await writeFile(agentJsonlPath, '{"type":"user"}\n');
+
+    const hookPayload = JSON.stringify({
+      session_id: sessionId,
+      cwd: "/home/user/subagent",
+      hook_event_name: "SubagentStop",
+      agent_id: agentId,
+      agent_transcript_path: agentJsonlPath,
+    });
+
+    const result = await spawnCli(["status"], {
+      stdin: hookPayload,
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({});
+
+    // Per-agent status file written with stopped state
+    const agentStatusPath = join(
+      subagentsDir,
+      `agent-${agentId}.ccmon-status.json`,
+    );
+    const agentRaw = await readFile(agentStatusPath, "utf8");
+    const agentStatus = JSON.parse(agentRaw);
+    expect(agentStatus.state).toBe("stopped");
+    expect(typeof agentStatus.timestamp).toBe("string");
+  });
+
+  test("SubagentStop: updates session-level ccmon-status.json with lastSubagentStoppedAt", async () => {
+    const projDir = join(tmpDir, "-home-user-subagent2");
+    await mkdir(projDir, { recursive: true });
+    const sessionId = "sess-subagent2";
+    await writeFile(
+      join(projDir, "session.jsonl"),
+      `${makeFirstLine("/home/user/subagent2", sessionId)}\n`,
+    );
+
+    // Write a session-level status file to patch
+    await writeFile(
+      join(projDir, "ccmon-status.json"),
+      JSON.stringify({
+        state: "running",
+        timestamp: new Date().toISOString(),
+        session_id: sessionId,
+        working_dir: "/home/user/subagent2",
+      }),
+    );
+
+    const agentId = "bf91e23";
+    const sessionUuid = "session-uuid-2";
+    const subagentsDir = join(projDir, sessionUuid, "subagents");
+    await mkdir(subagentsDir, { recursive: true });
+    const agentJsonlPath = join(subagentsDir, `agent-${agentId}.jsonl`);
+    await writeFile(agentJsonlPath, '{"type":"user"}\n');
+
+    const hookPayload = JSON.stringify({
+      session_id: sessionId,
+      cwd: "/home/user/subagent2",
+      hook_event_name: "SubagentStop",
+      agent_id: agentId,
+      agent_transcript_path: agentJsonlPath,
+    });
+
+    const result = await spawnCli(["status"], {
+      stdin: hookPayload,
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).toBe(0);
+
+    // Session-level status file updated with lastSubagentStoppedAt
+    const sessionRaw = await readFile(
+      join(projDir, "ccmon-status.json"),
+      "utf8",
+    );
+    const sessionStatus = JSON.parse(sessionRaw);
+    expect(sessionStatus.state).toBe("running");
+    expect(typeof sessionStatus.lastSubagentStoppedAt).toBe("string");
   });
 });
 
@@ -577,7 +683,7 @@ describe("dump --watch", () => {
 
     // Trigger a status file change
     await writeFile(
-      join(projDir, "status.local.json"),
+      join(projDir, "ccmon-status.json"),
       makeStatusPayload("running"),
     );
     // Wait for watcher debounce + propagation

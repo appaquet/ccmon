@@ -21,7 +21,7 @@ bun run dump --watch --project <name>     # Stream single project, one JSON per 
 Watch mode outputs are newline-delimited JSON (NDJSON), pipeable: `ccmon dump --watch | jq .`
 
 ### status
-Reads hook event from stdin, writes to `~/.claude/projects/{dir}/status.local.json`. Used by Claude Code hooks.
+Reads hook event from stdin (Stop, SessionEnd, SessionStart, Notification, PermissionRequest, SubagentStop), writes to `~/.claude/projects/{dir}/ccmon-status.json`. For SubagentStop events, writes a per-sub-agent file `agent-{shortid}.ccmon-status.json` in the subagents directory. Used by Claude Code hooks.
 
 ### serve
 ```bash
@@ -68,10 +68,11 @@ After any change to `src/sessions.ts` (especially `readProjectInfo`, `readFirstL
 
 **Project naming**: `projectName` = basename of cwd (from `projectPath`). Used for `--project` filtering and server project identification.
 
-**Status file**: Hook writes to `~/.claude/projects/{encoded-dir}/status.local.json`
+**Status file**: Hook writes to `~/.claude/projects/{encoded-dir}/ccmon-status.json`
 - Encoded dir replaces `/` with `-` in cwd when no existing project found
 - Status includes: `state`, `timestamp`, `session_id`, `working_dir`
 - States: `running`, `waiting_for_permission`, `stopped`
+- SubagentStop events write `agent-{shortid}.ccmon-status.json` inside the subagents directory
 
 **Config file**: `$XDG_CONFIG_HOME/ccmon/config.json` (default: `~/.config/ccmon/config.json`)
 - `CCMON_CONFIG` env var overrides the config path
@@ -86,11 +87,12 @@ After any change to `src/sessions.ts` (especially `readProjectInfo`, `readFirstL
 ~/.claude/projects/
   {encoded-cwd}/                  # abs cwd with / replaced by - (e.g. -home-user-Projects-ccmon)
     sessions-index.json           # session metadata index (may be absent)
-    status.local.json             # hook-written state (may be absent)
+    ccmon-status.json             # hook-written state (may be absent)
     {uuid}.jsonl                  # NDJSON session transcript, one per session
     {uuid}/
       subagents/
-        agent-{shortid}.jsonl     # NDJSON sub-agent transcript, one per invocation
+        agent-{shortid}.jsonl           # NDJSON sub-agent transcript, one per invocation
+        agent-{shortid}.ccmon-status.json  # SubagentStop hook-written state (may be absent)
 ```
 
 ### `sessions-index.json`
@@ -98,7 +100,7 @@ After any change to `src/sessions.ts` (especially `readProjectInfo`, `readFirstL
 - Use `projectPath` (not `originalPath`) for the working directory
 - Filter `isSidechain: true` entries
 
-### `status.local.json`
+### `ccmon-status.json`
 
 - States: `running` | `waiting_for_permission` | `stopped`
 - Stale rule: considered stale if `timestamp` >5 min old and state is not `stopped`
