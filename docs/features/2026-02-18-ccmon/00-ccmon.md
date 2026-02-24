@@ -414,6 +414,12 @@ Fix `waiting_for_permission` persisting after user clicks "Allow". PostToolUse f
 
 Click on a flashing waiting card to acknowledge and stop the animation. State badge remains "Waiting". Flash re-triggers if a new PermissionRequest arrives after the state cycles.
 
+### ⬜ 30 Phase: Inbox Fixes
+
+[30-inbox-fixes](30-inbox-fixes.md)
+
+Two inbox bugs: (1) stale state after WS reconnect — clear projects on disconnect. (2) Sub-agent names showing raw agentId — parse `Task` tool_use/toolUseResult for description correlation, fall back to slug.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
