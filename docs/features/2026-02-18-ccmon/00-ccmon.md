@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 30 implemented: Two inbox fixes — (1) clear projects on WS disconnect/reconnect to prevent stale state, (2) parse Task tool_use/toolUseResult for sub-agent description correlation (fallback: slug → agentId). 206 tests pass, lint + typecheck clean.
+Phase 31 implemented: watcher restart-on-error with exponential backoff, periodic safety broadcast (30s). 213 tests pass, lint + typecheck clean.
 
 ## Requirements
 
@@ -226,9 +226,9 @@ Phase 30 implemented: Two inbox fixes — (1) clear projects on WS disconnect/re
 
 ### Watcher Resilience
 
-- R60: ⬜ Filesystem watchers automatically restart after errors instead of silently dying (Phase: Watcher Resilience)
+- R60: 🔄 Filesystem watchers automatically restart after errors instead of silently dying (Phase: Watcher Resilience)
   - R60.1: Restart uses exponential backoff (1s, 2s, 4s... up to 30s max); restart attempts are logged
-- R61: ⬜ Periodic safety broadcast (every 30s) re-scans project state and pushes to all WS clients as fallback when watchers die (Phase: Watcher Resilience)
+- R61: 🔄 Periodic safety broadcast (every 30s) re-scans project state and pushes to all WS clients as fallback when watchers die (Phase: Watcher Resilience)
 
 #### Out of Scope
 
@@ -426,7 +426,7 @@ Click on a flashing waiting card to acknowledge and stop the animation. State ba
 
 Two inbox bugs: (1) stale state after WS reconnect — clear projects on disconnect. (2) Sub-agent names showing raw agentId — parse `Task` tool_use/toolUseResult for description correlation, fall back to slug.
 
-### ⬜ 31 Phase: Watcher Resilience
+### 🔄 31 Phase: Watcher Resilience
 
 [31-watcher-resilience](31-watcher-resilience.md)
 
@@ -448,14 +448,14 @@ Fix silent watcher death causing frozen server state. Add restart-on-error with 
 - **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed (Phase: Backend, Review Fixes)
 - **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatusLog()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatusEvent()`, `writeStatusTruncate()`, `filterStaleProjects()`; `StatusEvent` type, append-only NDJSON status log, `resolveState()` with event-scan logic; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback; `findLatestJSONL` excludes status log files (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log)
-- **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed (Phase: Session Detection, Review Fixes)
+- **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed; exponential backoff restart-on-error for both watchers (Phase: Session Detection, Review Fixes, Watcher Resilience)
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner; `sub` parses new WS envelope with backward compat; `sub --host` flag; status builds StatusEvent and routes to writeStatusEvent/writeStatusTruncate (Phase: Session Detection, Backend, Review Fixes, Multi-Backend, Append-Only Status Log)
-- **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init; WS payload wrapped in `{ hostname, projects }` envelope; `Cache-Control: no-cache` on HTML response (Phase: Backend, Review Fixes, Multi-Backend)
+- **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init; WS payload wrapped in `{ hostname, projects }` envelope; `Cache-Control: no-cache` on HTML response; periodic 30s safety broadcast (Phase: Backend, Review Fixes, Multi-Backend, Watcher Resilience)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
 - **tests/sessions.test.ts**: 202 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log)
-- **tests/watcher.test.ts**: 3 unit tests for watcher.ts (Phase: Session Detection)
+- **tests/watcher.test.ts**: Unit tests for watcher.ts; backoff formula + restart-on-error tests added (Phase: Session Detection, Watcher Resilience)
 - **tests/cli.test.ts**: CLI tests — arg-validation, status NDJSON format, dump --watch, --project filter (Phase: Review Fixes, Append-Only Status Log)
 - **tests/config.test.ts**: Config loading tests; 22+ tests covering partial config, invalid types (Phase: Review Fixes 2)
-- **tests/server.test.ts**: 11 tests for server.ts — HTTP endpoints, WebSocket, WS envelope + hostname field (Phase: Backend, Multi-Backend)
+- **tests/server.test.ts**: Tests for server.ts — HTTP endpoints, WebSocket, WS envelope + hostname field, periodic broadcast (Phase: Backend, Multi-Backend, Watcher Resilience)
 - **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)
 - **docs/features/2026-02-18-ccmon/06-notifications-streaming.md**: Phase 06 plan — notifications, JSONL streaming, sub-agent consolidation (Phase: Notifications & Streaming)

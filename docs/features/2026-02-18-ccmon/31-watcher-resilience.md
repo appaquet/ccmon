@@ -8,12 +8,12 @@ Fix silent watcher death causing frozen server state. When a filesystem watcher 
 
 ## Tasks
 
-- [ ] Add watcher restart-on-error with exponential backoff in `watcher.ts` error handlers (both claudeDir and project watchers) (R60, R60.1)
-- [ ] Add test: watcher error triggers restart attempt (R60)
-- [ ] Add test: backoff increases on repeated errors (R60.1)
-- [ ] Add periodic safety broadcast timer (30s) in `server.ts` (R61)
-- [ ] Add test: periodic broadcast re-scans and sends state (R61)
-- [ ] Run lint + typecheck + tests
+- [x] Add watcher restart-on-error with exponential backoff in `watcher.ts` error handlers (both claudeDir and project watchers) (R60, R60.1)
+- [x] Add test: watcher error triggers restart attempt (R60)
+- [x] Add test: backoff increases on repeated errors (R60.1)
+- [x] Add periodic safety broadcast timer (30s) in `server.ts` (R61)
+- [x] Add test: periodic broadcast re-scans and sends state (R61)
+- [x] Run lint + typecheck + tests
 
 ## Files
 
