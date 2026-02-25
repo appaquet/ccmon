@@ -453,6 +453,73 @@ describe("server-side state map (R31)", () => {
   });
 });
 
+// ─── R61: periodic safety broadcast ──────────────────────────────────────────
+
+describe("periodic safety broadcast (R61)", () => {
+  let tmpDir: string;
+  let stop: (() => void) | null = null;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir("ccmon-server-r61");
+  });
+
+  afterEach(async () => {
+    if (stop) {
+      stop();
+      stop = null;
+    }
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test("R61: periodic broadcast delivers state to connected WS client", async () => {
+    const projDir = join(tmpDir, "-home-user-r61proj");
+    await mkdir(projDir, { recursive: true });
+    const firstLine = JSON.stringify({
+      sessionId: "r61-test",
+      cwd: "/home/user/r61proj",
+      gitBranch: "main",
+      timestamp: new Date().toISOString(),
+    });
+    await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
+
+    // Use a short interval to avoid waiting 30 s in the test
+    const srv = startServer({
+      port: 0,
+      claudeDir: tmpDir,
+      maxInactivityHours: Infinity,
+      broadcastIntervalMs: 100,
+    });
+    stop = srv.stop;
+    await srv.ready;
+
+    const messages: string[] = [];
+
+    const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
+    ws.onmessage = (event) => {
+      messages.push(event.data as string);
+    };
+
+    // Wait long enough for at least two interval fires (initial open + ≥1 periodic)
+    await Bun.sleep(450);
+    ws.close();
+
+    // The open event sends one message; periodic interval should send at least one more
+    expect(messages.length).toBeGreaterThanOrEqual(2);
+
+    // Every message must contain the project
+    for (const msg of messages) {
+      const envelope = JSON.parse(msg) as {
+        hostname: string;
+        projects: unknown[];
+      };
+      const entry = envelope.projects.find(
+        (e) => (e as Record<string, unknown>).projectName === "r61proj",
+      );
+      expect(entry).toBeDefined();
+    }
+  }, 5000);
+});
+
 // ─── R34: state propagation ───────────────────────────────────────────────────
 
 describe("state propagation (R34)", () => {

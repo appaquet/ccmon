@@ -4,6 +4,15 @@ import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 const DEBOUNCE_MS = 100;
+const BACKOFF_INITIAL_MS = 1000;
+const BACKOFF_MAX_MS = 30_000;
+
+function backoffDelay(attempts: number): number {
+  return Math.min(BACKOFF_INITIAL_MS * 2 ** attempts, BACKOFF_MAX_MS);
+}
+
+/** Exported for testing only. */
+export const _backoffDelayForTesting = backoffDelay;
 
 /**
  * Watches claudeDir for project subdirectory changes and calls onUpdate when
@@ -21,6 +30,8 @@ export function watchForChanges(
 ): { stop: () => void } {
   const watchers = new Map<string, FSWatcher>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Tracks restart attempt counts per watcher key for exponential backoff.
+  const restartAttempts = new Map<string, number>();
   let stopped = false;
 
   function scheduleUpdate(projectDir: string): void {
@@ -47,7 +58,21 @@ export function watchForChanges(
       watcher.on("error", () => {
         watcher.close();
         watchers.delete(key);
+
+        if (stopped) return;
+        const attempt = restartAttempts.get(key) ?? 0;
+        const delay = backoffDelay(attempt);
+        console.error(
+          `ccmon: watcher error for ${projectDir}, restarting in ${delay}ms (attempt ${attempt + 1})`,
+        );
+        restartAttempts.set(key, attempt + 1);
+        setTimeout(() => {
+          if (stopped) return;
+          watchProjectDir(projectDir);
+        }, delay);
       });
+      // Reset backoff on successful (re)start.
+      restartAttempts.delete(key);
       watchers.set(key, watcher);
     } catch {
       // Directory inaccessible — ignore
@@ -69,6 +94,7 @@ export function watchForChanges(
   // Watch claudeDir for new project subdirectories
   function startClaudeDirWatcher(): void {
     if (stopped) return;
+    const key = "claudeDir";
     try {
       const watcher = watch(claudeDir, (_eventType, filename) => {
         if (!filename || stopped) return;
@@ -79,9 +105,23 @@ export function watchForChanges(
       });
       watcher.on("error", () => {
         watcher.close();
-        watchers.delete("claudeDir");
+        watchers.delete(key);
+
+        if (stopped) return;
+        const attempt = restartAttempts.get(key) ?? 0;
+        const delay = backoffDelay(attempt);
+        console.error(
+          `ccmon: watcher error for claudeDir, restarting in ${delay}ms (attempt ${attempt + 1})`,
+        );
+        restartAttempts.set(key, attempt + 1);
+        setTimeout(() => {
+          if (stopped) return;
+          startClaudeDirWatcher();
+        }, delay);
       });
-      watchers.set("claudeDir", watcher);
+      // Reset backoff on successful (re)start.
+      restartAttempts.delete(key);
+      watchers.set(key, watcher);
     } catch {
       // claudeDir inaccessible — nothing to watch
     }
@@ -127,6 +167,7 @@ export function watchForChanges(
         }
       }
       watchers.clear();
+      restartAttempts.clear();
     },
   };
 }

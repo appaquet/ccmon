@@ -24,6 +24,8 @@ export interface ServerOptions {
   hostname?: string;
   claudeDir?: string;
   maxInactivityHours?: number;
+  /** Override the periodic broadcast interval in ms. Defaults to 30000. Used in tests only. */
+  broadcastIntervalMs?: number;
 }
 
 /**
@@ -87,6 +89,14 @@ export function startServer(options: ServerOptions = {}): {
   // Watcher reference is set after the initial scan completes to avoid a race where a watcher
   // event fires before ready resolves and then stateMap.clear() discards the interim update.
   let watcher: ReturnType<typeof watchForChanges> | null = null;
+
+  // Periodic safety broadcast: re-pushes current state every 30 s so clients recover from
+  // any silent watcher death without needing to reconnect.
+  const BROADCAST_INTERVAL_MS = options.broadcastIntervalMs ?? 30_000;
+  const broadcastInterval = setInterval(
+    broadcastCurrent,
+    BROADCAST_INTERVAL_MS,
+  );
 
   // Populate the state map on startup, then start the watcher so events are never lost.
   const ready = getProjectState(claudeDir)
@@ -166,6 +176,7 @@ export function startServer(options: ServerOptions = {}): {
     port: server.port as number,
     ready,
     stop(): void {
+      clearInterval(broadcastInterval);
       watcher?.stop();
       server.stop(true);
     },

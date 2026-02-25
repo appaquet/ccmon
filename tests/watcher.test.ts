@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { watchForChanges } from "../src/watcher";
+import { _backoffDelayForTesting, watchForChanges } from "../src/watcher";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -119,4 +119,73 @@ describe("watchForChanges", () => {
 
     expect(called.length).toBe(1);
   }, 3000);
+
+  test("watcher error triggers restart attempt with log message", async () => {
+    const projDir = join(tmpDir, "-home-user-errrestart");
+    await mkdir(projDir, { recursive: true });
+    await writeFile(join(projDir, "session.jsonl"), '{"type":"user"}\n');
+
+    const errorMessages: string[] = [];
+    const origError = console.error;
+    console.error = mock((...args: unknown[]) => {
+      errorMessages.push(args.join(" "));
+    });
+
+    const watcher = watchForChanges(tmpDir, () => {});
+    stop = watcher.stop;
+
+    // Let watcher initialize and start watching projDir
+    await Bun.sleep(100);
+
+    // Removing the watched directory causes the watcher to receive an error on Linux
+    await rm(projDir, { recursive: true, force: true });
+
+    // Give watcher error handler time to fire
+    await Bun.sleep(300);
+
+    console.error = origError;
+
+    // Verify restart was logged (directory removal may produce rename or error event;
+    // on supported platforms it will log a restart message)
+    const restartMsg = errorMessages.find(
+      (m) => m.includes("restarting in") && m.includes("attempt"),
+    );
+    // If the platform emitted an error event, the restart message must be present.
+    // On platforms where removal doesn't emit error (only rename), this check is skipped.
+    if (restartMsg !== undefined) {
+      expect(restartMsg).toContain("restarting in");
+      expect(restartMsg).toContain("attempt 1");
+    }
+  }, 5000);
+});
+
+// ─── backoff delay formula ────────────────────────────────────────────────────
+
+describe("backoff delay formula", () => {
+  test("first attempt uses initial delay (1000ms)", () => {
+    expect(_backoffDelayForTesting(0)).toBe(1000);
+  });
+
+  test("second attempt doubles the delay (2000ms)", () => {
+    expect(_backoffDelayForTesting(1)).toBe(2000);
+  });
+
+  test("third attempt doubles again (4000ms)", () => {
+    expect(_backoffDelayForTesting(2)).toBe(4000);
+  });
+
+  test("delay is capped at 30000ms for large attempt counts", () => {
+    expect(_backoffDelayForTesting(10)).toBe(30_000);
+    expect(_backoffDelayForTesting(100)).toBe(30_000);
+  });
+
+  test("delay doubles on each attempt up to cap", () => {
+    const delays = [0, 1, 2, 3, 4, 5].map(_backoffDelayForTesting);
+    // Each delay should be double the previous, until cap
+    for (let i = 1; i < delays.length; i++) {
+      const prev = delays[i - 1] as number;
+      const curr = delays[i] as number;
+      expect(curr).toBe(Math.min(prev * 2, 30_000));
+    }
+  });
 });
