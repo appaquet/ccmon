@@ -13,40 +13,37 @@ See [00-ccmon](00-ccmon.md). When multiple projects share the same leaf director
 
 ### Backend
 
-- [ ] Implement `disambiguateProjectNames(projects: ProjectState[])` in `src/sessions.ts`
+- [x] Implement `disambiguateProjectNames(projects: ProjectState[])` in `src/sessions.ts`
   - Group projects by `projectName` (basename)
   - For groups with duplicates, expand `projectName` by prepending parent dir segments from `cwd` until unique
   - Use `/` as separator (e.g. `projectA/backend`)
   - Projects with unique basenames keep their short name unchanged
-- [ ] Call `disambiguateProjectNames()` in `getProjectState()` after building all states
-  - CRITICAL: On targeted refresh path, disambiguation must re-run on ALL cached projects (mutate all entries in `projectStateCache`), not just the changed one — adding/removing one project can change the name of others
-- [ ] Add unit tests for `disambiguateProjectNames`:
+- [x] Call `disambiguateProjectNames()` in `getProjectState()` after building all states
+  - On targeted refresh path, resets all cached projectNames to basename first, then re-runs disambiguation on full cache
+- [x] Add unit tests for `disambiguateProjectNames` (5 tests):
   - Two projects same basename, different parents → both get `parent/leaf` projectName
   - Three projects needing 2+ segments to disambiguate
   - Mix of unique and duplicate names: unique ones keep basename
   - Single project (no disambiguation needed)
+  - Re-run resets stale names when duplicate removed
 
 ### Frontend
 
-- [ ] Switch `projKey()` to use `projectDir` instead of `projectName` for composite key
-  - Current: `p._backendKey + '::' + p.projectName` — breaks when projectName changes
-  - New: `p._backendKey + '::' + p.projectDir` — stable, unique per project per backend
-  - This fixes all 5 state maps: `prevState`, `flashStopped`, `flashNotification`, `flashWaitingDismissed`, `prevNotificationTimestamp`
-  - Also fixes `lastSortOrder` cache (prevents card position jumps on rename)
-  - `projectDir` field already present in `ProjectState` — it's the encoded dir name from `~/.claude/projects/`
-- [ ] Multi-backend hostname prefix (R58 `nameCounts`) — verify it correctly layers on top of disambiguated names
+- [x] Switch `projKey()` to use `projectDir` instead of `projectName` for composite key
+  - `p._backendKey + '::' + (p.projectDir || p.projectName)` — stable across renames
+  - Fixes all 5 state maps + lastSortOrder cache
+- [x] Multi-backend hostname prefix (R58 `nameCounts`) — verified it correctly layers on top (uses `projectName` for display collision, not key)
 
 ### CLI
 
-- [ ] `--project` filter already matches `projectName` — works with expanded names, no change needed
-  - Note: during `--watch`, if a project gets disambiguated mid-stream, output stops matching. Acceptable behavior — document in CLAUDE.md if needed
+- [x] `--project` filter already matches `projectName` — works with expanded names, no change needed
 
 ### Validation
 
-- [ ] Run lint + typecheck + tests
+- [x] Run lint + typecheck + tests — 218 tests pass, all clean
 
 ## Files
 
-- **src/sessions.ts**: Implement and call `disambiguateProjectNames()`; ensure targeted refresh re-disambiguates all cached projects
-- **public/index.html**: Switch `projKey()` to use `projectDir`
-- **tests/sessions.test.ts**: Unit tests for disambiguation function
+- **src/sessions.ts**: Added `disambiguateProjectNames()` function; integrated into both paths of `getProjectState()`
+- **public/index.html**: `projKey()` uses `projectDir` instead of `projectName`
+- **tests/sessions.test.ts**: 5 new tests for disambiguation function

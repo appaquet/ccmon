@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-All 32 phases complete. Phase 33 (Project Name Disambiguation) planned — adds `displayName` field to disambiguate projects sharing the same leaf directory name. 213 tests pass, lint + typecheck clean.
+Phase 33 (Project Name Disambiguation) complete. `disambiguateProjectNames()` expands `projectName` with parent path segments when duplicates exist. Frontend `projKey()` uses stable `projectDir` for state map keys. 218 tests pass, lint + typecheck clean.
 
 ## Requirements
 
@@ -233,7 +233,7 @@ All 32 phases complete. Phase 33 (Project Name Disambiguation) planned — adds 
 
 ### Project Name Disambiguation
 
-- R63: ⬜ Projects with duplicate leaf names get `projectName` expanded with parent path segments until unique (Phase: Project Name Disambiguation)
+- R63: ✅ Projects with duplicate leaf names get `projectName` expanded with parent path segments until unique (Phase: Project Name Disambiguation)
   - R63.1: `disambiguateProjectNames()` groups by basename, expands `projectName` with parent segments until unique
   - R63.2: Unique basenames keep their short name; no separate `displayName` field needed
 
@@ -445,7 +445,7 @@ Fix silent watcher death causing frozen server state. Add restart-on-error with 
 
 Fix Safari not reconnecting WS after laptop sleep. Add visibilitychange handler for immediate reconnect on wake, plus last-message heartbeat for zombie socket detection.
 
-### ⬜ 33 Phase: Project Name Disambiguation
+### ✅ 33 Phase: Project Name Disambiguation
 
 [33-project-name-disambiguation](33-project-name-disambiguation.md)
 
