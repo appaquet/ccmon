@@ -20,7 +20,7 @@ See [00-ccmon](00-ccmon.md). Fix stop detection race: Claude writes a `system` J
 
 ### 2. Validate live behavior
 
-- [ ] User validates in dashboard during real session stop
+- [x] User validates in dashboard during real session stop
 
 ## Files
 

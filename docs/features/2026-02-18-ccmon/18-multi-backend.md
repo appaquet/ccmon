@@ -54,9 +54,9 @@ See [00-ccmon](00-ccmon.md). Add support for connecting the dashboard to multipl
 
 ### 6. Validation
 
-- [ ] Manual test: start two `ccmon serve` on different ports, add second server URL in menu, verify projects from both appear
-- [ ] Manual test: stop one server, verify "Partially connected" state, projects from remaining server still shown
-- [ ] Manual test: refresh page, verify additional servers restored from localStorage
+- [x] Manual test: start two `ccmon serve` on different ports, add second server URL in menu, verify projects from both appear
+- [x] Manual test: stop one server, verify "Partially connected" state, projects from remaining server still shown
+- [x] Manual test: refresh page, verify additional servers restored from localStorage
 
 ## Files
 

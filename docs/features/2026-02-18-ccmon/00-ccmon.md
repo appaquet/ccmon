@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 32 implemented: visibilitychange handler force-reconnects on wake, zombie heartbeat detects dead sockets (>60s no message). 213 tests pass, lint + typecheck clean. Manual sleep/wake test pending.
+All 32 phases complete. 213 tests pass, lint + typecheck clean. All requirements (R1–R62) marked ✅. No outstanding tasks or planning items.
 
 ## Requirements
 
@@ -32,7 +32,7 @@ Phase 32 implemented: visibilitychange handler force-reconnects on wake, zombie 
 
 ### State Reporting via Hooks
 
-- R3: 🔄 `ccmon status` sub-command writes `ccmon-status.json` from hook stdin (Phase: Backend)
+- R3: ✅ `ccmon status` sub-command writes `ccmon-status.json` from hook stdin (Phase: Backend)
   - R3.1: Hook events → states:
     - `UserPromptSubmit` → `running` (Claude processing user input)
     - `PostToolUse` → `running` (Claude continuing after tool)
@@ -43,19 +43,19 @@ Phase 32 implemented: visibilitychange handler force-reconnects on wake, zombie 
   - R3.2: `ccmon-status.json` contains: `state`, `timestamp`, `session_id`, `working_dir`, optional `lastSubagentStoppedAt`
   - R3.3: File written to `~/.claude/projects/{dir}/ccmon-status.json` (project dir found via `sessions-index.json` lookup or path encoding fallback)
   - R3.4: Reads hook JSON from stdin (cwd, session_id, hook_event_name), maps event to state, resolves cwd to project dir
-- R14: 🔄 Use `sessions-index.json` as primary data source for project scanning (Phase: Backend)
+- R14: ✅ Use `sessions-index.json` as primary data source for project scanning (Phase: Backend)
   - R14.1: `sessions-index.json` contains `originalPath`, session entries with `summary`, `messageCount`, `firstPrompt`, `isSidechain`, `fullPath`, `fileMtime`, `gitBranch`
   - R14.2: Fall back to JSONL first-line parse when `sessions-index.json` is absent (not all project dirs have it)
   - R14.3: Extend `ProjectInfo` with optional fields: `summary`, `firstPrompt`, `messageCount`, `sessionModified`
   - R14.4: Filter out `isSidechain: true` entries
-- R4: 🔄 Hook config adds `ccmon status` alongside existing `claude-tmux-indicator` in `~/dotfiles/home-manager/modules/claude/settings.json` (Phase: Backend)
+- R4: ✅ Hook config adds `ccmon status` alongside existing `claude-tmux-indicator` in `~/dotfiles/home-manager/modules/claude/settings.json` (Phase: Backend)
   - R4.1: Both hooks run in same matcher group (parallel stdin copies)
   - R4.2: `claude-tmux-indicator` remains independent — ccmon hooks alongside it, does not extend it
 
 ### Web Server
 
-- R5: 🔄 Bun HTTP server serves the dashboard at `/` (Phase: Backend)
-- R6: 🔄 WebSocket endpoint pushes real-time state updates to connected clients (Phase: Backend)
+- R5: ✅ Bun HTTP server serves the dashboard at `/` (Phase: Backend)
+- R6: ✅ WebSocket endpoint pushes real-time state updates to connected clients (Phase: Backend)
   - R6.1: Server watches all known `ccmon-status.json` files for changes and broadcasts updates
   - R6.2: On new client connect, send current state of all projects immediately
 
@@ -144,7 +144,7 @@ Phase 32 implemented: visibilitychange handler force-reconnects on wake, zombie 
 
 ### JSONL-Primary Detection
 
-- R34: 🔄 JSONL mtime is the primary signal for running state; hooks retained for immediate stopped detection (Phase: JSONL-Primary Detection, Stop Detection Fix)
+- R34: ✅ JSONL mtime is the primary signal for running state; hooks retained for immediate stopped detection (Phase: JSONL-Primary Detection, Stop Detection Fix)
   - R34.1: Watcher monitors *.jsonl files in project dirs; `running` derived from JSONL mtime < 60s
   - R34.2: `stopped` from Stop/SessionEnd hooks (immediate) or JSONL mtime > 60s (crash fallback)
   - R34.6: 5s grace period on JSONL-vs-stopped comparison — Claude writes post-stop system entry to JSONL, making mtime slightly newer than hook timestamp
@@ -152,7 +152,7 @@ Phase 32 implemented: visibilitychange handler force-reconnects on wake, zombie 
   - R34.3: ccmon-status.json read for waiting_for_permission, stopped timestamp, and notification fields
   - R34.4: pgrep/proc liveness detection removed entirely
   - R34.5: R33 debounce removed — race condition eliminated at source
-- R35: 🔄 Hook config — UserPromptSubmit/PostToolUse re-added for immediate running detection (Phase: JSONL-Primary Detection, Inbox Bug Fixes)
+- R35: ✅ Hook config — UserPromptSubmit/PostToolUse re-added for immediate running detection (Phase: JSONL-Primary Detection, Inbox Bug Fixes)
   - R35.1: UserPromptSubmit, PostToolUse → `running`; JSONL mtime remains primary for sustained running; hook provides immediate signal with 30s TTL
   - R35.2: Stop, SessionEnd, PermissionRequest, Notification, SessionStart hooks retained
 
@@ -205,20 +205,20 @@ Phase 32 implemented: visibilitychange handler force-reconnects on wake, zombie 
 
 ### Multi-Backend WebSocket
 
-- R56: 🔄 Dashboard supports connecting to multiple ccmon server backends simultaneously (Phase: Multi-Backend)
+- R56: ✅ Dashboard supports connecting to multiple ccmon server backends simultaneously (Phase: Multi-Backend)
   - R56.1: Server WS messages use `{ hostname, projects }` envelope instead of raw `ProjectState[]`
   - R56.2: Frontend manages N backend connections with independent reconnect logic per backend
   - R56.3: Frontend handles legacy servers that send raw arrays (backward compat)
   - R56.4: Additional server URLs persisted in localStorage and restored on page load
-- R57: 🔄 Connection status and server management UI (Phase: Multi-Backend)
+- R57: ✅ Connection status and server management UI (Phase: Multi-Backend)
   - R57.1: Projects from all connected backends merged into a single grid
   - R57.2: Status pill: Connected (all up) / Partially connected (some up) / Disconnected (none up)
   - R57.3: Cog icon + clickable pill open server management menu; add/remove servers; main server cannot be removed
 
-- R58: 🔄 Same-named projects across backends are disambiguated with composite key and hostname prefix (Phase: Multi-Backend Naming)
+- R58: ✅ Same-named projects across backends are disambiguated with composite key and hostname prefix (Phase: Multi-Backend Naming)
   - R58.1: Card header shows `hostname:projectName` when the same `projectName` exists on multiple backends
 
-- R59: 🔄 Append-only NDJSON status event log replaces single-write status JSON (Phase: Append-Only Status Log)
+- R59: ✅ Append-only NDJSON status event log replaces single-write status JSON (Phase: Append-Only Status Log)
   - R59.1: `ccmon-status.jsonl` — each hook event appends one JSON line; no overwrites except Stop/SessionEnd which truncate
   - R59.2: `resolveState()` scans event history; PermissionRequest resolved only by UserPromptSubmit/Stop/SessionEnd (not PostToolUse)
   - R59.3: JSONL mtime retained as pure fallback for broken-hooks scenario
@@ -226,10 +226,10 @@ Phase 32 implemented: visibilitychange handler force-reconnects on wake, zombie 
 
 ### Watcher Resilience
 
-- R60: 🔄 Filesystem watchers automatically restart after errors instead of silently dying (Phase: Watcher Resilience)
+- R60: ✅ Filesystem watchers automatically restart after errors instead of silently dying (Phase: Watcher Resilience)
   - R60.1: Restart uses exponential backoff (1s, 2s, 4s... up to 30s max); restart attempts are logged
-- R61: 🔄 Periodic safety broadcast (every 30s) re-scans project state and pushes to all WS clients as fallback when watchers die (Phase: Watcher Resilience)
-- R62: 🔄 Frontend recovers from laptop sleep without manual page refresh (Phase: Sleep/Wake WS Reconnect)
+- R61: ✅ Periodic safety broadcast (every 30s) re-scans project state and pushes to all WS clients as fallback when watchers die (Phase: Watcher Resilience)
+- R62: ✅ Frontend recovers from laptop sleep without manual page refresh (Phase: Sleep/Wake WS Reconnect)
 
 #### Out of Scope
 
@@ -253,7 +253,7 @@ Phase 32 implemented: visibilitychange handler force-reconnects on wake, zombie 
 
 Logic to scan `~/.claude/projects/` and map directories to project metadata. All 8 steps complete, 24 tests passing. `lastUpdated` falls back to JSONL file mtime.
 
-### 🔄 02 Phase: Backend
+### ✅ 02 Phase: Backend
 
 [02-backend](02-backend.md)
 
@@ -331,7 +331,7 @@ Second review pass: 22 tasks fixing correctness bugs (blocking spawn, watcher ra
 
 Rework dashboard cards to unified agent-row layout: context window progress bar (128k max, color thresholds), main + sub-agent rows look identical (pulsing dot, model, user/assistant lines). Remove git branch, output tokens. 6 UI-only tasks complete, 181 tests passing.
 
-### 🔄 15 Phase: Stop Detection Fix
+### ✅ 15 Phase: Stop Detection Fix
 
 [15-stop-detection-fix](15-stop-detection-fix.md)
 
@@ -349,7 +349,7 @@ Three bugs: task completions not reflected in WebSocket/sub (delta reads drop Ta
 
 After session stops and resumes (same UUID), old sub-agents can appear active because `getSubagentInfos()` uses 45s mtime threshold with no awareness of session stop events. Fix: pass `stoppedAtMs` into sub-agent detection.
 
-### 🔄 18 Phase: Multi-Backend WebSocket
+### ✅ 18 Phase: Multi-Backend WebSocket
 
 [18-multi-backend](18-multi-backend.md)
 
@@ -373,7 +373,7 @@ GHA workflow running lint, typecheck, and tests on every push and pull request.
 
 Reduced CLAUDE.md from 181 to 114 lines (37%) by removing JSON schema examples and redundant prose. Commands and architecture sections kept intact.
 
-### 🔄 22 Phase: Multi-Backend Project Naming
+### ✅ 22 Phase: Multi-Backend Project Naming
 
 [22-multi-backend-naming](22-multi-backend-naming.md)
 
@@ -403,37 +403,37 @@ Replace ASCII `>` / `<` message direction indicators with UTF-8 solid triangles 
 
 Add `SubagentStop` hook for immediate sub-agent completion detection (replaces 45s mtime polling). Rename `ccmon-status.json` → `ccmon-status.json`. Add per-sub-agent status files alongside JSONL.
 
-### 🔄 27 Phase: Append-Only Status Log
+### ✅ 27 Phase: Append-Only Status Log
 
 [27-append-only-status](27-append-only-status.md)
 
 Replace single-write `ccmon-status.json` with append-only `ccmon-status.jsonl` event log to fix PermissionRequest race with concurrent sub-agents. Simplifies resolveState, removes STOP_GRACE_MS and RUNNING_HOOK_TTL_MS.
 
-### 🔄 28 Phase: Waiting State Resolution Fix
+### ✅ 28 Phase: Waiting State Resolution Fix
 
 [28-waiting-state-fix](28-waiting-state-fix.md)
 
 Fix `waiting_for_permission` persisting after user clicks "Allow". PostToolUse from the same session_id as the PermissionRequest resolves the waiting state; sub-agent PostToolUse (different session_id) does not.
 
-### 🔄 29 Phase: Click-to-Dismiss Waiting Flash
+### ✅ 29 Phase: Click-to-Dismiss Waiting Flash
 
 [29-waiting-dismiss](29-waiting-dismiss.md)
 
 Click on a flashing waiting card to acknowledge and stop the animation. State badge remains "Waiting". Flash re-triggers if a new PermissionRequest arrives after the state cycles.
 
-### 🔄 30 Phase: Inbox Fixes
+### ✅ 30 Phase: Inbox Fixes
 
 [30-inbox-fixes](30-inbox-fixes.md)
 
 Two inbox bugs: (1) stale state after WS reconnect — clear projects on disconnect. (2) Sub-agent names showing raw agentId — parse `Task` tool_use/toolUseResult for description correlation, fall back to slug.
 
-### 🔄 31 Phase: Watcher Resilience
+### ✅ 31 Phase: Watcher Resilience
 
 [31-watcher-resilience](31-watcher-resilience.md)
 
 Fix silent watcher death causing frozen server state. Add restart-on-error with exponential backoff, and periodic safety broadcast (30s) as fallback.
 
-### 🔄 32 Phase: Sleep/Wake WS Reconnect
+### ✅ 32 Phase: Sleep/Wake WS Reconnect
 
 [32-sleep-reconnect](32-sleep-reconnect.md)
 

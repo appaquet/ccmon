@@ -11,7 +11,7 @@ See [00-ccmon](00-ccmon.md). When a project enters `waiting_for_permission`, the
 - [x] In `createCard()`: add click handler on card when flashing — adds key to `flashWaitingDismissed`, removes `card-flashing-waiting` class from the element
 - [x] In `render()`: clear `flashWaitingDismissed` entry when state transitions away from `waiting_for_permission` (so re-entry re-triggers flash) (~line 717)
 - [x] Add `cursor: pointer` CSS on `.card-flashing-waiting` for UX affordance
-- [ ] Manual test: trigger waiting state, click card, verify flash stops; verify re-trigger on new permission request
+- [x] Manual test: trigger waiting state, click card, verify flash stops; verify re-trigger on new permission request
 
 ## Files
 

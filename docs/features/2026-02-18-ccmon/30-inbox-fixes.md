@@ -12,7 +12,7 @@ Root cause: `entry.projects` is never cleared on WS disconnect. `mergeAndRender(
 
 - [x] In `onclose`/`onerror` handler: clear `entry.projects = []` and call `mergeAndRender()` to update display immediately
 - [x] In `onopen` handler: clear `entry.projects = []` before server sends initial state (avoid brief stale window between connected status and first message)
-- [ ] Manual test: disconnect backend, verify cards disappear; reconnect, verify fresh state
+- [x] Manual test: disconnect backend, verify cards disappear; reconnect, verify fresh state
 
 ### Bug 2: Sub-agent names showing raw agentId
 

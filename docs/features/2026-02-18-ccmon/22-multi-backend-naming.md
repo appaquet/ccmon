@@ -9,7 +9,7 @@ See [00-ccmon](00-ccmon.md). When two backends have a project with the same `pro
 - [x] Annotate projects with `_backendKey` in `mergeAndRender()` — uses `entry.hostname || entry.url` from `BackendManager`
 - [x] Replace all `projectName` map keys in `render()` with composite `_backendKey::projectName` — affects `prevState`, `prevNotificationTimestamp`, `flashStopped`, `flashNotification`, stale-key cleanup
 - [x] Show hostname prefix in card header when multiple backends have the same `projectName` — `createCard()` gains `displayName` parameter
-- [ ] Manual test: start two `ccmon serve` on different ports with overlapping project names, verify independent flash behavior
+- [x] Manual test: start two `ccmon serve` on different ports with overlapping project names, verify independent flash behavior
 
 ## Files
 
