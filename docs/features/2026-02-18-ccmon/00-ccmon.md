@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-All 32 phases complete. 213 tests pass, lint + typecheck clean. All requirements (R1–R62) marked ✅. No outstanding tasks or planning items.
+All 32 phases complete. Phase 33 (Project Name Disambiguation) planned — adds `displayName` field to disambiguate projects sharing the same leaf directory name. 213 tests pass, lint + typecheck clean.
 
 ## Requirements
 
@@ -231,6 +231,12 @@ All 32 phases complete. 213 tests pass, lint + typecheck clean. All requirements
 - R61: ✅ Periodic safety broadcast (every 30s) re-scans project state and pushes to all WS clients as fallback when watchers die (Phase: Watcher Resilience)
 - R62: ✅ Frontend recovers from laptop sleep without manual page refresh (Phase: Sleep/Wake WS Reconnect)
 
+### Project Name Disambiguation
+
+- R63: ⬜ Projects with duplicate leaf names get `projectName` expanded with parent path segments until unique (Phase: Project Name Disambiguation)
+  - R63.1: `disambiguateProjectNames()` groups by basename, expands `projectName` with parent segments until unique
+  - R63.2: Unique basenames keep their short name; no separate `displayName` field needed
+
 #### Out of Scope
 
 - Authentication / multi-user support
@@ -438,6 +444,12 @@ Fix silent watcher death causing frozen server state. Add restart-on-error with 
 [32-sleep-reconnect](32-sleep-reconnect.md)
 
 Fix Safari not reconnecting WS after laptop sleep. Add visibilitychange handler for immediate reconnect on wake, plus last-message heartbeat for zombie socket detection.
+
+### ⬜ 33 Phase: Project Name Disambiguation
+
+[33-project-name-disambiguation](33-project-name-disambiguation.md)
+
+Disambiguate projects sharing the same leaf directory name by expanding `projectName` directly with parent path segments until unique. No separate displayName field.
 
 ## Files
 
