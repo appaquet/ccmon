@@ -229,6 +229,7 @@ Phase 31 implemented: watcher restart-on-error with exponential backoff, periodi
 - R60: 🔄 Filesystem watchers automatically restart after errors instead of silently dying (Phase: Watcher Resilience)
   - R60.1: Restart uses exponential backoff (1s, 2s, 4s... up to 30s max); restart attempts are logged
 - R61: 🔄 Periodic safety broadcast (every 30s) re-scans project state and pushes to all WS clients as fallback when watchers die (Phase: Watcher Resilience)
+- R62: ⬜ Frontend recovers from laptop sleep without manual page refresh (Phase: Sleep/Wake WS Reconnect)
 
 #### Out of Scope
 
@@ -431,6 +432,12 @@ Two inbox bugs: (1) stale state after WS reconnect — clear projects on disconn
 [31-watcher-resilience](31-watcher-resilience.md)
 
 Fix silent watcher death causing frozen server state. Add restart-on-error with exponential backoff, and periodic safety broadcast (30s) as fallback.
+
+### ⬜ 32 Phase: Sleep/Wake WS Reconnect
+
+[32-sleep-reconnect](32-sleep-reconnect.md)
+
+Fix Safari not reconnecting WS after laptop sleep. Add visibilitychange handler for immediate reconnect on wake, plus last-message heartbeat for zombie socket detection.
 
 ## Files
 
