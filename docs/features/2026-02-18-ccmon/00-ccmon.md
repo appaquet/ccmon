@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 31 implemented: watcher restart-on-error with exponential backoff, periodic safety broadcast (30s). 213 tests pass, lint + typecheck clean.
+Phase 32 implemented: visibilitychange handler force-reconnects on wake, zombie heartbeat detects dead sockets (>60s no message). 213 tests pass, lint + typecheck clean. Manual sleep/wake test pending.
 
 ## Requirements
 
@@ -229,7 +229,7 @@ Phase 31 implemented: watcher restart-on-error with exponential backoff, periodi
 - R60: 🔄 Filesystem watchers automatically restart after errors instead of silently dying (Phase: Watcher Resilience)
   - R60.1: Restart uses exponential backoff (1s, 2s, 4s... up to 30s max); restart attempts are logged
 - R61: 🔄 Periodic safety broadcast (every 30s) re-scans project state and pushes to all WS clients as fallback when watchers die (Phase: Watcher Resilience)
-- R62: ⬜ Frontend recovers from laptop sleep without manual page refresh (Phase: Sleep/Wake WS Reconnect)
+- R62: 🔄 Frontend recovers from laptop sleep without manual page refresh (Phase: Sleep/Wake WS Reconnect)
 
 #### Out of Scope
 
@@ -433,7 +433,7 @@ Two inbox bugs: (1) stale state after WS reconnect — clear projects on disconn
 
 Fix silent watcher death causing frozen server state. Add restart-on-error with exponential backoff, and periodic safety broadcast (30s) as fallback.
 
-### ⬜ 32 Phase: Sleep/Wake WS Reconnect
+### 🔄 32 Phase: Sleep/Wake WS Reconnect
 
 [32-sleep-reconnect](32-sleep-reconnect.md)
 
@@ -452,7 +452,7 @@ Fix Safari not reconnecting WS after laptop sleep. Add visibilitychange handler 
 - **bun.lock**: Bun lockfile (Phase: Session Detection, Linting Setup)
 - **biome.json**: Biome linter + formatter config — 2-space indent, recommended rules (Phase: Linting Setup)
 - **.github/workflows/ci.yml**: GHA CI workflow — lint + typecheck + test on push and pull_request (Phase: GitHub Actions CI)
-- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend)
+- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown; `lastMessageAt` heartbeat tracking + zombie detection (>60s no message); `visibilitychange` handler force-reconnects all backends on wake (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend, Sleep/Wake WS Reconnect)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed (Phase: Backend, Review Fixes)
 - **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatusLog()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatusEvent()`, `writeStatusTruncate()`, `filterStaleProjects()`; `StatusEvent` type, append-only NDJSON status log, `resolveState()` with event-scan logic; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback; `findLatestJSONL` excludes status log files (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed; exponential backoff restart-on-error for both watchers (Phase: Session Detection, Review Fixes, Watcher Resilience)

@@ -8,9 +8,9 @@ Safari doesn't reliably fire `onclose` when a WS connection dies during laptop s
 
 ## Tasks
 
-- [ ] Add `visibilitychange` listener that force-closes and reconnects all backends on wake (R62)
-- [ ] Add `lastMessageAt` tracking to backend entries, updated on every `onmessage` (R62)
-- [ ] Add zombie detection in `mergeAndRender` interval — force reconnect if no message in >60s and `readyState === OPEN` (R62)
+- [x] Add `visibilitychange` listener that force-closes and reconnects all backends on wake (R62)
+- [x] Add `lastMessageAt` tracking to backend entries, updated on every `onmessage` (R62)
+- [x] Add zombie detection in `mergeAndRender` interval — force reconnect if no message in >60s and `readyState === OPEN` (R62)
 - [ ] Manual test: put laptop to sleep, wake, verify dashboard recovers without refresh
 
 ## Files
