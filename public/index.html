@@ -815,7 +815,7 @@
       },
 
       _createEntry(url) {
-        return { url, ws: null, hostname: null, status: 'connecting', projects: [], backoff: 1000 };
+        return { url, ws: null, hostname: null, status: 'connecting', projects: [], backoff: 1000, lastMessageAt: Date.now() };
       },
 
       _connect(entry) {
@@ -838,6 +838,7 @@
           };
 
           ws.onmessage = (e) => {
+            entry.lastMessageAt = Date.now();
             try {
               const data = JSON.parse(e.data);
               // Support both new { hostname, projects } envelope and legacy raw array
@@ -1018,8 +1019,34 @@
     BackendManager.init();
 
     // Refresh relative timestamps (e.g. "2m ago") every 5 seconds without
-    // requiring a new WS message.
-    setInterval(mergeAndRender, 5000);
-  </script>
+    // requiring a new WS message. Also detect zombie connections: if a socket
+    // is OPEN but no message has arrived in >60s (2× the server's 30s broadcast
+    // interval), the connection is stale and must be force-recycled.
+    setInterval(() => {
+      const now = Date.now();
+      for (const entry of BackendManager.backends) {
+        if (entry.ws?.readyState === WebSocket.OPEN && now - entry.lastMessageAt > 60_000) {
+          entry.ws.onclose = entry.ws.onerror = null;
+          entry.ws.close();
+          BackendManager._connect(entry);
+        }
+      }
+      mergeAndRender();
+    }, 5000);
+
+    // Force-reconnect all backends on page visibility restore (e.g. wake from sleep).
+    // Safari may leave a socket in zombie OPEN state without firing onclose, so we
+    // close and reconnect proactively rather than waiting for the backoff timer.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      for (const entry of BackendManager.backends) {
+        if (entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+          entry.ws.onclose = entry.ws.onerror = null;
+          entry.ws.close();
+        }
+        BackendManager._connect(entry);
+      }
+    });
+</script>
 </body>
 </html>
