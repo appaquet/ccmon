@@ -500,7 +500,17 @@ export async function getProjectState(
       // Project disappeared — remove from cache.
       projectStateCache.delete(changedProjectDir);
     }
-    return [...projectStateCache.values()];
+    // Reset to basename before re-disambiguating so stale expanded names don't
+    // persist when projects are added/removed.
+    const allStates = [...projectStateCache.values()];
+    for (const s of allStates) {
+      s.projectName = basename(s.cwd);
+    }
+    disambiguateProjectNames(allStates);
+    for (const s of allStates) {
+      projectStateCache.set(join(claudeDir, s.projectDir), s);
+    }
+    return allStates;
   }
 
   // Full scan: populate the cache.
@@ -514,6 +524,8 @@ export async function getProjectState(
     projects.map((p) => buildProjectState(p, claudeDir)),
   );
 
+  disambiguateProjectNames(states);
+
   projectStateCache.clear();
   for (let i = 0; i < projects.length; i++) {
     const fullPath = join(claudeDir, projects[i].projectDir);
@@ -521,6 +533,50 @@ export async function getProjectState(
   }
 
   return states;
+}
+
+/**
+ * Expands projectName for projects that share the same basename by prepending
+ * parent path segments from cwd until all names within each collision group are
+ * unique. Projects with already-unique basenames are left unchanged.
+ * Mutates the array in place.
+ */
+export function disambiguateProjectNames(projects: ProjectState[]): void {
+  const groups = new Map<string, ProjectState[]>();
+  for (const p of projects) {
+    const existing = groups.get(p.projectName);
+    if (existing !== undefined) {
+      existing.push(p);
+    } else {
+      groups.set(p.projectName, [p]);
+    }
+  }
+
+  for (const group of groups.values()) {
+    if (group.length <= 1) continue;
+
+    let segments = 2;
+    while (true) {
+      const seen = new Set<string>();
+      let hasDuplicates = false;
+      for (const p of group) {
+        const parts = p.cwd.split("/");
+        const name = parts.slice(-segments).join("/");
+        if (seen.has(name)) {
+          hasDuplicates = true;
+          break;
+        }
+        seen.add(name);
+      }
+      if (!hasDuplicates) break;
+      segments++;
+    }
+
+    for (const p of group) {
+      const parts = p.cwd.split("/");
+      p.projectName = parts.slice(-segments).join("/");
+    }
+  }
 }
 
 /**

@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type { StatusEvent } from "../src/sessions";
 import {
   _resetCachesForTesting,
+  disambiguateProjectNames,
   filterStaleProjects,
   getProjectState,
   getSubagentInfos,
@@ -3591,5 +3592,81 @@ describe("readSessionTail delta task completion (R46 Bug 1)", () => {
 describe("mapHookEventToState (R35 Bug 3)", () => {
   test("SessionStart → null (unrecognized event returns null)", () => {
     expect(mapHookEventToState("SessionStart")).toBeNull();
+  });
+});
+
+// ─── disambiguateProjectNames ─────────────────────────────────────────────────
+
+function makeProjectState(cwd: string): import("../src/sessions").ProjectState {
+  return {
+    projectDir: cwd.replace(/\//g, "-"),
+    cwd,
+    projectName: cwd.split("/").at(-1) ?? cwd,
+    sessionId: "test-session",
+    latestJSONL: `${cwd}/session.jsonl`,
+    state: "stopped",
+    lastUpdated: null,
+  };
+}
+
+describe("disambiguateProjectNames", () => {
+  test("two projects with same basename, different parents", () => {
+    const projects = [
+      makeProjectState("/home/user/projectA/backend"),
+      makeProjectState("/home/user/projectB/backend"),
+    ];
+    disambiguateProjectNames(projects);
+    expect(projects[0].projectName).toBe("projectA/backend");
+    expect(projects[1].projectName).toBe("projectB/backend");
+  });
+
+  test("three projects sharing basename, need 3 segments to disambiguate", () => {
+    // At segments=2: x/backend, x/backend, c/y/backend → still duplicates in group
+    // At segments=3: a/x/backend, b/x/backend, c/y/backend → all unique
+    // The whole collision group advances together, so c/y/backend also gets 3 segments.
+    const projects = [
+      makeProjectState("/a/x/backend"),
+      makeProjectState("/b/x/backend"),
+      makeProjectState("/c/y/backend"),
+    ];
+    disambiguateProjectNames(projects);
+    expect(projects[0].projectName).toBe("a/x/backend");
+    expect(projects[1].projectName).toBe("b/x/backend");
+    expect(projects[2].projectName).toBe("c/y/backend");
+  });
+
+  test("mix of duplicate and unique basenames", () => {
+    const projects = [
+      makeProjectState("/home/user/projectA/backend"),
+      makeProjectState("/home/user/projectB/backend"),
+      makeProjectState("/home/user/frontend"),
+    ];
+    disambiguateProjectNames(projects);
+    expect(projects[0].projectName).toBe("projectA/backend");
+    expect(projects[1].projectName).toBe("projectB/backend");
+    expect(projects[2].projectName).toBe("frontend");
+  });
+
+  test("single project: no disambiguation applied", () => {
+    const projects = [makeProjectState("/home/user/myapp")];
+    disambiguateProjectNames(projects);
+    expect(projects[0].projectName).toBe("myapp");
+  });
+
+  test("re-run resets stale expanded names when a collision is resolved", () => {
+    const a = makeProjectState("/home/user/projectA/backend");
+    const b = makeProjectState("/home/user/projectB/backend");
+
+    // First call: both collide, should get expanded names.
+    disambiguateProjectNames([a, b]);
+    expect(a.projectName).toBe("projectA/backend");
+    expect(b.projectName).toBe("projectB/backend");
+
+    // Reset to basename to simulate what getProjectState does before re-running.
+    a.projectName = "backend";
+
+    // Second call with only one project: no collision, should revert to short name.
+    disambiguateProjectNames([a]);
+    expect(a.projectName).toBe("backend");
   });
 });

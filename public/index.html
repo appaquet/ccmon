@@ -683,7 +683,7 @@
     const flashWaitingDismissed = new Set();    // projKey → dismissed via click-acknowledgement
 
     // Composite key that uniquely identifies a project across multiple backends
-    const projKey = (p) => p._backendKey + '::' + p.projectName;
+    const projKey = (p) => p._backendKey + '::' + (p.projectDir || p.projectName);
 
     let lastSortOrder = [];  // projKey[] — cached sort order, refreshed every 30s
     let lastSortTime = 0;    // ms timestamp of last sort
