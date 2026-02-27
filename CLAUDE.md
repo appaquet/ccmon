@@ -114,6 +114,6 @@ NDJSON session transcript. ccmon reads via byte-offset tracking: model name, lat
 
 ### `agent-{shortid}.jsonl`
 
-Same format as parent `{uuid}.jsonl`. ccmon uses only the file `mtime` (60 s threshold to determine if a sub-agent is active).
+Same format as parent `{uuid}.jsonl`. ccmon uses only the file `mtime` (15 s threshold to determine if a sub-agent is active).
 
 **Update this section** whenever new file formats or fields are discovered.

@@ -1698,7 +1698,7 @@ describe("session enrichment", () => {
     expect(infos[0].latestAssistantActivity?.text).toBe("agent response");
   });
 
-  test("getSubagentInfos (R29): isActive respects 45s threshold", async () => {
+  test("getSubagentInfos (R29): isActive respects 15s threshold", async () => {
     _resetCachesForTesting();
     const sessionId = "r29-active-threshold";
     const sessionDir = join(tmpDir, sessionId);
@@ -1710,9 +1710,9 @@ describe("session enrichment", () => {
     await writeFile(activeAgent, `${makeUserEntry("live")}\n`);
     await writeFile(staleAgent, `${makeUserEntry("stale")}\n`);
 
-    // Backdate the stale agent to 60 seconds ago
-    const sixtySecAgo = new Date(Date.now() - 60_000);
-    utimesSync(staleAgent, sixtySecAgo, sixtySecAgo);
+    // Backdate the stale agent to 20 seconds ago (>15s threshold, within 30s expiry)
+    const twentySecAgo = new Date(Date.now() - 20_000);
+    utimesSync(staleAgent, twentySecAgo, twentySecAgo);
 
     const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
     const infos = await getSubagentInfos(jsonlPath);
@@ -2744,29 +2744,29 @@ describe("getSubagentInfos lifecycle (R40)", () => {
     );
   });
 
-  test("R40: completed agent older than 5m excluded from result", async () => {
+  test("R40: completed agent older than 30s excluded from result", async () => {
     const { subagentsDir, jsonlPath } = await makeSubagentDir("r40-expire");
     const oldAgent = join(subagentsDir, "agent-old.jsonl");
     await writeFile(oldAgent, "{}");
 
-    // Backdate to 6 minutes ago
-    const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000);
-    utimesSync(oldAgent, sixMinAgo, sixMinAgo);
+    // Backdate to 60 seconds ago
+    const sixtySecAgo = new Date(Date.now() - 60_000);
+    utimesSync(oldAgent, sixtySecAgo, sixtySecAgo);
 
     const infos = await getSubagentInfos(jsonlPath);
     // Old inactive agent should be filtered out
     expect(infos.find((i) => i.agentId === "old")).toBeUndefined();
   });
 
-  test("R40: completed agent younger than 5m is included", async () => {
+  test("R40: completed agent younger than 30s is included", async () => {
     const { subagentsDir, jsonlPath } =
       await makeSubagentDir("r40-recent-done");
     const recentAgent = join(subagentsDir, "agent-recent.jsonl");
     await writeFile(recentAgent, "{}");
 
-    // Backdate to 3 minutes ago (within 5m window, but >45s so isActive=false)
-    const threeMinAgo = new Date(Date.now() - 3 * 60 * 1000);
-    utimesSync(recentAgent, threeMinAgo, threeMinAgo);
+    // Backdate to 20 seconds ago (within 30s window, but >15s so isActive=false)
+    const twentySecAgo = new Date(Date.now() - 20_000);
+    utimesSync(recentAgent, twentySecAgo, twentySecAgo);
 
     const infos = await getSubagentInfos(jsonlPath);
     const agent = infos.find((i) => i.agentId === "recent");
@@ -2774,7 +2774,7 @@ describe("getSubagentInfos lifecycle (R40)", () => {
     expect(agent?.isActive).toBe(false);
   });
 
-  test("R40: active agent (mtime < 45s) always included regardless of expiry", async () => {
+  test("R40: active agent (mtime < 15s) always included regardless of expiry", async () => {
     const { subagentsDir, jsonlPath } = await makeSubagentDir("r40-active");
     const activeAgent = join(subagentsDir, "agent-live.jsonl");
     await writeFile(activeAgent, "{}");
@@ -2820,15 +2820,16 @@ describe("getSubagentInfos lifecycle (R40)", () => {
     expect(agent?.isActive).toBe(true);
   });
 
-  test("R40: stoppedAtMs null → existing 45s threshold behavior unchanged", async () => {
+  test("R40: stoppedAtMs null → existing 15s threshold behavior unchanged", async () => {
     const { subagentsDir, jsonlPath } = await makeSubagentDir("r40-no-stop");
     const activeAgent = join(subagentsDir, "agent-now.jsonl");
     const staleAgent = join(subagentsDir, "agent-old.jsonl");
     await writeFile(activeAgent, "{}");
     await writeFile(staleAgent, "{}");
 
-    const sixtySecAgo = new Date(Date.now() - 60_000);
-    utimesSync(staleAgent, sixtySecAgo, sixtySecAgo);
+    // Backdate to 20 seconds ago (>15s threshold, within 30s expiry)
+    const twentySecAgo = new Date(Date.now() - 20_000);
+    utimesSync(staleAgent, twentySecAgo, twentySecAgo);
 
     const infos = await getSubagentInfos(jsonlPath, null);
     const active = infos.find((i) => i.agentId === "now");

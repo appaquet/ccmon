@@ -21,9 +21,9 @@ const STATUS_LOG_TAIL_BYTES = 8 * 1024;
 // Maximum bytes to read on first access for large files (10 MB).
 const MAX_FIRST_READ = 10 * 1024 * 1024;
 
-// Sub-agents write continuously while active; 45s covers any lag without
+// Sub-agents write continuously while active; 15s covers any lag without
 // counting finished agents as still running.
-const SUBAGENT_ACTIVE_THRESHOLD_MS = 45 * 1000;
+const SUBAGENT_ACTIVE_THRESHOLD_MS = 15 * 1000;
 
 // Grace period for sub-agent stopped detection: JSONL mtime slightly newer
 // than the stopped timestamp is expected (Claude writes a system entry after Stop).
@@ -31,7 +31,7 @@ const SUBAGENT_STOP_GRACE_MS = 5_000;
 
 // Completed sub-agents are excluded from the payload after this duration
 // to keep the state map lean.
-const SUBAGENT_EXPIRY_MS = 5 * 60 * 1000;
+const SUBAGENT_EXPIRY_MS = 30 * 1000;
 
 export const DEFAULT_CLAUDE_DIR = join(
   Bun.env.HOME ?? "/root",
