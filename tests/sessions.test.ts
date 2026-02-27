@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type { StatusEvent } from "../src/sessions";
 import {
   _resetCachesForTesting,
+  CLOSED_PROJECT_TTL_MS,
   disambiguateProjectNames,
   filterStaleProjects,
   getProjectState,
@@ -793,8 +794,8 @@ describe("mapHookEventToState", () => {
     expect(mapHookEventToState("Stop")).toBe("stopped");
   });
 
-  test("SessionEnd → stopped", () => {
-    expect(mapHookEventToState("SessionEnd")).toBe("stopped");
+  test("SessionEnd → closed", () => {
+    expect(mapHookEventToState("SessionEnd")).toBe("closed");
   });
 
   test("unknown event → null", () => {
@@ -3412,9 +3413,9 @@ describe("resolveState", () => {
     expect(resolveState(null, events)).toBe("stopped");
   });
 
-  test("SessionEnd as last event → stopped", () => {
-    const events = [evt("SessionEnd", "stopped", now - 5_000)];
-    expect(resolveState(null, events)).toBe("stopped");
+  test("SessionEnd as last event → closed", () => {
+    const events = [evt("SessionEnd", "closed", now - 5_000)];
+    expect(resolveState(null, events)).toBe("closed");
   });
 
   test("PostToolUse as last event, fresh → running", () => {
@@ -3593,6 +3594,89 @@ describe("readSessionTail delta task completion (R46 Bug 1)", () => {
 describe("mapHookEventToState (R35 Bug 3)", () => {
   test("SessionStart → null (unrecognized event returns null)", () => {
     expect(mapHookEventToState("SessionStart")).toBeNull();
+  });
+});
+
+// ─── closed state (Phase 35) ─────────────────────────────────────────────────
+
+describe("closed state", () => {
+  function makeProject(
+    state: import("../src/sessions").SessionState,
+    lastUpdated: string | null,
+  ): import("../src/sessions").ProjectState {
+    return {
+      projectDir: "dir",
+      cwd: "/home/user/proj",
+      projectName: "proj",
+      sessionId: "sid",
+      latestJSONL: "/home/user/proj/session.jsonl",
+      state,
+      lastUpdated,
+    };
+  }
+
+  test("mapHookEventToState: SessionEnd → closed", () => {
+    expect(mapHookEventToState("SessionEnd")).toBe("closed");
+  });
+
+  test("resolveState: SessionEnd as latest event → closed", () => {
+    const now = Date.now();
+    const events: StatusEvent[] = [
+      {
+        event: "SessionEnd",
+        state: "closed",
+        timestamp: new Date(now - 5_000).toISOString(),
+        session_id: "sess",
+        working_dir: "/proj",
+      },
+    ];
+    expect(resolveState(null, events)).toBe("closed");
+  });
+
+  test("resolveState: Stop as latest event → stopped (unchanged)", () => {
+    const now = Date.now();
+    const events: StatusEvent[] = [
+      {
+        event: "Stop",
+        state: "stopped",
+        timestamp: new Date(now - 5_000).toISOString(),
+        session_id: "sess",
+        working_dir: "/proj",
+      },
+    ];
+    expect(resolveState(null, events)).toBe("stopped");
+  });
+
+  test("filterStaleProjects: closed project older than 1 min is removed", () => {
+    const old = new Date(
+      Date.now() - CLOSED_PROJECT_TTL_MS - 1000,
+    ).toISOString();
+    const projects = [makeProject("closed", old)];
+    const result = filterStaleProjects(projects, 3);
+    expect(result).toHaveLength(0);
+  });
+
+  test("filterStaleProjects: closed project younger than 1 min is kept", () => {
+    const recent = new Date(Date.now() - 10_000).toISOString(); // 10s ago
+    const projects = [makeProject("closed", recent)];
+    const result = filterStaleProjects(projects, 3);
+    expect(result).toHaveLength(1);
+  });
+
+  test("filterStaleProjects: stopped project within maxInactivityHours is kept", () => {
+    const recent = new Date(Date.now() - 30 * 60_000).toISOString(); // 30 min ago
+    const projects = [makeProject("stopped", recent)];
+    // maxInactivityHours=3 → cutoff is 3h ago; 30 min ago is within window
+    const result = filterStaleProjects(projects, 3);
+    expect(result).toHaveLength(1);
+  });
+
+  test("filterStaleProjects: closed project is removed by short TTL even when within maxInactivityHours", () => {
+    // 5 min ago: within 3h window for stopped, but > 1 min TTL for closed
+    const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+    const projects = [makeProject("closed", fiveMinAgo)];
+    const result = filterStaleProjects(projects, 3);
+    expect(result).toHaveLength(0);
   });
 });
 

@@ -33,6 +33,9 @@ const SUBAGENT_STOP_GRACE_MS = 5_000;
 // to keep the state map lean.
 const SUBAGENT_EXPIRY_MS = 30 * 1000;
 
+// Closed projects (SessionEnd) are removed from the dashboard after this window.
+export const CLOSED_PROJECT_TTL_MS = 60_000;
+
 export const DEFAULT_CLAUDE_DIR = join(
   Bun.env.HOME ?? "/root",
   ".claude",
@@ -43,6 +46,7 @@ const VALID_STATES: ReadonlySet<string> = new Set([
   "running",
   "waiting_for_permission",
   "stopped",
+  "closed",
 ]);
 
 // Keyed by projectDirPath; avoids re-parsing sessions-index.json unless mtime changed.
@@ -63,7 +67,11 @@ const sessionTailCache = new Map<string, SessionTailCache>();
 // Populated on a full scan; updated in-place on targeted single-project rescans.
 const projectStateCache = new Map<string, ProjectState>();
 
-export type SessionState = "running" | "waiting_for_permission" | "stopped";
+export type SessionState =
+  | "running"
+  | "waiting_for_permission"
+  | "stopped"
+  | "closed";
 
 /**
  * Enrichment fields shared between main sessions and sub-agents,
@@ -267,7 +275,7 @@ export function mapHookEventToState(hookEvent: string): SessionState | null {
     case "Stop":
       return "stopped";
     case "SessionEnd":
-      return "stopped";
+      return "closed";
     default:
       return null;
   }
@@ -591,12 +599,15 @@ export function filterStaleProjects(
   if (maxInactivityHours <= 0 || !Number.isFinite(maxInactivityHours))
     return projects;
   const cutoff = Date.now() - maxInactivityHours * 3600 * 1000;
+  const closedCutoff = Date.now() - CLOSED_PROJECT_TTL_MS;
   return projects.filter((p) => {
     if (p.lastUpdated === null) return false;
     // An invalid/unparseable timestamp (NaN) is treated as non-stale (keep the project)
     // rather than silently dropping it from the dashboard.
     const time = new Date(p.lastUpdated).getTime();
-    return Number.isNaN(time) || time >= cutoff;
+    if (Number.isNaN(time)) return true;
+    if (p.state === "closed") return time >= closedCutoff;
+    return time >= cutoff;
   });
 }
 
@@ -1336,7 +1347,7 @@ async function buildProjectState(
   }
 
   const subagents =
-    state !== "stopped"
+    state === "running" || state === "waiting_for_permission"
       ? await getSubagentInfos(project.latestJSONL, stoppedAtMs)
       : [];
   const subagentCount = subagents.filter((s) => s.isActive).length;
@@ -1548,7 +1559,10 @@ export function resolveState(
   // Priority 2 & 3: check latest state-bearing event.
   if (stateful.length > 0) {
     const latest = stateful[stateful.length - 1];
-    if (latest.event === "Stop" || latest.event === "SessionEnd") {
+    if (latest.event === "SessionEnd") {
+      return "closed";
+    }
+    if (latest.event === "Stop") {
       return "stopped";
     }
     if (latest.event === "PostToolUse" || latest.event === "UserPromptSubmit") {

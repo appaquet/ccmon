@@ -16,6 +16,7 @@
       --running: #22c55e;
       --stopped: #f97316;
       --waiting: #ef4444;
+      --closed: #6b7280;
     }
 
     body {
@@ -306,10 +307,12 @@
     .badge-running  { background: rgba(34,197,94,0.12);  color: var(--running); }
     .badge-stopped  { background: rgba(249,115,22,0.12); color: var(--stopped); }
     .badge-waiting  { background: rgba(239,68,68,0.12);  color: var(--waiting); }
+    .badge-closed   { background: rgba(107,114,128,0.12); color: var(--closed); border: 1px solid rgba(107,114,128,0.18); }
 
     .dot-running  { background: var(--running); animation: pulse-dot 1.8s ease-in-out infinite; }
     .dot-stopped  { background: var(--stopped); }
     .dot-waiting  { background: var(--waiting); }
+    .dot-closed   { background: var(--closed); }
 
     .card-meta {
       font-size: 12px;
@@ -495,24 +498,28 @@
       running: 'Running',
       stopped: 'Stopped',
       waiting_for_permission: 'Waiting',
+      closed: 'Closed',
     };
 
     const stateColor = {
       running: '#22c55e',
       stopped: '#f97316',
       waiting_for_permission: '#ef4444',
+      closed: '#6b7280',
     };
 
     const stateBadgeClass = {
       running: 'badge-running',
       stopped: 'badge-stopped',
       waiting_for_permission: 'badge-waiting',
+      closed: 'badge-closed',
     };
 
     const stateDotClass = {
       running: 'dot-running',
       stopped: 'dot-stopped',
       waiting_for_permission: 'dot-waiting',
+      closed: 'dot-closed',
     };
 
     function relativeTime(iso) {

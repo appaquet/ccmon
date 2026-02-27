@@ -456,7 +456,7 @@ describe("status", () => {
       ["PostToolUse", "running"],
       ["PermissionRequest", "waiting_for_permission"],
       ["Stop", "stopped"],
-      ["SessionEnd", "stopped"],
+      ["SessionEnd", "closed"],
     ];
 
     for (const [eventName, expectedState] of events) {
