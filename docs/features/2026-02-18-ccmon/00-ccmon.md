@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 35 (Session Closed State) planned. New `closed` state for SessionEnd events, with 1-min TTL in `filterStaleProjects`. Grey badge in UI. Awaiting `/implement`.
+Phase 35 (Session Closed State) complete. New `closed` state for SessionEnd events with 1-min TTL. Grey badge in UI. 225 tests pass, lint + typecheck clean.
 
 ## Requirements
 
@@ -457,7 +457,7 @@ Disambiguate projects sharing the same leaf directory name by expanding `project
 
 Reduce sub-agent active threshold (45s→15s) and expiry (5min→30s) so completed agents vanish from dashboard faster.
 
-### 🔄 35 Phase: Session Closed State + Fast Removal
+### ✅ 35 Phase: Session Closed State + Fast Removal
 
 [35-stopped-project-removal](35-stopped-project-removal.md)
 
