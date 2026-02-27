@@ -113,8 +113,6 @@ files.
 }
 ```
 
-Hook events tracked: `UserPromptSubmit`, `PostToolUse`, `PermissionRequest`, `Stop`, `SessionEnd`, `Notification`, `SessionStart`.
-
 ## Development
 
 ```
