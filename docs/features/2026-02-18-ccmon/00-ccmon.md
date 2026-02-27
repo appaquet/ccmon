@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 34 (Sub-Agent Timing Reduction) planned. Reducing `SUBAGENT_ACTIVE_THRESHOLD_MS` 45s→15s and `SUBAGENT_EXPIRY_MS` 5min→30s so completed sub-agents vanish faster from dashboard. Plan written, awaiting `/implement`.
+Phase 34 (Sub-Agent Timing Reduction) complete. `SUBAGENT_ACTIVE_THRESHOLD_MS` 45s→15s, `SUBAGENT_EXPIRY_MS` 5min→30s. 218 tests pass, lint + typecheck clean.
 
 ## Requirements
 
@@ -451,7 +451,7 @@ Fix Safari not reconnecting WS after laptop sleep. Add visibilitychange handler 
 
 Disambiguate projects sharing the same leaf directory name by expanding `projectName` directly with parent path segments until unique. No separate displayName field.
 
-### 🔄 34 Phase: Sub-Agent Timing Reduction
+### ✅ 34 Phase: Sub-Agent Timing Reduction
 
 [34-subagent-timing](34-subagent-timing.md)
 
