@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 33 (Project Name Disambiguation) complete. `disambiguateProjectNames()` expands `projectName` with parent path segments when duplicates exist. Frontend `projKey()` uses stable `projectDir` for state map keys. 218 tests pass, lint + typecheck clean.
+Phase 34 (Sub-Agent Timing Reduction) planned. Reducing `SUBAGENT_ACTIVE_THRESHOLD_MS` 45s→15s and `SUBAGENT_EXPIRY_MS` 5min→30s so completed sub-agents vanish faster from dashboard. Plan written, awaiting `/implement`.
 
 ## Requirements
 
@@ -450,6 +450,12 @@ Fix Safari not reconnecting WS after laptop sleep. Add visibilitychange handler 
 [33-project-name-disambiguation](33-project-name-disambiguation.md)
 
 Disambiguate projects sharing the same leaf directory name by expanding `projectName` directly with parent path segments until unique. No separate displayName field.
+
+### 🔄 34 Phase: Sub-Agent Timing Reduction
+
+[34-subagent-timing](34-subagent-timing.md)
+
+Reduce sub-agent active threshold (45s→15s) and expiry (5min→30s) so completed agents vanish from dashboard faster.
 
 ## Files
 
