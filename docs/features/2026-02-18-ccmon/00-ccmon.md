@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 34 (Sub-Agent Timing Reduction) complete. `SUBAGENT_ACTIVE_THRESHOLD_MS` 45s→15s, `SUBAGENT_EXPIRY_MS` 5min→30s. 218 tests pass, lint + typecheck clean.
+Phase 35 (Session Closed State) planned. New `closed` state for SessionEnd events, with 1-min TTL in `filterStaleProjects`. Grey badge in UI. Awaiting `/implement`.
 
 ## Requirements
 
@@ -456,6 +456,12 @@ Disambiguate projects sharing the same leaf directory name by expanding `project
 [34-subagent-timing](34-subagent-timing.md)
 
 Reduce sub-agent active threshold (45s→15s) and expiry (5min→30s) so completed agents vanish from dashboard faster.
+
+### 🔄 35 Phase: Session Closed State + Fast Removal
+
+[35-stopped-project-removal](35-stopped-project-removal.md)
+
+New `closed` state for SessionEnd events. Closed projects removed from dashboard after 1 minute (vs `maxInactivityHours` for idle/stopped). Grey "Closed" badge in UI.
 
 ## Files
 
