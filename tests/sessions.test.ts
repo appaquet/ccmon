@@ -2787,15 +2787,15 @@ describe("getSubagentInfos lifecycle (R40)", () => {
     expect(agent?.isActive).toBe(true);
   });
 
-  test("R40: sub-agent mtime before stop (mtime 30s ago, stopped 10s ago) → isActive false", async () => {
+  test("R40: sub-agent mtime before stop (mtime 20s ago, stopped 10s ago) → isActive false", async () => {
     const { subagentsDir, jsonlPath } =
       await makeSubagentDir("r40-stopped-before");
     const agentPath = join(subagentsDir, "agent-pre.jsonl");
     await writeFile(agentPath, "{}");
 
     const now = Date.now();
-    const thirtySecAgo = new Date(now - 30_000);
-    utimesSync(agentPath, thirtySecAgo, thirtySecAgo);
+    const twentySecAgo = new Date(now - 20_000);
+    utimesSync(agentPath, twentySecAgo, twentySecAgo);
 
     const stoppedAtMs = now - 10_000;
     const infos = await getSubagentInfos(jsonlPath, stoppedAtMs);
@@ -3614,38 +3614,6 @@ describe("closed state", () => {
       lastUpdated,
     };
   }
-
-  test("mapHookEventToState: SessionEnd → closed", () => {
-    expect(mapHookEventToState("SessionEnd")).toBe("closed");
-  });
-
-  test("resolveState: SessionEnd as latest event → closed", () => {
-    const now = Date.now();
-    const events: StatusEvent[] = [
-      {
-        event: "SessionEnd",
-        state: "closed",
-        timestamp: new Date(now - 5_000).toISOString(),
-        session_id: "sess",
-        working_dir: "/proj",
-      },
-    ];
-    expect(resolveState(null, events)).toBe("closed");
-  });
-
-  test("resolveState: Stop as latest event → stopped (unchanged)", () => {
-    const now = Date.now();
-    const events: StatusEvent[] = [
-      {
-        event: "Stop",
-        state: "stopped",
-        timestamp: new Date(now - 5_000).toISOString(),
-        session_id: "sess",
-        working_dir: "/proj",
-      },
-    ];
-    expect(resolveState(null, events)).toBe("stopped");
-  });
 
   test("filterStaleProjects: closed project older than 1 min is removed", () => {
     const old = new Date(

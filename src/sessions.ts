@@ -104,7 +104,7 @@ export interface SubagentInfo extends SessionEnrichment {
   slug?: string; // from first line of sub-agent JSONL
   description?: string; // from parent session queue-operation enqueue entry
   jsonlPath: string; // absolute path to sub-agent JSONL
-  isActive: boolean; // mtime within last 45 seconds
+  isActive: boolean; // mtime within last 15 seconds
   lastMessageTime: string; // ISO 8601 from file mtime
   launchTime: string; // ISO 8601 from first JSONL entry timestamp, falls back to file mtime
 }
@@ -1512,7 +1512,8 @@ const PERMISSION_RESOLVERS = new Set([
  * Priority order:
  * 1. Unresolved PermissionRequest (not followed by Stop/SessionEnd/UserPromptSubmit,
  *    fresh < PERMISSION_STALE_MS) → waiting_for_permission
- * 2. Latest state-bearing event is Stop/SessionEnd → stopped
+ * 2. Latest state-bearing event is SessionEnd → closed
+ * 2b. Latest state-bearing event is Stop → stopped
  * 3. Latest state-bearing event is PostToolUse/UserPromptSubmit within JSONL_ACTIVE_THRESHOLD_MS → running
  * 4. JSONL mtime within JSONL_ACTIVE_THRESHOLD_MS → running
  * 5. Default → stopped
