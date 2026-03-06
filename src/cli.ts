@@ -6,7 +6,6 @@ import {
   filterStaleProjects,
   getProjectState,
   mapHookEventToState,
-  readSessionsIndex,
   type StatusEvent,
   scanProjects,
   writeNotificationStatus,
@@ -24,7 +23,14 @@ const claudeDir =
   Bun.env.CLAUDE_PROJECTS_DIR ??
   join(Bun.env.HOME ?? "/root", ".claude", "projects");
 
+const VERSION = "0.1.0";
+
 const subcommand = process.argv[2];
+
+if (subcommand === "--version" || subcommand === "-v") {
+  process.stdout.write(`ccmon ${VERSION}\n`);
+  exit(0);
+}
 
 const projectFlagIdx = process.argv.indexOf("--project");
 const projectFilter =
@@ -214,7 +220,7 @@ async function runStatus(): Promise<void> {
     exit(1);
   }
 
-  const projectDir = await resolveProjectDir(cwd, claudeDir, session_id);
+  const projectDir = await resolveProjectDir(cwd, claudeDir);
 
   if (hook_event_name === "Notification") {
     try {
@@ -286,33 +292,28 @@ async function runStatus(): Promise<void> {
 /**
  * Resolves the project directory for a given cwd.
  * 1. Fast path: scans known project dirs for an exact cwd match.
- * 2. Session ID scan: if fast path fails and sessionId is provided, scans
- *    sessions-index.json files across all project dirs for the session ID.
- *    Handles additionalDirectories where working_dir differs from the project dir.
+ * 2. Subdirectory match: if cwd is a subdirectory of a known project's cwd,
+ *    use that project dir (longest match wins if multiple).
  * 3. Fallback: encodes the cwd as a dir name (/ → -), creating it if needed.
  */
-async function resolveProjectDir(
-  cwd: string,
-  dir: string,
-  sessionId?: string,
-): Promise<string> {
+async function resolveProjectDir(cwd: string, dir: string): Promise<string> {
   const projects = await scanProjects(dir);
   const match = projects.find((p) => p.cwd === cwd);
   if (match) {
     return join(dir, match.projectDir);
   }
 
-  // Session ID scan: look for the session in any project's sessions-index.json
-  if (sessionId) {
-    for (const project of projects) {
-      const fullPath = join(dir, project.projectDir);
-      const index = await readSessionsIndex(fullPath);
-      if (!index) continue;
-      const found = index.entries.some((e) => e.sessionId === sessionId);
-      if (found) {
-        return fullPath;
+  // Subdirectory match: find projects where cwd is under their cwd
+  let bestMatch: (typeof projects)[number] | null = null;
+  for (const project of projects) {
+    if (cwd.startsWith(`${project.cwd}/`)) {
+      if (!bestMatch || project.cwd.length > bestMatch.cwd.length) {
+        bestMatch = project;
       }
     }
+  }
+  if (bestMatch) {
+    return join(dir, bestMatch.projectDir);
   }
 
   // Fallback: encode cwd the same way Claude Code does (replacing / with -)

@@ -685,27 +685,13 @@ describe("status", () => {
     expect(lastEvent.state).toBe("stopped");
   });
 
-  test("subdirectory working_dir resolves to parent project dir via session_id lookup", async () => {
-    // Parent project dir with sessions-index.json containing the session
+  test("subdirectory working_dir resolves to parent project dir", async () => {
+    // Parent project dir with a JSONL file (no sessions-index.json needed)
     const parentProjDir = join(tmpDir, "-home-user-backend4");
     await mkdir(parentProjDir, { recursive: true });
     await writeFile(
       join(parentProjDir, "session.jsonl"),
       `${makeFirstLine("/home/user/backend4", "sess-parent")}\n`,
-    );
-    await writeFile(
-      join(parentProjDir, "sessions-index.json"),
-      JSON.stringify({
-        entries: [
-          {
-            sessionId: "sess-parent",
-            fullPath: join(parentProjDir, "session.jsonl"),
-            fileMtime: Date.now(),
-            projectPath: "/home/user/backend4",
-            isSidechain: false,
-          },
-        ],
-      }),
     );
 
     // Hook payload uses a subdirectory cwd that doesn't match any project dir
@@ -731,27 +717,13 @@ describe("status", () => {
     expect(status.session_id).toBe("sess-parent");
   });
 
-  test("unknown working_dir and unknown session_id falls back to encoded dir creation", async () => {
-    // A project dir exists but its session index has a different session
+  test("unknown working_dir falls back to encoded dir creation", async () => {
+    // A project dir exists but cwd is not a subdirectory of it
     const existingProjDir = join(tmpDir, "-home-user-existing");
     await mkdir(existingProjDir, { recursive: true });
     await writeFile(
       join(existingProjDir, "session.jsonl"),
       `${makeFirstLine("/home/user/existing", "sess-other")}\n`,
-    );
-    await writeFile(
-      join(existingProjDir, "sessions-index.json"),
-      JSON.stringify({
-        entries: [
-          {
-            sessionId: "sess-other",
-            fullPath: join(existingProjDir, "session.jsonl"),
-            fileMtime: Date.now(),
-            projectPath: "/home/user/existing",
-            isSidechain: false,
-          },
-        ],
-      }),
     );
 
     const unknownCwd = "/tmp/totally-unknown";
