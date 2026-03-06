@@ -6,6 +6,7 @@ import {
   filterStaleProjects,
   getProjectState,
   mapHookEventToState,
+  readSessionsIndex,
   type StatusEvent,
   scanProjects,
   writeNotificationStatus,
@@ -213,7 +214,7 @@ async function runStatus(): Promise<void> {
     exit(1);
   }
 
-  const projectDir = await resolveProjectDir(cwd, claudeDir);
+  const projectDir = await resolveProjectDir(cwd, claudeDir, session_id);
 
   if (hook_event_name === "Notification") {
     try {
@@ -284,15 +285,34 @@ async function runStatus(): Promise<void> {
 
 /**
  * Resolves the project directory for a given cwd.
- * Scans known project dirs for an exact cwd match first.
- * Falls back to encoding the cwd as a dir name (/ → -) when no match is found,
- * creating the directory if needed.
+ * 1. Fast path: scans known project dirs for an exact cwd match.
+ * 2. Session ID scan: if fast path fails and sessionId is provided, scans
+ *    sessions-index.json files across all project dirs for the session ID.
+ *    Handles additionalDirectories where working_dir differs from the project dir.
+ * 3. Fallback: encodes the cwd as a dir name (/ → -), creating it if needed.
  */
-async function resolveProjectDir(cwd: string, dir: string): Promise<string> {
+async function resolveProjectDir(
+  cwd: string,
+  dir: string,
+  sessionId?: string,
+): Promise<string> {
   const projects = await scanProjects(dir);
   const match = projects.find((p) => p.cwd === cwd);
   if (match) {
     return join(dir, match.projectDir);
+  }
+
+  // Session ID scan: look for the session in any project's sessions-index.json
+  if (sessionId) {
+    for (const project of projects) {
+      const fullPath = join(dir, project.projectDir);
+      const index = await readSessionsIndex(fullPath);
+      if (!index) continue;
+      const found = index.entries.some((e) => e.sessionId === sessionId);
+      if (found) {
+        return fullPath;
+      }
+    }
   }
 
   // Fallback: encode cwd the same way Claude Code does (replacing / with -)

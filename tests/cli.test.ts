@@ -684,6 +684,98 @@ describe("status", () => {
     expect(lastEvent.event).toBe("SubagentStop");
     expect(lastEvent.state).toBe("stopped");
   });
+
+  test("subdirectory working_dir resolves to parent project dir via session_id lookup", async () => {
+    // Parent project dir with sessions-index.json containing the session
+    const parentProjDir = join(tmpDir, "-home-user-backend4");
+    await mkdir(parentProjDir, { recursive: true });
+    await writeFile(
+      join(parentProjDir, "session.jsonl"),
+      `${makeFirstLine("/home/user/backend4", "sess-parent")}\n`,
+    );
+    await writeFile(
+      join(parentProjDir, "sessions-index.json"),
+      JSON.stringify({
+        entries: [
+          {
+            sessionId: "sess-parent",
+            fullPath: join(parentProjDir, "session.jsonl"),
+            fileMtime: Date.now(),
+            projectPath: "/home/user/backend4",
+            isSidechain: false,
+          },
+        ],
+      }),
+    );
+
+    // Hook payload uses a subdirectory cwd that doesn't match any project dir
+    const hookPayload = JSON.stringify({
+      session_id: "sess-parent",
+      cwd: "/home/user/backend4/platform",
+      hook_event_name: "Stop",
+    });
+
+    const result = await spawnCli(["status"], {
+      stdin: hookPayload,
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).toBe(0);
+
+    // Status should be written to the parent project dir, not a new encoded dir
+    const raw = await readFile(join(parentProjDir, STATUS_LOG_FILE), "utf8");
+    const lines = raw.split("\n").filter((l) => l.trim() !== "");
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    const status = JSON.parse(lines[lines.length - 1]);
+    expect(status.event).toBe("Stop");
+    expect(status.session_id).toBe("sess-parent");
+  });
+
+  test("unknown working_dir and unknown session_id falls back to encoded dir creation", async () => {
+    // A project dir exists but its session index has a different session
+    const existingProjDir = join(tmpDir, "-home-user-existing");
+    await mkdir(existingProjDir, { recursive: true });
+    await writeFile(
+      join(existingProjDir, "session.jsonl"),
+      `${makeFirstLine("/home/user/existing", "sess-other")}\n`,
+    );
+    await writeFile(
+      join(existingProjDir, "sessions-index.json"),
+      JSON.stringify({
+        entries: [
+          {
+            sessionId: "sess-other",
+            fullPath: join(existingProjDir, "session.jsonl"),
+            fileMtime: Date.now(),
+            projectPath: "/home/user/existing",
+            isSidechain: false,
+          },
+        ],
+      }),
+    );
+
+    const unknownCwd = "/tmp/totally-unknown";
+    const hookPayload = JSON.stringify({
+      session_id: "sess-no-match",
+      cwd: unknownCwd,
+      hook_event_name: "Stop",
+    });
+
+    const result = await spawnCli(["status"], {
+      stdin: hookPayload,
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).toBe(0);
+
+    // Should fall back to encoded dir, not write to the existing project dir
+    const encodedDir = join(tmpDir, unknownCwd.replace(/\//g, "-"));
+    const raw = await readFile(join(encodedDir, STATUS_LOG_FILE), "utf8");
+    const lines = raw.split("\n").filter((l) => l.trim() !== "");
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    const status = JSON.parse(lines[lines.length - 1]);
+    expect(status.session_id).toBe("sess-no-match");
+  });
 });
 
 // ─── dump --watch ─────────────────────────────────────────────────────────────
