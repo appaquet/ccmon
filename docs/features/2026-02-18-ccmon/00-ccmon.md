@@ -463,6 +463,12 @@ Reduce sub-agent active threshold (45s→15s) and expiry (5min→30s) so complet
 
 New `closed` state for SessionEnd events. Closed projects removed from dashboard after 1 minute (vs `maxInactivityHours` for idle/stopped). Grey "Closed" badge in UI.
 
+### ⬜ 36 Phase: Status Dir Mismatch Fix
+
+[36-server-state-staleness](36-server-state-staleness.md)
+
+Fix `resolveProjectDir()` writing status events to wrong dir when session's working_dir is a subdirectory of the actual project dir (e.g., `backend4/platform` → `backend4-platform` instead of `backend4`).
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
