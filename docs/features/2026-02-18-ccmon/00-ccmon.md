@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 35 (Session Closed State) complete. New `closed` state for SessionEnd events with 1-min TTL. Grey badge in UI. 225 tests pass, lint + typecheck clean.
+Phase 37 (Permission Race Fix) complete. Fixed race condition where concurrent sub-agent PostToolUse events immediately resolved PermissionRequest (all hooks share same session_id). Added 3s minimum time-gap for PostToolUse resolution + synthetic PermissionRequest from permission_prompt Notifications as insurance. 228 tests pass, lint + typecheck clean.
 
 ## Requirements
 

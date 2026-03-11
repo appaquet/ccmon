@@ -228,6 +228,8 @@ async function runStatus(): Promise<void> {
         projectDir,
         payload.message ?? "",
         payload.notification_type ?? "",
+        payload.session_id,
+        payload.cwd,
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

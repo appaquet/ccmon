@@ -22,15 +22,17 @@ not session_id-aware — a main session Stop could hide a sub-agent's pending Pe
 
 ## Tasks
 
-- [ ] Add `PERMISSION_RESOLVE_GAP_MS` constant (3000ms) to `src/sessions.ts` (R2)
-- [ ] Update `resolveState` forward-scan: require PostToolUse timestamp >= PermissionRequest timestamp + gap before considering it a resolver (R2)
-- [ ] Update `writeNotificationStatus`: when `notification_type === "permission_prompt"` and state is not already `waiting_for_permission`, write a synthetic `PermissionRequest` event instead of a `Notification` event as insurance signal (R2)
-- [ ] Pass `session_id` and `working_dir` from hook payload through to `writeNotificationStatus` (R3)
-- [ ] Add tests: PermissionRequest NOT resolved by PostToolUse arriving within 3s gap
-- [ ] Add tests: PermissionRequest IS resolved by PostToolUse arriving after 3s gap
-- [ ] Add test: permission_prompt Notification writes synthetic PermissionRequest when not already waiting
-- [ ] Update existing "KEY RACE" test comments to document that same-session_id is the real-world scenario
-- [ ] Run `bun test`, `bun run lint`, `bun run typecheck`
+- [x] Add `PERMISSION_RESOLVE_GAP_MS` constant (3000ms) to `src/sessions.ts` (R2)
+- [x] Update `resolveState` forward-scan: require PostToolUse timestamp >= PermissionRequest timestamp + gap before considering it a resolver (R2)
+- [x] Fix forward-scan `break` to only break on resolved (not on within-gap PostToolUse), so later PostToolUse events are still checked
+- [x] Update `writeNotificationStatus`: when `notification_type === "permission_prompt"` and state is not already `waiting_for_permission`, write a synthetic `PermissionRequest` event instead of a `Notification` event as insurance signal (R2)
+- [x] Pass `session_id` and `working_dir` from hook payload through to `writeNotificationStatus` (R3)
+- [x] Add tests: PermissionRequest NOT resolved by PostToolUse arriving within 3s gap
+- [x] Add tests: PermissionRequest IS resolved by PostToolUse arriving after 3s gap
+- [x] Add test: within-gap PostToolUse skipped, after-gap PostToolUse resolves
+- [x] Add test: permission_prompt Notification writes synthetic PermissionRequest when not already waiting
+- [x] Update existing "KEY RACE" test comments to document that same-session_id is the real-world scenario
+- [x] Run `bun test` (228 pass), `bun run lint`, `bun run typecheck`
 
 ## Files
 

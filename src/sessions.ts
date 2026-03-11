@@ -5,6 +5,10 @@ import { basename, join } from "node:path";
 // Staleness window for waiting_for_permission signals.
 const PERMISSION_STALE_MS = 5 * 60 * 1000;
 
+// Minimum time after a PermissionRequest before a same-session PostToolUse can resolve it.
+// Guards against concurrent sub-agents that share the same session_id arriving within this window.
+export const PERMISSION_RESOLVE_GAP_MS = 3000;
+
 // JSONL mtime threshold: files written within this window indicate active session.
 // Claude writes continuously during turns so 60s covers any lag.
 const JSONL_ACTIVE_THRESHOLD_MS = 60_000;
@@ -285,27 +289,41 @@ export function mapHookEventToState(hookEvent: string): SessionState | null {
  * Handles a Notification hook event by appending a StatusEvent with
  * notificationMessage and notificationTimestamp.
  *
- * Suppresses the write when notification_type is 'permission_prompt' and the
- * current resolved state is already 'waiting_for_permission' to avoid duplicate signals.
+ * For permission_prompt notifications: writes a synthetic PermissionRequest event
+ * (insurance for sub-agents where the PermissionRequest hook may not fire) unless
+ * the state is already waiting_for_permission, in which case it suppresses the write
+ * to avoid duplicate signals.
  */
 export async function writeNotificationStatus(
   projectDirPath: string,
   message: string,
   notificationType: string,
+  sessionId = "",
+  workingDir = "",
 ): Promise<void> {
-  // Suppress: permission_prompt while already waiting_for_permission
   if (notificationType === "permission_prompt") {
     const events = await readStatusLog(projectDirPath);
     const currentState = resolveState(null, events);
     if (currentState === "waiting_for_permission") return;
+
+    // Write a synthetic PermissionRequest so sub-agents without the hook still signal correctly.
+    const permEvent: StatusEvent = {
+      event: "PermissionRequest",
+      state: "waiting_for_permission",
+      timestamp: new Date().toISOString(),
+      session_id: sessionId,
+      working_dir: workingDir,
+    };
+    await writeStatusEvent(projectDirPath, permEvent);
+    return;
   }
 
   const event: StatusEvent = {
     event: "Notification",
     state: "stopped",
     timestamp: new Date().toISOString(),
-    session_id: "",
-    working_dir: "",
+    session_id: sessionId,
+    working_dir: workingDir,
     notificationMessage: message,
     notificationTimestamp: new Date().toISOString(),
   };
@@ -1537,14 +1555,22 @@ export function resolveState(
     if (e.event === "PermissionRequest") {
       // Forward-scan from this position for a same-session PostToolUse.
       const sid = e.session_id;
+      const permTs = new Date(e.timestamp).getTime();
       let resolved = false;
       for (let j = i + 1; j < stateful.length; j++) {
-        if (
-          stateful[j].session_id === sid &&
-          stateful[j].event === "PostToolUse"
-        ) {
-          resolved = true;
-          break;
+        const candidate = stateful[j];
+        if (candidate.session_id === sid && candidate.event === "PostToolUse") {
+          // Require a minimum gap to rule out same-session sub-agent PostToolUse
+          // events that arrive concurrently (all hooks share the same session_id).
+          const candidateTs = new Date(candidate.timestamp).getTime();
+          if (
+            !Number.isNaN(permTs) &&
+            !Number.isNaN(candidateTs) &&
+            candidateTs >= permTs + PERMISSION_RESOLVE_GAP_MS
+          ) {
+            resolved = true;
+            break;
+          }
         }
       }
       if (resolved) break;

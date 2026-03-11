@@ -19,6 +19,7 @@ import {
   getSubagentInfos,
   MAX_STATUS_LOG_BYTES,
   mapHookEventToState,
+  PERMISSION_RESOLVE_GAP_MS,
   readSessionsIndex,
   readSessionTail,
   readStatusLog,
@@ -992,7 +993,7 @@ describe("writeNotificationStatus (R26)", () => {
     expect(events[0].event).toBe("PermissionRequest");
   });
 
-  test("R26.3: permission_prompt writes through when state is not waiting_for_permission", async () => {
+  test("R26.3: permission_prompt writes synthetic PermissionRequest when state is not waiting_for_permission", async () => {
     const existing: StatusEvent = {
       event: "PostToolUse",
       state: "running",
@@ -1013,7 +1014,8 @@ describe("writeNotificationStatus (R26)", () => {
 
     const events = await readStatusLog(tmpDir);
     expect(events).toHaveLength(2);
-    expect(events[1].notificationMessage).toBe("Permission needed");
+    expect(events[1].event).toBe("PermissionRequest");
+    expect(events[1].state).toBe("waiting_for_permission");
   });
 
   test("R26.1: idle_prompt writes notificationMessage regardless of state", async () => {
@@ -1043,6 +1045,35 @@ describe("writeNotificationStatus (R26)", () => {
     expect(events).toHaveLength(1);
     expect(events[0].event).toBe("Notification");
     expect(events[0].notificationMessage).toBe("Hello");
+  });
+
+  test("permission_prompt writes synthetic PermissionRequest when not waiting", async () => {
+    const existing: StatusEvent = {
+      event: "PostToolUse",
+      state: "running",
+      timestamp: new Date().toISOString(),
+      session_id: "sess-5",
+      working_dir: "/home/user/proj",
+    };
+    await appendFile(
+      join(tmpDir, STATUS_LOG_FILE),
+      `${JSON.stringify(existing)}\n`,
+    );
+
+    await writeNotificationStatus(
+      tmpDir,
+      "Permission needed",
+      "permission_prompt",
+      "sess-5",
+      "/home/user/proj",
+    );
+
+    const events = await readStatusLog(tmpDir);
+    expect(events).toHaveLength(2);
+    expect(events[1].event).toBe("PermissionRequest");
+    expect(events[1].state).toBe("waiting_for_permission");
+    expect(events[1].session_id).toBe("sess-5");
+    expect(events[1].working_dir).toBe("/home/user/proj");
   });
 });
 
@@ -3338,8 +3369,8 @@ describe("resolveState", () => {
   });
 
   test("KEY RACE: PermissionRequest followed by sub-agent PostToolUse(s) → still waiting_for_permission", () => {
-    // Concurrent sub-agents fire PostToolUse (different session_id) while main session
-    // waits for permission. Sub-agent PostToolUse must NOT resolve the main session's request.
+    // In practice all hook events share the same session_id; the time-gap check handles this.
+    // Here sub-agents use a different session_id to also verify the session_id guard.
     const subAgentEvt = (timestampMs: number): StatusEvent => ({
       event: "PostToolUse",
       state: "running",
@@ -3355,11 +3386,40 @@ describe("resolveState", () => {
     expect(resolveState(null, events)).toBe("waiting_for_permission");
   });
 
+  test("same-session PostToolUse within PERMISSION_RESOLVE_GAP_MS does NOT resolve PermissionRequest", () => {
+    const permTs = now - 10_000;
+    const events = [
+      evt("PermissionRequest", "waiting_for_permission", permTs),
+      evt("PostToolUse", "running", permTs + 1_000),
+    ];
+    expect(resolveState(null, events)).toBe("waiting_for_permission");
+  });
+
+  test("same-session PostToolUse after PERMISSION_RESOLVE_GAP_MS resolves PermissionRequest", () => {
+    const permTs = now - 10_000;
+    const events = [
+      evt("PermissionRequest", "waiting_for_permission", permTs),
+      evt("PostToolUse", "running", permTs + PERMISSION_RESOLVE_GAP_MS + 1_000),
+    ];
+    expect(resolveState(null, events)).toBe("running");
+  });
+
+  test("within-gap PostToolUse skipped, after-gap PostToolUse resolves", () => {
+    const permTs = now - 10_000;
+    const events = [
+      evt("PermissionRequest", "waiting_for_permission", permTs),
+      evt("PostToolUse", "running", permTs + 1_000),
+      evt("PostToolUse", "running", permTs + PERMISSION_RESOLVE_GAP_MS + 1_000),
+    ];
+    expect(resolveState(null, events)).toBe("running");
+  });
+
   test("same-session PostToolUse after PermissionRequest → resolved (running)", () => {
     // User clicked Allow: main session fires PostToolUse with same session_id.
+    const permTs = now - 10_000;
     const events = [
-      evt("PermissionRequest", "waiting_for_permission", now - 5_000),
-      evt("PostToolUse", "running", now - 3_000),
+      evt("PermissionRequest", "waiting_for_permission", permTs),
+      evt("PostToolUse", "running", permTs + 5_000),
     ];
     expect(resolveState(null, events)).toBe("running");
   });
