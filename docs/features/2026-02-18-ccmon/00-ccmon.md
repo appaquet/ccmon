@@ -469,6 +469,12 @@ New `closed` state for SessionEnd events. Closed projects removed from dashboard
 
 Fix `resolveProjectDir()` writing status events to wrong dir when session's working_dir is a subdirectory of the actual project dir (e.g., `backend4/platform` → `backend4-platform` instead of `backend4`).
 
+### ⬜ 37 Phase: Permission Race Fix
+
+[37-permission-race-fix](37-permission-race-fix.md)
+
+Fix sub-agent permission prompts being immediately "resolved" by concurrent PostToolUse events. All hooks share the main session_id, so any PostToolUse resolves any PermissionRequest. Add minimum time-gap requirement (3s) for PostToolUse resolution.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
