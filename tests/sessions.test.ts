@@ -2082,22 +2082,21 @@ describe("sessionsIndexCache (R20.3)", () => {
 
   test("same mtime: second call returns cached result without re-reading file", async () => {
     const entry = makeEntry();
-    await writeFile(
-      join(tmpDir, "sessions-index.json"),
-      JSON.stringify({ entries: [entry] }),
-    );
+    const filePath = join(tmpDir, "sessions-index.json");
+    await writeFile(filePath, JSON.stringify({ entries: [entry] }));
+
+    // Pin the mtime to a known whole-second value before the first cache read.
+    // utimes(2) is second-precision on many systems; using a whole-second Date avoids
+    // a mismatch between the cached mtimeMs and the value restored by utimes.
+    const pinnedMtime = new Date("2020-01-01T00:00:00.000Z");
+    await utimes(filePath, pinnedMtime, pinnedMtime);
 
     const first = await readSessionsIndex(tmpDir);
     expect(first).not.toBeNull();
 
-    // Overwrite file content but keep the same mtime so cache key is unchanged
-    const filePath = join(tmpDir, "sessions-index.json");
-    const { mtimeMs } = await import("node:fs/promises").then((m) =>
-      m.stat(filePath),
-    );
-    const mtime = new Date(mtimeMs);
+    // Overwrite file content but restore the pinned mtime so cache key is unchanged
     await writeFile(filePath, "this is no longer valid json");
-    await utimes(filePath, mtime, mtime);
+    await utimes(filePath, pinnedMtime, pinnedMtime);
 
     // Should return the first (cached) result despite the file now being corrupt
     const second = await readSessionsIndex(tmpDir);
@@ -2145,17 +2144,19 @@ describe("sessionTailCache (R20.4)", () => {
     const jsonlPath = join(tmpDir, "tail.jsonl");
     await writeFile(jsonlPath, `${makeUserLine("original message")}\n`);
 
+    // Pin the mtime to a known whole-second value before the first cache read.
+    // utimes(2) is second-precision on many systems; using a whole-second Date avoids
+    // a mismatch between the cached mtimeMs and the value restored by utimes.
+    const pinnedMtime = new Date("2020-01-01T00:00:00.000Z");
+    await utimes(jsonlPath, pinnedMtime, pinnedMtime);
+
     const first = await readSessionTail(jsonlPath);
     expect(first.latestUserActivity?.text).toBe("original message");
 
-    // Overwrite content with same-size content, restore original mtime so cache key is unchanged.
+    // Overwrite content with same-size content, restore the pinned mtime so cache key is unchanged.
     // "original message" and "replaced message" are the same length (16 chars each).
-    const { mtimeMs } = await import("node:fs/promises").then((m) =>
-      m.stat(jsonlPath),
-    );
-    const mtime = new Date(mtimeMs);
     await writeFile(jsonlPath, `${makeUserLine("replaced message")}\n`);
-    await utimes(jsonlPath, mtime, mtime);
+    await utimes(jsonlPath, pinnedMtime, pinnedMtime);
 
     const second = await readSessionTail(jsonlPath);
     expect(second).toBe(first); // same object reference proves cache hit
