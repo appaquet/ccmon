@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 37 (Permission Race Fix) complete. Fixed race condition where concurrent sub-agent PostToolUse events immediately resolved PermissionRequest (all hooks share same session_id). Added 3s minimum time-gap for PostToolUse resolution + synthetic PermissionRequest from permission_prompt Notifications as insurance. 228 tests pass, lint + typecheck clean.
+Phase 38 (StopFailure Hook) complete. Added `StopFailure` hook event detection with new `error` session state. Persistent red flash animation (infinite, click-to-dismiss) for error state cards. StopFailure resolves pending PermissionRequests and is overridden by JSONL activity (session recovery). Hook config added. 232 tests pass, lint + typecheck clean.
 
 ## Requirements
 
@@ -236,6 +236,12 @@ Phase 37 (Permission Race Fix) complete. Fixed race condition where concurrent s
 - R63: ✅ Projects with duplicate leaf names get `projectName` expanded with parent path segments until unique (Phase: Project Name Disambiguation)
   - R63.1: `disambiguateProjectNames()` groups by basename, expands `projectName` with parent segments until unique
   - R63.2: Unique basenames keep their short name; no separate `displayName` field needed
+
+- R64: ✅ `StopFailure` hook event detection — sessions that fail due to API errors get `error` state with persistent attention flash (Phase: StopFailure Hook)
+  - R64.1: ✅ `resolveState()` treats StopFailure like a terminal state; JSONL mtime activity overrides to `running` (session recovered); resolves pending PermissionRequests
+  - R64.2: ✅ UI: red "Error" badge, infinite flash animation (like `waiting_for_permission`), click-to-dismiss, re-triggers on new StopFailure
+  - R64.3: ✅ Hook config: `StopFailure` matcher calls `ccmon status` + `claude-tmux-indicator off`
+  - R64.4: ✅ Documentation updated (CLAUDE.md states and hook events)
 
 #### Out of Scope
 
@@ -475,10 +481,16 @@ Fix `resolveProjectDir()` writing status events to wrong dir when session's work
 
 Fix sub-agent permission prompts being immediately "resolved" by concurrent PostToolUse events. All hooks share the main session_id, so any PostToolUse resolves any PermissionRequest. Add minimum time-gap requirement (3s) for PostToolUse resolution.
 
+### ✅ 38 Phase: StopFailure Hook
+
+[38-stop-failure-hook](38-stop-failure-hook.md)
+
+Add `StopFailure` hook event detection for API errors. New `error` state with persistent red flash animation (click-to-dismiss). Extends resolveState, adds hook config entry.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
-- **CLAUDE.md**: Development instructions; integration check section; lint/typecheck command docs; sub --host flag doc (Phase: Session Detection, Packaging, Review Fixes, Linting Setup)
+- **CLAUDE.md**: Development instructions; integration check section; lint/typecheck command docs; sub --host flag doc (Phase: Session Detection, Packaging, Review Fixes, Linting Setup, StopFailure Hook)
 - **README.md**: Install guide, hook config, commands reference (Phase: Packaging)
 - **flake.nix**: Nix devShell + packages/apps outputs for ccmon (Phase: Session Detection, Packaging)
 - **.envrc**: direnv config — `use flake` (Phase: Session Detection)
@@ -488,14 +500,14 @@ Fix sub-agent permission prompts being immediately "resolved" by concurrent Post
 - **bun.lock**: Bun lockfile (Phase: Session Detection, Linting Setup)
 - **biome.json**: Biome linter + formatter config — 2-space indent, recommended rules (Phase: Linting Setup)
 - **.github/workflows/ci.yml**: GHA CI workflow — lint + typecheck + test on push and pull_request (Phase: GitHub Actions CI)
-- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown; `lastMessageAt` heartbeat tracking + zombie detection (>60s no message); `visibilitychange` handler force-reconnects all backends on wake (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend, Sleep/Wake WS Reconnect)
+- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown; `lastMessageAt` heartbeat tracking + zombie detection (>60s no message); `visibilitychange` handler force-reconnects all backends on wake (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend, Sleep/Wake WS Reconnect, StopFailure Hook)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed (Phase: Backend, Review Fixes)
-- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatusLog()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatusEvent()`, `writeStatusTruncate()`, `filterStaleProjects()`; `StatusEvent` type, append-only NDJSON status log, `resolveState()` with event-scan logic; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback; `findLatestJSONL` excludes status log files (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log)
+- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatusLog()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatusEvent()`, `writeStatusTruncate()`, `filterStaleProjects()`; `StatusEvent` type, append-only NDJSON status log, `resolveState()` with event-scan logic; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback; `findLatestJSONL` excludes status log files (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed; exponential backoff restart-on-error for both watchers (Phase: Session Detection, Review Fixes, Watcher Resilience)
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner; `sub` parses new WS envelope with backward compat; `sub --host` flag; status builds StatusEvent and routes to writeStatusEvent/writeStatusTruncate (Phase: Session Detection, Backend, Review Fixes, Multi-Backend, Append-Only Status Log)
 - **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init; WS payload wrapped in `{ hostname, projects }` envelope; `Cache-Control: no-cache` on HTML response; periodic 30s safety broadcast (Phase: Backend, Review Fixes, Multi-Backend, Watcher Resilience)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
-- **tests/sessions.test.ts**: 202 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log)
+- **tests/sessions.test.ts**: 202 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook)
 - **tests/watcher.test.ts**: Unit tests for watcher.ts; backoff formula + restart-on-error tests added (Phase: Session Detection, Watcher Resilience)
 - **tests/cli.test.ts**: CLI tests — arg-validation, status NDJSON format, dump --watch, --project filter (Phase: Review Fixes, Append-Only Status Log)
 - **tests/config.test.ts**: Config loading tests; 22+ tests covering partial config, invalid types (Phase: Review Fixes 2)
