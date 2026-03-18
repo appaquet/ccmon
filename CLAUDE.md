@@ -21,7 +21,7 @@ bun run dump --watch --project <name>     # Stream single project, one JSON per 
 Watch mode outputs are newline-delimited JSON (NDJSON), pipeable: `ccmon dump --watch | jq .`
 
 ### status
-Reads hook event from stdin (Stop, SessionEnd, SessionStart, Notification, PermissionRequest, SubagentStop), appends to `~/.claude/projects/{dir}/ccmon-status.jsonl`. For SubagentStop events, appends to a per-sub-agent file `agent-{shortid}.ccmon-status.jsonl` in the subagents directory. SessionEnd truncates the log before appending. Safety cap at 64 KB: oldest entries are trimmed when exceeded. Used by Claude Code hooks.
+Reads hook event from stdin (Stop, StopFailure, SessionEnd, SessionStart, Notification, PermissionRequest, SubagentStop), appends to `~/.claude/projects/{dir}/ccmon-status.jsonl`. For SubagentStop events, appends to a per-sub-agent file `agent-{shortid}.ccmon-status.jsonl` in the subagents directory. SessionEnd truncates the log before appending. Safety cap at 64 KB: oldest entries are trimmed when exceeded. Used by Claude Code hooks.
 
 ### serve
 ```bash
@@ -71,7 +71,7 @@ After any change to `src/sessions.ts` (especially `readProjectInfo`, `readFirstL
 **Status file**: Hook appends to `~/.claude/projects/{encoded-dir}/ccmon-status.jsonl` (append-only NDJSON event log)
 - Encoded dir replaces `/` with `-` in cwd when no existing project found
 - Each line is a JSON event with: `state`, `timestamp`, `session_id`, `working_dir`
-- States: `running`, `waiting_for_permission`, `stopped`
+- States: `running`, `waiting_for_permission`, `stopped`, `closed`, `error`
 - SessionEnd truncates the log before appending; safety cap at 64 KB (oldest entries trimmed)
 - SubagentStop events append to `agent-{shortid}.ccmon-status.jsonl` inside the subagents directory
 
@@ -104,9 +104,9 @@ After any change to `src/sessions.ts` (especially `readProjectInfo`, `readFirstL
 ### `ccmon-status.jsonl`
 
 - Append-only NDJSON event log; each line: `{ state, timestamp, session_id, working_dir }`
-- States: `running` | `waiting_for_permission` | `stopped`
+- States: `running` | `waiting_for_permission` | `stopped` | `closed` | `error`
 - SessionEnd truncates the file before appending; safety cap at 64 KB (oldest entries trimmed)
-- Stale rule: last event considered stale if `timestamp` >5 min old and state is not `stopped`
+- Stale rule: last event considered stale if `timestamp` >5 min old and state is not `stopped` | `closed` | `error`
 
 ### `{uuid}.jsonl`
 

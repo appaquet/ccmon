@@ -795,6 +795,10 @@ describe("mapHookEventToState", () => {
     expect(mapHookEventToState("Stop")).toBe("stopped");
   });
 
+  test("StopFailure → error", () => {
+    expect(mapHookEventToState("StopFailure")).toBe("error");
+  });
+
   test("SessionEnd → closed", () => {
     expect(mapHookEventToState("SessionEnd")).toBe("closed");
   });
@@ -3525,6 +3529,27 @@ describe("resolveState", () => {
     ];
     // PermissionRequest resolved by UserPromptSubmit; latest is fresh PostToolUse → running
     expect(resolveState(null, events)).toBe("running");
+  });
+
+  test("StopFailure as last event → error", () => {
+    const events = [
+      evt("PostToolUse", "running", now - 20_000),
+      evt("StopFailure", "error", now - 10_000),
+    ];
+    expect(resolveState(null, events)).toBe("error");
+  });
+
+  test("StopFailure then JSONL activity → running", () => {
+    const events = [evt("StopFailure", "error", now - 90_000)];
+    expect(resolveState(freshJsonl, events)).toBe("running");
+  });
+
+  test("PermissionRequest then StopFailure → error (not waiting)", () => {
+    const events = [
+      evt("PermissionRequest", "waiting_for_permission", now - 10_000),
+      evt("StopFailure", "error", now - 5_000),
+    ];
+    expect(resolveState(null, events)).toBe("error");
   });
 });
 

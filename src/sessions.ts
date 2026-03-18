@@ -51,6 +51,7 @@ const VALID_STATES: ReadonlySet<string> = new Set([
   "waiting_for_permission",
   "stopped",
   "closed",
+  "error",
 ]);
 
 // Keyed by projectDirPath; avoids re-parsing sessions-index.json unless mtime changed.
@@ -75,7 +76,8 @@ export type SessionState =
   | "running"
   | "waiting_for_permission"
   | "stopped"
-  | "closed";
+  | "closed"
+  | "error";
 
 /**
  * Enrichment fields shared between main sessions and sub-agents,
@@ -278,6 +280,8 @@ export function mapHookEventToState(hookEvent: string): SessionState | null {
       return "waiting_for_permission";
     case "Stop":
       return "stopped";
+    case "StopFailure":
+      return "error";
     case "SessionEnd":
       return "closed";
     default:
@@ -1520,6 +1524,7 @@ const NON_STATE_EVENTS = new Set(["Notification", "SubagentStop"]);
 /** Events that resolve an outstanding PermissionRequest. */
 const PERMISSION_RESOLVERS = new Set([
   "Stop",
+  "StopFailure",
   "SessionEnd",
   "UserPromptSubmit",
 ]);
@@ -1528,12 +1533,13 @@ const PERMISSION_RESOLVERS = new Set([
  * Resolves session state from the status event log and JSONL mtime.
  *
  * Priority order:
- * 1. Unresolved PermissionRequest (not followed by Stop/SessionEnd/UserPromptSubmit,
+ * 1. Unresolved PermissionRequest (not followed by Stop/StopFailure/SessionEnd/UserPromptSubmit,
  *    fresh < PERMISSION_STALE_MS) → waiting_for_permission
  * 2. Latest state-bearing event is SessionEnd → closed
  * 2b. Latest state-bearing event is Stop → stopped
  * 3. Latest state-bearing event is PostToolUse/UserPromptSubmit within JSONL_ACTIVE_THRESHOLD_MS → running
  * 4. JSONL mtime within JSONL_ACTIVE_THRESHOLD_MS → running
+ * 4.5. Latest state-bearing event is StopFailure → error
  * 5. Default → stopped
  *
  * Exported for unit testing only.
@@ -1606,6 +1612,14 @@ export function resolveState(
     jsonlMtimeMs > Date.now() - JSONL_ACTIVE_THRESHOLD_MS
   ) {
     return "running";
+  }
+
+  // Priority 4.5: StopFailure → error (after JSONL mtime so a resumed session overrides it).
+  if (
+    stateful.length > 0 &&
+    stateful[stateful.length - 1].event === "StopFailure"
+  ) {
+    return "error";
   }
 
   // Priority 5: default.

@@ -361,6 +361,15 @@
       cursor: pointer;
     }
 
+    @keyframes flash-error {
+      0%, 100% { border-color: var(--border); }
+      50%       { border-color: var(--waiting); box-shadow: 0 0 8px rgba(239,68,68,0.4); }
+    }
+    .card-flashing-error {
+      animation: flash-error 1s ease-in-out infinite;
+      cursor: pointer;
+    }
+
     @keyframes flash-stopped {
       0%, 100% { border-color: var(--border); }
       50%       { border-color: var(--stopped); box-shadow: 0 0 12px rgba(249,115,22,0.5); }
@@ -498,6 +507,7 @@
       running: 'Running',
       stopped: 'Stopped',
       waiting_for_permission: 'Waiting',
+      error: 'Error',
       closed: 'Closed',
     };
 
@@ -505,6 +515,7 @@
       running: '#22c55e',
       stopped: '#f97316',
       waiting_for_permission: '#ef4444',
+      error: '#ef4444',
       closed: '#6b7280',
     };
 
@@ -512,6 +523,7 @@
       running: 'badge-running',
       stopped: 'badge-stopped',
       waiting_for_permission: 'badge-waiting',
+      error: 'badge-waiting',
       closed: 'badge-closed',
     };
 
@@ -519,6 +531,7 @@
       running: 'dot-running',
       stopped: 'dot-stopped',
       waiting_for_permission: 'dot-waiting',
+      error: 'dot-waiting',
       closed: 'dot-closed',
     };
 
@@ -619,7 +632,9 @@
       const card = document.createElement('div');
       const s = proj.state || 'stopped';
       const isWaitingFlash = s === 'waiting_for_permission' && !flashWaitingDismissed.has(key);
+      const isErrorFlash = s === 'error' && !flashErrorDismissed.has(key);
       const flashClasses = isWaitingFlash ? ' card-flashing-waiting'
+        : isErrorFlash ? ' card-flashing-error'
         : flashStopped ? ' card-flashing-stopped'
         : flashNotification ? ' card-flashing-notification'
         : '';
@@ -629,6 +644,12 @@
         card.addEventListener('click', () => {
           flashWaitingDismissed.add(key);
           card.classList.remove('card-flashing-waiting');
+        });
+      }
+      if (isErrorFlash) {
+        card.addEventListener('click', () => {
+          flashErrorDismissed.add(key);
+          card.classList.remove('card-flashing-error');
         });
       }
 
@@ -688,6 +709,7 @@
     const flashStopped = new Map();             // projKey → timestamp when flash started (5s window)
     const flashNotification = new Map();        // projKey → timestamp when flash started (5s window)
     const flashWaitingDismissed = new Set();    // projKey → dismissed via click-acknowledgement
+    const flashErrorDismissed = new Set();      // projKey → dismissed via click-acknowledgement
 
     // Composite key that uniquely identifies a project across multiple backends
     const projKey = (p) => p._backendKey + '::' + (p.projectDir || p.projectName);
@@ -738,6 +760,9 @@
         if (prev === 'waiting_for_permission' && proj.state !== 'waiting_for_permission') {
           flashWaitingDismissed.delete(key);
         }
+        if (prev === 'error' && proj.state !== 'error') {
+          flashErrorDismissed.delete(key);
+        }
         prevState.set(key, proj.state);
 
         const prevTs = prevNotificationTimestamp.get(key);
@@ -765,6 +790,9 @@
       }
       for (const key of [...flashWaitingDismissed]) {
         if (!currentKeys.has(key)) flashWaitingDismissed.delete(key);
+      }
+      for (const key of [...flashErrorDismissed]) {
+        if (!currentKeys.has(key)) flashErrorDismissed.delete(key);
       }
 
       grid.innerHTML = '';
