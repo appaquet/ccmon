@@ -243,6 +243,8 @@ Phase 38 (StopFailure Hook) complete. Added `StopFailure` hook event detection w
   - R64.3: ✅ Hook config: `StopFailure` matcher calls `ccmon status` + `claude-tmux-indicator off`
   - R64.4: ✅ Documentation updated (CLAUDE.md states and hook events)
 
+- R65: ⬜ Dashboard cards capped at 360px max width; grid centered so cards don't stretch to fill viewport (Phase: Card Width Cap)
+
 #### Out of Scope
 
 - Authentication / multi-user support
@@ -486,6 +488,12 @@ Fix sub-agent permission prompts being immediately "resolved" by concurrent Post
 [38-stop-failure-hook](38-stop-failure-hook.md)
 
 Add `StopFailure` hook event detection for API errors. New `error` state with persistent red flash animation (click-to-dismiss). Extends resolveState, adds hook config entry.
+
+### ⬜ 39 Phase: Card Width Cap
+
+[39-card-width-cap](39-card-width-cap.md)
+
+Cap card max width at 360px and center grid. Prevents cards from stretching to fill full viewport width on wide screens.
 
 ## Files
 
