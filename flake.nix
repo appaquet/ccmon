@@ -16,7 +16,9 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+
         src = ./.;
+
         ccmon = pkgs.writeShellScriptBin "ccmon" ''
           exec ${pkgs.bun}/bin/bun run ${src}/src/cli.ts "$@"
         '';

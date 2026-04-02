@@ -271,6 +271,11 @@
       max-width: 400px;
     }
 
+    .card-agents {
+      overflow: hidden;
+      max-height: 300px;
+    }
+
     .card-header {
       display: flex;
       align-items: center;
@@ -668,9 +673,13 @@
       }
 
       const cardName = displayName || proj.projectName;
+      const sessionSuffix = proj.sessionName
+        ? ` <span style="font-weight:normal;color:var(--muted)">(${esc(proj.sessionName)})</span>`
+        : '';
+      const cardTitle = proj.sessionName ? `${cardName} (${proj.sessionName})` : cardName;
       let html = `
         <div class="card-header">
-          <span class="card-name" title="${esc(cardName)}">${esc(cardName)}</span>
+          <span class="card-name" title="${esc(cardTitle)}">${esc(cardName)}${sessionSuffix}</span>
           <span class="badge ${badgeClass}">
             <span class="dot ${dotClass}"></span>
             ${esc(label)}
@@ -680,7 +689,7 @@
 
       html += renderContextBar(proj.inputTokens || 0, tasksDone, tasksTotal);
 
-      html += renderAgentRow({
+      let agentsHtml = renderAgentRow({
         label: 'Main agent',
         model: proj.model,
         userActivity: proj.latestUserActivity,
@@ -691,7 +700,7 @@
       if (proj.subagents && proj.subagents.length > 0) {
         for (const agent of proj.subagents) {
           const agentLabel = 'Sub: ' + (agent.description ?? agent.slug ?? agent.agentId);
-          html += renderAgentRow({
+          agentsHtml += renderAgentRow({
             label: agentLabel,
             model: agent.model,
             userActivity: agent.latestUserActivity,
@@ -700,6 +709,8 @@
           });
         }
       }
+
+      html += `<div class="card-agents">${agentsHtml}</div>`;
 
       card.innerHTML = html;
       return card;

@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 38 (StopFailure Hook) complete. Added `StopFailure` hook event detection with new `error` session state. Persistent red flash animation (infinite, click-to-dismiss) for error state cards. StopFailure resolves pending PermissionRequests and is overridden by JSONL activity (session recovery). Hook config added. 232 tests pass, lint + typecheck clean.
+Phase 42 (Remove sessions-index.json) complete. Removed all `sessions-index.json` support (~519 lines deleted). JSONL is now the sole project discovery mechanism. Fixed `readFirstLine()` to scan multiple lines in 4096-byte buffer, handling new JSONL files that start with `permission-mode` records. Removed index-only fields from ProjectInfo (`gitBranch`, `summary`, `firstPrompt`, `messageCount`, `sessionModified`). 225 tests pass, lint + typecheck clean.
 
 ## Requirements
 
@@ -43,11 +43,7 @@ Phase 38 (StopFailure Hook) complete. Added `StopFailure` hook event detection w
   - R3.2: `ccmon-status.json` contains: `state`, `timestamp`, `session_id`, `working_dir`, optional `lastSubagentStoppedAt`
   - R3.3: File written to `~/.claude/projects/{dir}/ccmon-status.json` (project dir found via `sessions-index.json` lookup or path encoding fallback)
   - R3.4: Reads hook JSON from stdin (cwd, session_id, hook_event_name), maps event to state, resolves cwd to project dir
-- R14: ✅ Use `sessions-index.json` as primary data source for project scanning (Phase: Backend)
-  - R14.1: `sessions-index.json` contains `originalPath`, session entries with `summary`, `messageCount`, `firstPrompt`, `isSidechain`, `fullPath`, `fileMtime`, `gitBranch`
-  - R14.2: Fall back to JSONL first-line parse when `sessions-index.json` is absent (not all project dirs have it)
-  - R14.3: Extend `ProjectInfo` with optional fields: `summary`, `firstPrompt`, `messageCount`, `sessionModified`
-  - R14.4: Filter out `isSidechain: true` entries
+- R14: ✅ ~~Use `sessions-index.json` as primary data source~~ → Removed in Phase 42. JSONL first-line scan is now the sole discovery mechanism. `sessions-index.json` deprecated by Claude Code (~2026-02-03)
 - R4: ✅ Hook config adds `ccmon status` alongside existing `claude-tmux-indicator` in `~/dotfiles/home-manager/modules/claude/settings.json` (Phase: Backend)
   - R4.1: Both hooks run in same matcher group (parallel stdin copies)
   - R4.2: `claude-tmux-indicator` remains independent — ccmon hooks alongside it, does not extend it
@@ -244,6 +240,15 @@ Phase 38 (StopFailure Hook) complete. Added `StopFailure` hook event detection w
   - R64.4: ✅ Documentation updated (CLAUDE.md states and hook events)
 
 - R65: ⬜ Dashboard cards capped at 360px max width; grid centered so cards don't stretch to fill viewport (Phase: Card Width Cap)
+- R66: 🔄 Dashboard cards have max-height on agent rows section (300px) with overflow hidden; header and context bar always visible (Phase: Card Height Cap)
+- R67: ✅ Session name from `/rename` displayed in card header alongside project name (Phase: Session Name Display)
+  - R67.1: Extract `sessionName` from JSONL `custom-title` lines during `scanEnrichment()` reverse pass
+  - R67.2: Card header shows `projectName (sessionName)` when sessionName exists; parenthesized part non-bolded
+  - R67.3: CLI dump includes `sessionName` field in ProjectState output
+- R68: ✅ Remove `sessions-index.json` support; JSONL-only project discovery (Phase: Remove sessions-index + Fix JSONL Discovery)
+  - R68.1: `readSessionsIndex()`, cache, types, validator removed entirely
+  - R68.2: `readFirstLine()` scans all lines in 4096-byte buffer until `isFirstLineRecord()` match
+  - R68.3: Index-only fields removed from `ProjectInfo` (`gitBranch`, `summary`, `firstPrompt`, `messageCount`, `sessionModified`)
 
 #### Out of Scope
 
@@ -495,6 +500,21 @@ Add `StopFailure` hook event detection for API errors. New `error` state with pe
 
 Cap card max width at 360px and center grid. Prevents cards from stretching to fill full viewport width on wide screens.
 
+### 🔄 40 Phase: Card Height Cap
+[40-card-height-cap](40-card-height-cap.md)
+
+Cap card agent rows section at 300px max-height with overflow hidden. Header and context bar remain visible. Prevents cards with many sub-agents from dominating the viewport.
+
+### ✅ 41 Phase: Session Name Display
+[41-session-name-display](41-session-name-display.md)
+
+Extract user-assigned session names from JSONL `custom-title` lines and display in card header as `projectName (sessionName)`. Adds `sessionName` to SessionEnrichment and ProjectState.
+
+### ✅ 42 Phase: Remove sessions-index.json + Fix JSONL Discovery
+[42-first-line-fallback-fix](42-first-line-fallback-fix.md)
+
+Remove deprecated `sessions-index.json` support entirely. Make JSONL the sole discovery mechanism. Fix `readFirstLine()` to scan multiple lines in buffer for new JSONL formats that start with `permission-mode` records.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
@@ -508,7 +528,7 @@ Cap card max width at 360px and center grid. Prevents cards from stretching to f
 - **bun.lock**: Bun lockfile (Phase: Session Detection, Linting Setup)
 - **biome.json**: Biome linter + formatter config — 2-space indent, recommended rules (Phase: Linting Setup)
 - **.github/workflows/ci.yml**: GHA CI workflow — lint + typecheck + test on push and pull_request (Phase: GitHub Actions CI)
-- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown; `lastMessageAt` heartbeat tracking + zombie detection (>60s no message); `visibilitychange` handler force-reconnects all backends on wake (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend, Sleep/Wake WS Reconnect, StopFailure Hook)
+- **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown; `lastMessageAt` heartbeat tracking + zombie detection (>60s no message); `visibilitychange` handler force-reconnects all backends on wake (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend, Sleep/Wake WS Reconnect, StopFailure Hook, Card Height Cap)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed (Phase: Backend, Review Fixes)
 - **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatusLog()`, `getProjectState()`, `readSessionsIndex()`, `mapHookEventToState()`, `writeStatusEvent()`, `writeStatusTruncate()`, `filterStaleProjects()`; `StatusEvent` type, append-only NDJSON status log, `resolveState()` with event-scan logic; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; stale-index disk fallback; `findLatestJSONL` excludes status log files (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed; exponential backoff restart-on-error for both watchers (Phase: Session Detection, Review Fixes, Watcher Resilience)

@@ -16,8 +16,7 @@ export const _backoffDelayForTesting = backoffDelay;
 
 /**
  * Watches claudeDir for project subdirectory changes and calls onUpdate when
- * any file in a project dir is modified or created (*.jsonl, sessions-index.json,
- * ccmon-status.json).
+ * any file in a project dir is modified or created (*.jsonl, ccmon-status.jsonl).
  *
  * For each existing and newly created project subdir, watches the directory
  * directly so JSONL session file writes trigger enrichment refreshes.

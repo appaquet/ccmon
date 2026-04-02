@@ -62,11 +62,7 @@ After any change to `src/sessions.ts` (especially `readProjectInfo`, `readFirstL
 
 ## Architecture
 
-**Sessions index**: `sessions-index.json` in each project dir contains session metadata
-- Uses `projectPath` field (NOT `originalPath`) for the working directory
-- Sidechain entries are filtered out automatically
-
-**Project naming**: `projectName` = basename of cwd (from `projectPath`). Used for `--project` filtering and server project identification.
+**Project naming**: `projectName` = basename of cwd (from project directory). Used for `--project` filtering and server project identification.
 
 **Status file**: Hook appends to `~/.claude/projects/{encoded-dir}/ccmon-status.jsonl` (append-only NDJSON event log)
 - Encoded dir replaces `/` with `-` in cwd when no existing project found
@@ -87,7 +83,6 @@ After any change to `src/sessions.ts` (especially `readProjectInfo`, `readFirstL
 ```
 ~/.claude/projects/
   {encoded-cwd}/                  # abs cwd with / replaced by - (e.g. -home-user-Projects-ccmon)
-    sessions-index.json           # session metadata index (may be absent)
     ccmon-status.jsonl            # hook-written event log (may be absent)
     {uuid}.jsonl                  # NDJSON session transcript, one per session
     {uuid}/
@@ -95,11 +90,6 @@ After any change to `src/sessions.ts` (especially `readProjectInfo`, `readFirstL
         agent-{shortid}.jsonl           # NDJSON sub-agent transcript, one per invocation
         agent-{shortid}.ccmon-status.jsonl  # SubagentStop hook-written event log (may be absent)
 ```
-
-### `sessions-index.json`
-
-- Use `projectPath` (not `originalPath`) for the working directory
-- Filter `isSidechain: true` entries
 
 ### `ccmon-status.jsonl`
 

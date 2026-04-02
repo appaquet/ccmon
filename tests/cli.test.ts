@@ -49,7 +49,6 @@ function makeFirstLine(cwd: string, sessionId: string): string {
     timestamp: new Date().toISOString(),
     sessionId,
     cwd,
-    gitBranch: "main",
   });
 }
 
@@ -686,7 +685,7 @@ describe("status", () => {
   });
 
   test("subdirectory working_dir resolves to parent project dir", async () => {
-    // Parent project dir with a JSONL file (no sessions-index.json needed)
+    // Parent project dir with a JSONL file
     const parentProjDir = join(tmpDir, "-home-user-backend4");
     await mkdir(parentProjDir, { recursive: true });
     await writeFile(

@@ -20,7 +20,6 @@ import {
   MAX_STATUS_LOG_BYTES,
   mapHookEventToState,
   PERMISSION_RESOLVE_GAP_MS,
-  readSessionsIndex,
   readSessionTail,
   readStatusLog,
   resolveState,
@@ -45,16 +44,11 @@ async function makeTempDir(prefix: string): Promise<string> {
   return dir;
 }
 
-function makeFirstLine(
-  cwd: string,
-  sessionId: string,
-  gitBranch = "main",
-): string {
+function makeFirstLine(cwd: string, sessionId: string): string {
   return JSON.stringify({
     timestamp: new Date().toISOString(),
     sessionId,
     cwd,
-    gitBranch,
   });
 }
 
@@ -177,7 +171,6 @@ describe("scanProjects", () => {
       timestamp: new Date().toISOString(),
       sessionId: "long-line-session",
       cwd: "/home/user/longfirstline",
-      gitBranch: "main",
       message: { role: "user", content: longContent },
     };
     const firstLine = JSON.stringify(firstLineObj);
@@ -194,219 +187,44 @@ describe("scanProjects", () => {
     expect(results[0].cwd).toBe("/home/user/longfirstline");
   });
 
-  test("sessions-index.json present: returns enriched fields, uses projectPath as cwd", async () => {
-    const projDir = join(tmpDir, "-home-user-indexed");
+  test("readFirstLine scans past non-cwd lines to find cwd+sessionId", async () => {
+    const projDir = join(tmpDir, "-home-user-multiline");
     await mkdir(projDir, { recursive: true });
 
-    const entry = {
-      sessionId: "idx-sess",
-      fullPath: join(projDir, "idx-sess.jsonl"),
-      fileMtime: 1_700_000_000_000,
-      firstPrompt: "Work on feature X",
-      summary: "Feature X implementation",
-      messageCount: 42,
-      created: "2026-02-01T00:00:00.000Z",
-      modified: "2026-02-01T02:00:00.000Z",
-      gitBranch: "main",
-      projectPath: "/home/user/indexed",
-      isSidechain: false,
-    };
-    await writeFile(
-      join(projDir, "sessions-index.json"),
-      JSON.stringify({ version: 1, entries: [entry] }),
-    );
-
-    // JSONL file must exist since latestJSONL points to it (stat used in getProjectState)
-    await writeFile(
-      entry.fullPath,
-      `${makeFirstLine("/home/user/indexed", "idx-sess")}\n`,
-    );
+    // First line is permission-mode (no cwd), second line has cwd
+    const line1 = JSON.stringify({
+      type: "permission-mode",
+      permissionMode: "acceptEdits",
+      sessionId: "test-1",
+    });
+    const line2 = JSON.stringify({
+      cwd: "/home/user/multiline",
+      sessionId: "test-1",
+      type: "user",
+    });
+    await writeFile(join(projDir, "session.jsonl"), `${line1}\n${line2}\n`);
 
     const results = await scanProjects(tmpDir);
-
     expect(results).toHaveLength(1);
-    expect(results[0].cwd).toBe("/home/user/indexed");
-    expect(results[0].projectName).toBe("indexed");
-    expect(results[0].sessionId).toBe("idx-sess");
-    expect(results[0].latestJSONL).toBe(entry.fullPath);
-    expect(results[0].summary).toBe("Feature X implementation");
-    expect(results[0].firstPrompt).toBe("Work on feature X");
-    expect(results[0].messageCount).toBe(42);
-    expect(results[0].sessionModified).toBe("2026-02-01T02:00:00.000Z");
+    expect(results[0].cwd).toBe("/home/user/multiline");
+    expect(results[0].sessionId).toBe("test-1");
   });
 
-  test("stale sessions-index.json: newer on-disk JSONL used as latestJSONL", async () => {
-    // Simulates the scenario where the index stops updating (e.g. Feb 3) but real
-    // JSONL files continue being written to the project dir (e.g. Feb 21).
-    const projDir = join(tmpDir, "-home-user-stale-index");
+  test("readFirstLine returns cwd from first line when present", async () => {
+    const projDir = join(tmpDir, "-home-user-firstline");
     await mkdir(projDir, { recursive: true });
 
-    // Old JSONL referenced by the index (mtime = 20 days ago)
-    const oldJSONL = join(projDir, "old-session.jsonl");
-    await writeFile(
-      oldJSONL,
-      `${makeFirstLine("/home/user/stale-index", "old-sess")}\n`,
-    );
-    const staleMtime = new Date(Date.now() - 20 * 24 * 3600 * 1000);
-    utimesSync(oldJSONL, staleMtime, staleMtime);
-    const staleMtimeMs = staleMtime.getTime();
+    const line1 = JSON.stringify({
+      cwd: "/home/user/firstline",
+      sessionId: "fl-sess",
+      timestamp: new Date().toISOString(),
+    });
+    await writeFile(join(projDir, "session.jsonl"), `${line1}\n`);
 
-    // Index records the old JSONL with its stale mtime
-    const entry = {
-      sessionId: "old-sess",
-      fullPath: oldJSONL,
-      fileMtime: staleMtimeMs,
-      firstPrompt: "Old prompt",
-      summary: "Old summary",
-      messageCount: 5,
-      modified: staleMtime.toISOString(),
-      gitBranch: "main",
-      projectPath: "/home/user/stale-index",
-      isSidechain: false,
-    };
-    await writeFile(
-      join(projDir, "sessions-index.json"),
-      JSON.stringify({ version: 1, entries: [entry] }),
-    );
-
-    // Newer JSONL exists on disk (not in the index), written today
-    const newerJSONL = join(projDir, "new-session.jsonl");
-    await writeFile(
-      newerJSONL,
-      `${makeFirstLine("/home/user/stale-index", "new-sess")}\n`,
-    );
-    // Default mtime = now (no utimes call needed)
-
-    _resetCachesForTesting();
     const results = await scanProjects(tmpDir);
-
     expect(results).toHaveLength(1);
-    // latestJSONL must point to the newer file, not the index entry
-    expect(results[0].latestJSONL).toBe(newerJSONL);
-    // lastUpdated from getProjectState would reflect the newer file's mtime,
-    // so verify via filterStaleProjects that this project is NOT dropped at 3h threshold
-    const { getProjectState, filterStaleProjects } = await import(
-      "../src/sessions"
-    );
-    _resetCachesForTesting();
-    const states = await getProjectState(tmpDir);
-    expect(states).toHaveLength(1);
-    const kept = filterStaleProjects(states, 3);
-    expect(kept).toHaveLength(1);
-    // lastUpdated should be recent (within the last minute)
-    expect(new Date(kept[0].lastUpdated as string).getTime()).toBeGreaterThan(
-      Date.now() - 60_000,
-    );
-  });
-});
-
-// ─── readSessionsIndex ───────────────────────────────────────────────────────
-
-describe("readSessionsIndex", () => {
-  let tmpDir: string;
-
-  beforeEach(async () => {
-    tmpDir = await makeTempDir("ccmon-index");
-  });
-
-  afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
-  });
-
-  function makeIndexEntry(
-    overrides: Record<string, unknown> = {},
-  ): Record<string, unknown> {
-    return {
-      sessionId: "sess-1",
-      fullPath: "/some/path/sess-1.jsonl",
-      fileMtime: 1_700_000_000_000,
-      firstPrompt: "Hello world",
-      summary: "A session summary",
-      messageCount: 10,
-      created: "2026-02-01T00:00:00.000Z",
-      modified: "2026-02-01T01:00:00.000Z",
-      gitBranch: "main",
-      projectPath: "/home/user/project",
-      isSidechain: false,
-      ...overrides,
-    };
-  }
-
-  test("valid sessions-index.json: returns projectPath and entries", async () => {
-    const entry = makeIndexEntry();
-    const index = { version: 1, entries: [entry] };
-    await writeFile(join(tmpDir, "sessions-index.json"), JSON.stringify(index));
-
-    const result = await readSessionsIndex(tmpDir);
-
-    expect(result).not.toBeNull();
-    expect(result?.projectPath).toBe("/home/user/project");
-    expect(result?.entries).toHaveLength(1);
-    expect(result?.entries[0].sessionId).toBe("sess-1");
-    expect(result?.entries[0].fullPath).toBe("/some/path/sess-1.jsonl");
-    expect(result?.entries[0].fileMtime).toBe(1_700_000_000_000);
-    expect(result?.entries[0].summary).toBe("A session summary");
-    expect(result?.entries[0].firstPrompt).toBe("Hello world");
-    expect(result?.entries[0].messageCount).toBe(10);
-    expect(result?.entries[0].modified).toBe("2026-02-01T01:00:00.000Z");
-  });
-
-  test("missing sessions-index.json: returns null", async () => {
-    const result = await readSessionsIndex(tmpDir);
-    expect(result).toBeNull();
-  });
-
-  test("corrupt JSON: returns null", async () => {
-    await writeFile(join(tmpDir, "sessions-index.json"), "not valid json {{");
-    const result = await readSessionsIndex(tmpDir);
-    expect(result).toBeNull();
-  });
-
-  test("picks entry with highest fileMtime as latest session", async () => {
-    const older = makeIndexEntry({
-      sessionId: "old",
-      fullPath: "/p/old.jsonl",
-      fileMtime: 1_000,
-    });
-    const newer = makeIndexEntry({
-      sessionId: "new",
-      fullPath: "/p/new.jsonl",
-      fileMtime: 2_000,
-    });
-    const index = { version: 1, entries: [older, newer] };
-    await writeFile(join(tmpDir, "sessions-index.json"), JSON.stringify(index));
-
-    const result = await readSessionsIndex(tmpDir);
-
-    expect(result).not.toBeNull();
-    // entries returned in original order; caller picks max
-    expect(result?.entries).toHaveLength(2);
-    const maxEntry = result?.entries.reduce((a, b) =>
-      a.fileMtime > b.fileMtime ? a : b,
-    );
-    expect(maxEntry?.sessionId).toBe("new");
-  });
-
-  test("filters out isSidechain: true entries", async () => {
-    const mainEntry = makeIndexEntry({ sessionId: "main", isSidechain: false });
-    const sideEntry = makeIndexEntry({ sessionId: "side", isSidechain: true });
-    const index = { version: 1, entries: [mainEntry, sideEntry] };
-    await writeFile(join(tmpDir, "sessions-index.json"), JSON.stringify(index));
-
-    const result = await readSessionsIndex(tmpDir);
-
-    expect(result).not.toBeNull();
-    expect(result?.entries).toHaveLength(1);
-    expect(result?.entries[0].sessionId).toBe("main");
-  });
-
-  test("all entries are sidechains: returns null (no usable entries)", async () => {
-    const sideEntry = makeIndexEntry({ sessionId: "side", isSidechain: true });
-    const index = { version: 1, entries: [sideEntry] };
-    await writeFile(join(tmpDir, "sessions-index.json"), JSON.stringify(index));
-
-    const result = await readSessionsIndex(tmpDir);
-    expect(result).toBeNull();
+    expect(results[0].cwd).toBe("/home/user/firstline");
+    expect(results[0].sessionId).toBe("fl-sess");
   });
 });
 
@@ -1146,60 +964,6 @@ describe("session enrichment", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  // ── gitBranch ──
-
-  test("gitBranch flows from index entry through ProjectInfo", async () => {
-    const projDir = join(tmpDir, "-home-user-branchtest");
-    await mkdir(projDir, { recursive: true });
-
-    const entry = {
-      sessionId: "branch-sess",
-      fullPath: join(projDir, "branch-sess.jsonl"),
-      fileMtime: 1_700_000_000_000,
-      projectPath: "/home/user/branchtest",
-      isSidechain: false,
-      gitBranch: "main",
-    };
-    await writeFile(
-      join(projDir, "sessions-index.json"),
-      JSON.stringify({ version: 1, entries: [entry] }),
-    );
-    await writeFile(
-      entry.fullPath,
-      `${makeFirstLine("/home/user/branchtest", "branch-sess")}\n`,
-    );
-
-    const results = await scanProjects(tmpDir);
-    expect(results).toHaveLength(1);
-    expect(results[0].gitBranch).toBe("main");
-  });
-
-  test("gitBranch is undefined when not present in index entry", async () => {
-    const projDir = join(tmpDir, "-home-user-nobranch");
-    await mkdir(projDir, { recursive: true });
-
-    const entry = {
-      sessionId: "nobranch-sess",
-      fullPath: join(projDir, "nobranch-sess.jsonl"),
-      fileMtime: 1_700_000_000_000,
-      projectPath: "/home/user/nobranch",
-      isSidechain: false,
-      // no gitBranch
-    };
-    await writeFile(
-      join(projDir, "sessions-index.json"),
-      JSON.stringify({ version: 1, entries: [entry] }),
-    );
-    await writeFile(
-      entry.fullPath,
-      `${makeFirstLine("/home/user/nobranch", "nobranch-sess")}\n`,
-    );
-
-    const results = await scanProjects(tmpDir);
-    expect(results).toHaveLength(1);
-    expect(results[0].gitBranch).toBeUndefined();
-  });
-
   // ── readSessionTail ──
 
   function makeUserEntry(content: string | object[]): string {
@@ -1700,6 +1464,60 @@ describe("session enrichment", () => {
     expect(second.latestAssistantActivity?.tool).toBe("Bash");
   });
 
+  // ── sessionName (custom-title) ──
+
+  test("readSessionTail: custom-title line → sessionName set", async () => {
+    const jsonlPath = join(tmpDir, "session-name-present.jsonl");
+    const lines = [
+      makeUserEntry("some prompt"),
+      JSON.stringify({
+        type: "custom-title",
+        customTitle: "tableoutput",
+        sessionId: "test-session",
+      }),
+    ];
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.sessionName).toBe("tableoutput");
+  });
+
+  test("readSessionTail: no custom-title line → sessionName undefined", async () => {
+    const jsonlPath = join(tmpDir, "session-name-absent.jsonl");
+    const lines = [
+      makeUserEntry("some prompt"),
+      makeAssistantEntry("claude-sonnet-4-6", [
+        { type: "text", text: "some response" },
+      ]),
+    ];
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
+
+    const result = await readSessionTail(jsonlPath);
+    expect(result.sessionName).toBeUndefined();
+  });
+
+  test("readSessionTail: multiple custom-title lines → most recent wins", async () => {
+    const jsonlPath = join(tmpDir, "session-name-multiple.jsonl");
+    const lines = [
+      makeUserEntry("some prompt"),
+      JSON.stringify({
+        type: "custom-title",
+        customTitle: "old-name",
+        sessionId: "test-session",
+      }),
+      JSON.stringify({
+        type: "custom-title",
+        customTitle: "new-name",
+        sessionId: "test-session",
+      }),
+    ];
+    await writeFile(jsonlPath, `${lines.join("\n")}\n`);
+
+    const result = await readSessionTail(jsonlPath);
+    // Reverse scan hits the last line first — most recent title wins
+    expect(result.sessionName).toBe("new-name");
+  });
+
   // ── getSubagentInfos (R29) ──
 
   test("getSubagentInfos (R29): returns SubagentInfo array with enrichment", async () => {
@@ -2054,75 +1872,6 @@ describe("session enrichment", () => {
 });
 
 // ─── cache behaviour ──────────────────────────────────────────────────────────
-
-describe("sessionsIndexCache (R20.3)", () => {
-  let tmpDir: string;
-
-  beforeEach(async () => {
-    tmpDir = await makeTempDir("ccmon-idx-cache");
-    _resetCachesForTesting();
-  });
-
-  afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
-  });
-
-  function makeEntry(
-    overrides: Record<string, unknown> = {},
-  ): Record<string, unknown> {
-    return {
-      sessionId: "sess-cache",
-      fullPath: "/some/path/sess.jsonl",
-      fileMtime: 1_700_000_000_000,
-      projectPath: "/home/user/cached",
-      isSidechain: false,
-      ...overrides,
-    };
-  }
-
-  test("same mtime: second call returns cached result without re-reading file", async () => {
-    const entry = makeEntry();
-    const filePath = join(tmpDir, "sessions-index.json");
-    await writeFile(filePath, JSON.stringify({ entries: [entry] }));
-
-    // Pin the mtime to a known whole-second value before the first cache read.
-    // utimes(2) is second-precision on many systems; using a whole-second Date avoids
-    // a mismatch between the cached mtimeMs and the value restored by utimes.
-    const pinnedMtime = new Date("2020-01-01T00:00:00.000Z");
-    await utimes(filePath, pinnedMtime, pinnedMtime);
-
-    const first = await readSessionsIndex(tmpDir);
-    expect(first).not.toBeNull();
-
-    // Overwrite file content but restore the pinned mtime so cache key is unchanged
-    await writeFile(filePath, "this is no longer valid json");
-    await utimes(filePath, pinnedMtime, pinnedMtime);
-
-    // Should return the first (cached) result despite the file now being corrupt
-    const second = await readSessionsIndex(tmpDir);
-    expect(second).toBe(first); // same object reference proves cache hit
-  });
-
-  test("changed mtime: re-reads the file and returns fresh data", async () => {
-    await writeFile(
-      join(tmpDir, "sessions-index.json"),
-      JSON.stringify({ entries: [makeEntry({ sessionId: "original" })] }),
-    );
-
-    const first = await readSessionsIndex(tmpDir);
-    expect(first?.entries[0].sessionId).toBe("original");
-
-    // Small sleep so filesystem mtime advances
-    await Bun.sleep(10);
-    await writeFile(
-      join(tmpDir, "sessions-index.json"),
-      JSON.stringify({ entries: [makeEntry({ sessionId: "updated" })] }),
-    );
-
-    const second = await readSessionsIndex(tmpDir);
-    expect(second?.entries[0].sessionId).toBe("updated");
-  });
-});
 
 describe("sessionTailCache (R20.4)", () => {
   let tmpDir: string;

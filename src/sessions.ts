@@ -54,12 +54,6 @@ const VALID_STATES: ReadonlySet<string> = new Set([
   "error",
 ]);
 
-// Keyed by projectDirPath; avoids re-parsing sessions-index.json unless mtime changed.
-const sessionsIndexCache = new Map<
-  string,
-  { mtime: number; data: SessionsIndex | null }
->();
-
 // Keyed by jsonlPath; avoids re-reading the tail unless the file changed.
 interface SessionTailCache {
   mtime: number;
@@ -99,6 +93,7 @@ export interface SessionEnrichment {
   tasksTotal?: number;
   inputTokens?: number;
   outputTokens?: number;
+  sessionName?: string;
 }
 
 /**
@@ -115,36 +110,12 @@ export interface SubagentInfo extends SessionEnrichment {
   launchTime: string; // ISO 8601 from first JSONL entry timestamp, falls back to file mtime
 }
 
-export interface SessionsIndexEntry {
-  sessionId: string;
-  fullPath: string;
-  fileMtime: number; // epoch ms
-  firstPrompt?: string;
-  summary?: string;
-  messageCount?: number;
-  modified?: string; // ISO 8601
-  projectPath: string;
-  isSidechain: boolean;
-  gitBranch?: string;
-}
-
-export interface SessionsIndex {
-  projectPath: string;
-  entries: SessionsIndexEntry[];
-}
-
 export interface ProjectInfo {
   projectDir: string; // directory name under ~/.claude/projects/
-  cwd: string; // working directory (from index projectPath or JSONL first line)
+  cwd: string; // working directory (from JSONL first line)
   projectName: string; // last segment of cwd
-  sessionId: string; // from index or JSONL first line
+  sessionId: string; // from JSONL first line
   latestJSONL: string; // absolute path to most recent .jsonl file
-  // Enriched fields from sessions-index.json (absent when falling back to JSONL scan)
-  summary?: string;
-  firstPrompt?: string;
-  messageCount?: number;
-  sessionModified?: string; // ISO 8601 from index entry
-  gitBranch?: string;
 }
 
 /**
@@ -186,84 +157,6 @@ export interface ProjectState extends ProjectInfo, SessionEnrichment {
   // Convenience count of active sub-agents; kept alongside subagents[] so clients
   // that don't parse the full array (e.g. simple status bars) can read a single field.
   subagentCount?: number;
-}
-
-/**
- * Reads and validates sessions-index.json from projectDirPath.
- * Filters out sidechain entries and returns null if the file is missing,
- * unparseable, or has no usable (non-sidechain) entries.
- */
-export async function readSessionsIndex(
-  projectDirPath: string,
-): Promise<SessionsIndex | null> {
-  const indexPath = join(projectDirPath, "sessions-index.json");
-
-  let mtime: number;
-  try {
-    const s = await stat(indexPath);
-    mtime = s.mtimeMs;
-  } catch {
-    return null;
-  }
-
-  const cached = sessionsIndexCache.get(projectDirPath);
-  if (cached !== undefined && cached.mtime === mtime) {
-    return cached.data;
-  }
-
-  let raw: string;
-  try {
-    raw = await Bun.file(indexPath).text();
-  } catch {
-    return null;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    sessionsIndexCache.set(projectDirPath, { mtime, data: null });
-    return null;
-  }
-
-  if (!isSessionsIndexRaw(parsed)) {
-    sessionsIndexCache.set(projectDirPath, { mtime, data: null });
-    return null;
-  }
-
-  const entries = parsed.entries
-    .filter((e) => !e.isSidechain)
-    .map(
-      (e): SessionsIndexEntry => ({
-        sessionId: e.sessionId,
-        fullPath: e.fullPath,
-        fileMtime: e.fileMtime,
-        firstPrompt:
-          typeof e.firstPrompt === "string" ? e.firstPrompt : undefined,
-        summary: typeof e.summary === "string" ? e.summary : undefined,
-        messageCount:
-          typeof e.messageCount === "number" ? e.messageCount : undefined,
-        modified: typeof e.modified === "string" ? e.modified : undefined,
-        projectPath: e.projectPath,
-        isSidechain: e.isSidechain,
-        gitBranch: typeof e.gitBranch === "string" ? e.gitBranch : undefined,
-      }),
-    );
-
-  if (entries.length === 0) {
-    sessionsIndexCache.set(projectDirPath, { mtime, data: null });
-    return null;
-  }
-
-  // The sessions-index.json format has no top-level cwd field, so we use the first entry's
-  // projectPath as the canonical cwd without validating that all entries agree. In practice
-  // all entries in a single index file share the same project directory.
-  const result: SessionsIndex = {
-    projectPath: entries[0].projectPath,
-    entries,
-  };
-  sessionsIndexCache.set(projectDirPath, { mtime, data: result });
-  return result;
 }
 
 /**
@@ -819,7 +712,6 @@ export async function readSessionTail(
  * Resets all module-level caches. Only call from tests.
  */
 export function _resetCachesForTesting(): void {
-  sessionsIndexCache.clear();
   sessionTailCache.clear();
   projectStateCache.clear();
 }
@@ -896,6 +788,7 @@ function scanEnrichment(
   let foundUserActivity = false;
   let foundAssistantActivity = false;
   let foundModel = false;
+  let foundSessionName = false;
   // Only suppress the TodoWrite fallback when at least one task was resolved via
   // TaskCreate/TaskUpdate; an empty scannedTasks Map (creates seen but results missing)
   // does not count.
@@ -1062,6 +955,15 @@ function scanEnrichment(
         }
       }
     }
+
+    // custom-title entries carry the user-assigned session name.
+    // Reverse scan: first hit is the most recent title — set once and skip the rest.
+    if (!foundSessionName && type === "custom-title") {
+      if (typeof entry.customTitle === "string") {
+        result.sessionName = entry.customTitle;
+        foundSessionName = true;
+      }
+    }
   }
 
   // Resolve Task tool_use correlations: tool_use_id links description (from assistant)
@@ -1149,6 +1051,8 @@ function mergeEnrichment(
     merged.latestAssistantActivity = latestAssistantActivity;
   const model = scanResult.model ?? baseData.model;
   if (model !== undefined) merged.model = model;
+  const sessionName = scanResult.sessionName ?? baseData.sessionName;
+  if (sessionName !== undefined) merged.sessionName = sessionName;
   if (mergedTasks !== undefined) merged.tasks = mergedTasks;
   if (mergedTasksDone !== undefined) merged.tasksDone = mergedTasksDone;
   if (mergedTasksTotal !== undefined) merged.tasksTotal = mergedTasksTotal;
@@ -1391,6 +1295,7 @@ async function buildProjectState(
     latestUserActivity: tail.latestUserActivity,
     latestAssistantActivity: tail.latestAssistantActivity,
     model: tail.model,
+    sessionName: tail.sessionName,
     tasksDone: tail.tasksDone,
     tasksTotal: tail.tasksTotal,
     inputTokens: tail.inputTokens,
@@ -1399,7 +1304,6 @@ async function buildProjectState(
     notificationTimestamp,
     subagents: subagents.length > 0 ? subagents : undefined,
     subagentCount: subagentCount > 0 ? subagentCount : undefined,
-    gitBranch: project.gitBranch,
   };
 }
 
@@ -1416,65 +1320,17 @@ async function readProjectInfo(
   }
   if (!isDir) return null;
 
-  // Prefer sessions-index.json for richer metadata; fall back to JSONL first-line parse
-  const index = await readSessionsIndex(fullPath);
-  if (index !== null) {
-    const latest = index.entries.reduce((a, b) =>
-      a.fileMtime > b.fileMtime ? a : b,
-    );
-
-    // The index can grow stale: scan direct-child .jsonl files for any with a newer
-    // mtime than what the index recorded. Subdirectory files (subagent JSONLs under
-    // {uuid}/subagents/) are excluded by limiting readdir to depth-1 entries only.
-    let latestJSONL = latest.fullPath;
-    const newerOnDisk = await findLatestJSONL(fullPath);
-    if (newerOnDisk !== null) {
-      let diskMtime = 0;
-      try {
-        const s = await stat(newerOnDisk);
-        diskMtime = s.mtimeMs;
-      } catch {
-        // ignore; keep index entry
-      }
-      if (diskMtime > latest.fileMtime) {
-        latestJSONL = newerOnDisk;
-      }
-    }
-
-    return {
-      projectDir: dirName,
-      cwd: index.projectPath,
-      projectName: basename(index.projectPath),
-      sessionId: latest.sessionId,
-      latestJSONL,
-      summary: latest.summary,
-      firstPrompt: latest.firstPrompt,
-      messageCount: latest.messageCount,
-      sessionModified: latest.modified,
-      gitBranch: latest.gitBranch,
-    };
-  }
-
   const latestJSONL = await findLatestJSONL(fullPath);
   if (latestJSONL === null) return null;
 
   const firstLine = await readFirstLine(latestJSONL);
   if (firstLine === null) return null;
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(firstLine);
-  } catch {
-    return null;
-  }
-
-  if (!isFirstLineRecord(parsed)) return null;
-
   return {
     projectDir: dirName,
-    cwd: parsed.cwd,
-    projectName: basename(parsed.cwd),
-    sessionId: parsed.sessionId,
+    cwd: firstLine.cwd,
+    projectName: basename(firstLine.cwd),
+    sessionId: firstLine.sessionId,
     latestJSONL,
   };
 }
@@ -1508,11 +1364,23 @@ async function findLatestJSONL(dirPath: string): Promise<string | null> {
   return latestPath;
 }
 
-async function readFirstLine(filePath: string): Promise<string | null> {
+async function readFirstLine(
+  filePath: string,
+): Promise<{ cwd: string; sessionId: string } | null> {
   try {
     const text = await Bun.file(filePath).slice(0, 4096).text();
-    const newline = text.indexOf("\n");
-    return newline === -1 ? text.trim() : text.slice(0, newline).trim();
+    const lines = text.split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed === "") continue;
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (isFirstLineRecord(parsed)) return parsed;
+      } catch {
+        // Skip unparseable lines
+      }
+    }
+    return null;
   } catch {
     return null;
   }
@@ -1657,35 +1525,6 @@ function isFirstLineRecord(
   if (typeof v !== "object" || v === null) return false;
   const obj = v as Record<string, unknown>;
   return typeof obj.cwd === "string" && typeof obj.sessionId === "string";
-}
-
-type RawIndexEntry = {
-  sessionId: string;
-  fullPath: string;
-  fileMtime: number;
-  firstPrompt?: unknown;
-  summary?: unknown;
-  messageCount?: unknown;
-  modified?: unknown;
-  gitBranch?: unknown;
-  projectPath: string;
-  isSidechain: boolean;
-};
-
-function isSessionsIndexRaw(v: unknown): v is { entries: RawIndexEntry[] } {
-  if (typeof v !== "object" || v === null) return false;
-  const obj = v as Record<string, unknown>;
-  if (!Array.isArray(obj.entries)) return false;
-  return obj.entries.every(
-    (e) =>
-      typeof e === "object" &&
-      e !== null &&
-      typeof (e as Record<string, unknown>).sessionId === "string" &&
-      typeof (e as Record<string, unknown>).fullPath === "string" &&
-      typeof (e as Record<string, unknown>).fileMtime === "number" &&
-      typeof (e as Record<string, unknown>).projectPath === "string" &&
-      typeof (e as Record<string, unknown>).isSidechain === "boolean",
-  );
 }
 
 // Strips the .jsonl extension from a path to get the corresponding session directory.

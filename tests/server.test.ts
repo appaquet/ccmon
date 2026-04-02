@@ -52,7 +52,6 @@ describe("HTTP server", () => {
     const firstLine = JSON.stringify({
       sessionId: "srv-test",
       cwd: "/home/user/testproj",
-      gitBranch: "main",
       timestamp: new Date().toISOString(),
     });
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
@@ -102,7 +101,6 @@ describe("HTTP server with maxInactivityHours filter", () => {
     const firstLine = JSON.stringify({
       sessionId: "stale-test",
       cwd: "/home/user/staleproj",
-      gitBranch: "main",
       timestamp: new Date().toISOString(),
     });
     const jsonlPath = join(projDir, "session.jsonl");
@@ -135,7 +133,6 @@ describe("HTTP server with maxInactivityHours filter", () => {
     const firstLine = JSON.stringify({
       sessionId: "inf-test",
       cwd: "/home/user/infproj",
-      gitBranch: "main",
       timestamp: new Date().toISOString(),
     });
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
@@ -201,7 +198,6 @@ describe("WebSocket server", () => {
     const firstLine = JSON.stringify({
       sessionId: "broadcast-test",
       cwd: "/home/user/broadcastproj",
-      gitBranch: "main",
       timestamp: new Date().toISOString(),
     });
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
@@ -266,7 +262,6 @@ describe("WebSocket server", () => {
     const firstLine = JSON.stringify({
       sessionId: "ws-test",
       cwd: "/home/user/wsproj",
-      gitBranch: "main",
       timestamp: new Date().toISOString(),
     });
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
@@ -367,24 +362,6 @@ describe("server-side state map (R31)", () => {
       })}\n`,
     );
 
-    // Use sessions-index.json to provide gitBranch
-    await writeFile(
-      join(projDir, "sessions-index.json"),
-      JSON.stringify({
-        version: 1,
-        entries: [
-          {
-            sessionId: "r31-test",
-            fullPath: jsonlPath,
-            fileMtime: Date.now(),
-            projectPath: "/home/user/r31proj",
-            isSidechain: false,
-            gitBranch: "feature",
-          },
-        ],
-      }),
-    );
-
     const srv = startServer({
       port: 0,
       claudeDir: tmpDir,
@@ -421,7 +398,6 @@ describe("server-side state map (R31)", () => {
     expect(parsed.length).toBe(1);
     const entry = parsed[0] as Record<string, unknown>;
     expect(entry.projectName).toBe("r31proj");
-    expect(entry.gitBranch).toBe("feature");
   });
 
   test("R31: /api/state returns map contents without triggering rescan", async () => {
@@ -430,7 +406,6 @@ describe("server-side state map (R31)", () => {
     const firstLine = JSON.stringify({
       sessionId: "r31-api-test",
       cwd: "/home/user/r31apiproj",
-      gitBranch: "main",
       timestamp: new Date().toISOString(),
     });
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
@@ -477,7 +452,6 @@ describe("periodic safety broadcast (R61)", () => {
     const firstLine = JSON.stringify({
       sessionId: "r61-test",
       cwd: "/home/user/r61proj",
-      gitBranch: "main",
       timestamp: new Date().toISOString(),
     });
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
@@ -545,7 +519,6 @@ describe("state propagation (R34)", () => {
     const firstLine = JSON.stringify({
       sessionId: "r34-test",
       cwd: "/home/user/r34proj",
-      gitBranch: "main",
       timestamp: new Date().toISOString(),
     });
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
