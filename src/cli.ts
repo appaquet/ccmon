@@ -1,6 +1,8 @@
 import { mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, mergeCliOverrides } from "./config";
+import { restoreProcessEnv } from "./env";
 import { startServer } from "./server";
 import {
   filterStaleProjects,
@@ -15,13 +17,14 @@ import {
 } from "./sessions";
 import { watchForChanges } from "./watcher";
 
+restoreProcessEnv();
+
 function exit(code: number): never {
   process.exit(code);
 }
 
 const claudeDir =
-  Bun.env.CLAUDE_PROJECTS_DIR ??
-  join(Bun.env.HOME ?? "/root", ".claude", "projects");
+  Bun.env.CLAUDE_PROJECTS_DIR ?? join(homedir(), ".claude", "projects");
 
 const VERSION = "0.1.0";
 

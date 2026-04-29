@@ -1,5 +1,6 @@
 import type { Dirent } from "node:fs";
 import { appendFile, readdir, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
 // Staleness window for waiting_for_permission signals.
@@ -40,11 +41,7 @@ const SUBAGENT_EXPIRY_MS = 30 * 1000;
 // Closed projects (SessionEnd) are removed from the dashboard after this window.
 export const CLOSED_PROJECT_TTL_MS = 60_000;
 
-export const DEFAULT_CLAUDE_DIR = join(
-  Bun.env.HOME ?? "/root",
-  ".claude",
-  "projects",
-);
+export const DEFAULT_CLAUDE_DIR = join(homedir(), ".claude", "projects");
 
 const VALID_STATES: ReadonlySet<string> = new Set([
   "running",

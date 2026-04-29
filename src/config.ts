@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 export interface CcmonConfig {
@@ -65,7 +66,7 @@ function resolveConfigPath(): string {
   if (envPath) return envPath;
 
   const xdgConfigHome = process.env.XDG_CONFIG_HOME;
-  const base = xdgConfigHome ?? join(process.env.HOME ?? "/root", ".config");
+  const base = xdgConfigHome ?? join(homedir(), ".config");
   return join(base, "ccmon", "config.json");
 }
 

@@ -8,6 +8,7 @@ const STATUS_LOG_FILE = "ccmon-status.jsonl";
 
 const TMPDIR = Bun.env.TMPDIR || "/tmp";
 const CLI_PATH = join(import.meta.dir, "..", "src", "cli.ts");
+const BUN = process.execPath;
 
 /**
  * Splits a string of concatenated pretty-printed JSON values into individual
@@ -72,7 +73,7 @@ async function spawnCli(
   args: string[],
   options: { stdin?: string; env?: Record<string, string> } = {},
 ): Promise<SpawnResult> {
-  const proc = Bun.spawn(["bun", "run", CLI_PATH, ...args], {
+  const proc = Bun.spawn([BUN, "run", CLI_PATH, ...args], {
     stdin:
       options.stdin !== undefined
         ? new TextEncoder().encode(options.stdin)
@@ -252,7 +253,7 @@ describe("dump --watch --project", () => {
     );
 
     const proc = Bun.spawn(
-      ["bun", "run", CLI_PATH, "dump", "--watch", "--project", "watchapp"],
+      [BUN, "run", CLI_PATH, "dump", "--watch", "--project", "watchapp"],
       {
         stdin: "ignore",
         stdout: "pipe",
@@ -285,7 +286,7 @@ describe("dump --watch --project", () => {
     );
 
     const proc = Bun.spawn(
-      ["bun", "run", CLI_PATH, "dump", "--watch", "--project", "watchapp2"],
+      [BUN, "run", CLI_PATH, "dump", "--watch", "--project", "watchapp2"],
       {
         stdin: "ignore",
         stdout: "pipe",
@@ -771,7 +772,7 @@ describe("dump --watch", () => {
     );
 
     // Start the watcher, wait briefly, then kill it
-    const proc = Bun.spawn(["bun", "run", CLI_PATH, "dump", "--watch"], {
+    const proc = Bun.spawn([BUN, "run", CLI_PATH, "dump", "--watch"], {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -801,7 +802,7 @@ describe("dump --watch", () => {
       `${makeFirstLine("/home/user/watchchange", "sess-change")}\n`,
     );
 
-    const proc = Bun.spawn(["bun", "run", CLI_PATH, "dump", "--watch"], {
+    const proc = Bun.spawn([BUN, "run", CLI_PATH, "dump", "--watch"], {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -836,7 +837,7 @@ describe("dump --watch", () => {
   }, 5000);
 
   test("exits cleanly on SIGINT", async () => {
-    const proc = Bun.spawn(["bun", "run", CLI_PATH, "dump", "--watch"], {
+    const proc = Bun.spawn([BUN, "run", CLI_PATH, "dump", "--watch"], {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
