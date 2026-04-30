@@ -1,5 +1,5 @@
 {
-  description = "ccmon - Claude Code Monitor";
+  description = "ccmon - Claude Code & OpenCode Monitor";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

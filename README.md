@@ -1,25 +1,25 @@
-# Claude Code Monitor (ccmon)
+# Claude Code & OpenCode Monitor (ccmon)
 
 > [!WARNING]
 > This project is vibe-coded. Don't expect anything stable.
 
-Real-time dashboard for your Claude Code sessions.
+Real-time dashboard for your Claude Code & OpenCode sessions.
 
 <img width="891" height="483" alt="Screenshot 2026-02-22 at 14 29 37" src="https://github.com/user-attachments/assets/100be8f2-ba2a-4686-8b63-75b1b4b23f42" />
 
 ## Quick Start
 
-1. Install — see [Installation](#instalation) or run locally with `bun run serve`
-2. Configure hooks — see [Hook Configuration](#hook-configuration)
+1. [Installation](#installation) or run locally with `bun run serve`
+2. [Hook Configuration](#hook-configuration) (for Claude Code)
 3. Start server with `ccmon serve`
 4. Open [http://localhost:8080](http://localhost:8080) in your browser
 
 ## Features
 
-- View all your active Claude Code sessions, including their status, context usage, task progress,
-  and sub-agents
-- Visual notifications for Claude Code when user attention is required (permission requests, stopped
-  sessions, etc.)
+- View all your active Claude Code or OpenCode sessions, including their status, context usage, task
+  progress, and sub-agents
+  - Status reporting is semi-real-time for Claude Code, via hooks, but polled every 5s for OpenCode
+- Visual notifications when user attention is required (permission requests, stopped sessions, etc.)
 
 ## Commands
 
