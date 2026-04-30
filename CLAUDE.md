@@ -62,6 +62,59 @@ After any change to `src/sessions.ts` (especially `readProjectInfo`, `readFirstL
 
 ## Architecture
 
+### Backend System
+
+ccmon supports monitoring multiple session sources simultaneously through a **SessionBackend** interface (`src/backends/types.ts`). Each backend implements seven methods covering project discovery, state resolution, enrichment, sub-agent tracking, and change detection.
+
+**Included backends:**
+
+| Backend | Source | Change Detection | State Mechanism |
+|---------|--------|-----------------|-----------------|
+| `ClaudeBackend` | `~/.claude/projects/` filesystem | `fs.watch` on project dirs | `ccmon-status.jsonl` hook event log |
+| `OpencodeBackend` | `opencode.db` SQLite database | Polling `MAX(time_updated)` at configurable interval (default 5s) | Inferred from `session.time_updated` recency |
+
+**Config example for enabling both backends in `~/.config/ccmon/config.json`:**
+
+```json
+{
+  "backends": [
+    { "type": "claude", "enabled": true },
+    { "type": "opencode", "enabled": true }
+  ]
+}
+```
+
+**Config example with custom paths:**
+
+```json
+{
+  "maxInactivityHours": 3,
+  "backends": [
+    {
+      "type": "claude",
+      "enabled": true,
+      "projectsDir": "/custom/.claude/projects"
+    },
+    {
+      "type": "opencode",
+      "enabled": true,
+      "databasePath": "/custom/opencode.db",
+      "pollIntervalMs": 10000
+    }
+  ]
+}
+```
+
+When no `backends` field is present, ccmon defaults to `[{ type: "claude", enabled: true }, { type: "opencode", enabled: true }]`
+
+### OpenCode limitations
+
+- **No hook support**: OpenCode's plugin system does not support CLI hook scripts. State is inferred from session timestamp recency rather than explicit hook events.
+- **Polling-based**: Changes are detected by polling `MAX(time_updated)` on the session table (default 5s interval). This is adequate for a monitoring dashboard but introduces a latency window not present with Claude Code's `fs.watch` approach.
+- **State inference**: Only `running` (session updated within last 60s) and `stopped` are supported. `waiting_for_permission` and `error` states are not detected.
+- **Read-only**: ccmon opens the OpenCode database in read-only mode (`{ readonly: true }`). No data is written to the database.
+- **No enrichment parity**: OpenCode enrichment extracts model, tokens, user/assistant messages, and session name only. Task tracking (TaskCreate/TaskUpdate equivalents) is not yet implemented for OpenCode.
+
 **Project naming**: `projectName` = basename of cwd (from project directory). Used for `--project` filtering and server project identification.
 
 **Status file**: Hook appends to `~/.claude/projects/{encoded-dir}/ccmon-status.jsonl` (append-only NDJSON event log)

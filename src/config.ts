@@ -1,17 +1,23 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { BackendConfigEntry } from "./backends/types";
 
 export interface CcmonConfig {
   maxInactivityHours: number;
   host: string;
   port: number;
+  backends: BackendConfigEntry[];
 }
 
 export const DEFAULT_CONFIG: CcmonConfig = {
   maxInactivityHours: 1,
   host: "0.0.0.0",
   port: 8080,
+  backends: [
+    { type: "claude", enabled: true },
+    { type: "opencode", enabled: true },
+  ],
 };
 
 /**
@@ -58,6 +64,9 @@ export function mergeCliOverrides(
   if (overrides.port !== undefined) {
     result.port = overrides.port;
   }
+  if (overrides.backends !== undefined) {
+    result.backends = overrides.backends;
+  }
   return result;
 }
 
@@ -87,5 +96,8 @@ function mergeWithDefaults(partial: Record<string, unknown>): CcmonConfig {
         : DEFAULT_CONFIG.maxInactivityHours,
     host: typeof partial.host === "string" ? partial.host : DEFAULT_CONFIG.host,
     port: typeof partial.port === "number" ? partial.port : DEFAULT_CONFIG.port,
+    backends: Array.isArray(partial.backends)
+      ? (partial.backends as BackendConfigEntry[])
+      : DEFAULT_CONFIG.backends,
   };
 }

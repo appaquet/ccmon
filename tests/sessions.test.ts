@@ -30,19 +30,9 @@ import {
   writeStatusEvent,
   writeStatusTruncate,
 } from "../src/sessions";
+import { makeTempDir } from "./_helpers";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-const TMPDIR = Bun.env.TMPDIR || "/tmp";
-
-async function makeTempDir(prefix: string): Promise<string> {
-  const dir = join(
-    TMPDIR,
-    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  );
-  await mkdir(dir, { recursive: true });
-  return dir;
-}
 
 function makeFirstLine(cwd: string, sessionId: string): string {
   return JSON.stringify({
@@ -579,6 +569,7 @@ describe("filterStaleProjects NaN guard (R18)", () => {
       projectName: "proj",
       sessionId: "sid",
       latestJSONL: "/home/user/proj/session.jsonl",
+      source: "claude",
       state: "stopped",
       lastUpdated,
     };
@@ -911,6 +902,7 @@ describe("filterStaleProjects", () => {
       projectName: "proj",
       sessionId: "sid",
       latestJSONL: "/home/user/proj/session.jsonl",
+      source: "claude",
       state: "stopped",
       lastUpdated,
     };
@@ -3445,6 +3437,7 @@ describe("closed state", () => {
       projectName: "proj",
       sessionId: "sid",
       latestJSONL: "/home/user/proj/session.jsonl",
+      source: "claude",
       state,
       lastUpdated,
     };
@@ -3492,6 +3485,7 @@ function makeProjectState(cwd: string): import("../src/sessions").ProjectState {
     projectName: cwd.split("/").at(-1) ?? cwd,
     sessionId: "test-session",
     latestJSONL: `${cwd}/session.jsonl`,
+    source: "claude",
     state: "stopped",
     lastUpdated: null,
   };

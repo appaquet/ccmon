@@ -2,19 +2,9 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { _backoffDelayForTesting, watchForChanges } from "../src/watcher";
+import { makeTempDir } from "./_helpers";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-const TMPDIR = Bun.env.TMPDIR || "/tmp";
-
-async function makeTempDir(prefix: string): Promise<string> {
-  const dir = join(
-    TMPDIR,
-    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  );
-  await mkdir(dir, { recursive: true });
-  return dir;
-}
 
 function makeStatusPayload(): string {
   return JSON.stringify({

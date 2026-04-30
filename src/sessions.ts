@@ -2,25 +2,24 @@ import type { Dirent } from "node:fs";
 import { appendFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import type { BackendSource } from "./backends/types";
+import type { SessionState } from "./session-core";
 
-// Staleness window for waiting_for_permission signals.
-const PERMISSION_STALE_MS = 5 * 60 * 1000;
+export type { SessionState, StatusEvent } from "./session-core";
+export {
+  isStatusEvent,
+  PERMISSION_RESOLVE_GAP_MS,
+  readStatusLog,
+  resolveState,
+  STATUS_FILE_LEGACY,
+  STATUS_LOG_FILE,
+} from "./session-core";
 
-// Minimum time after a PermissionRequest before a same-session PostToolUse can resolve it.
-// Guards against concurrent sub-agents that share the same session_id arriving within this window.
-export const PERMISSION_RESOLVE_GAP_MS = 3000;
-
-// JSONL mtime threshold: files written within this window indicate active session.
-// Claude writes continuously during turns so 60s covers any lag.
-const JSONL_ACTIVE_THRESHOLD_MS = 60_000;
+import type { StatusEvent } from "./session-core";
+import { readStatusLog, resolveState, STATUS_LOG_FILE } from "./session-core";
 
 const JSONL_EXT = ".jsonl";
-
-export const STATUS_LOG_FILE = "ccmon-status.jsonl";
-export const STATUS_FILE_LEGACY = "ccmon-status.json";
 export const MAX_STATUS_LOG_BYTES = 64 * 1024;
-
-// Bytes to keep when trimming the status log after it exceeds MAX_STATUS_LOG_BYTES.
 const STATUS_LOG_TAIL_BYTES = 8 * 1024;
 
 // Maximum bytes to read on first access for large files (10 MB).
@@ -43,14 +42,6 @@ export const CLOSED_PROJECT_TTL_MS = 60_000;
 
 export const DEFAULT_CLAUDE_DIR = join(homedir(), ".claude", "projects");
 
-const VALID_STATES: ReadonlySet<string> = new Set([
-  "running",
-  "waiting_for_permission",
-  "stopped",
-  "closed",
-  "error",
-]);
-
 // Keyed by jsonlPath; avoids re-reading the tail unless the file changed.
 interface SessionTailCache {
   mtime: number;
@@ -62,13 +53,6 @@ const sessionTailCache = new Map<string, SessionTailCache>();
 // Keyed by projectDirPath (full path); holds the most recent ProjectState for each project.
 // Populated on a full scan; updated in-place on targeted single-project rescans.
 const projectStateCache = new Map<string, ProjectState>();
-
-export type SessionState =
-  | "running"
-  | "waiting_for_permission"
-  | "stopped"
-  | "closed"
-  | "error";
 
 /**
  * Enrichment fields shared between main sessions and sub-agents,
@@ -113,6 +97,7 @@ export interface ProjectInfo {
   projectName: string; // last segment of cwd
   sessionId: string; // from JSONL first line
   latestJSONL: string; // absolute path to most recent .jsonl file
+  source: BackendSource; // backend identifier
 }
 
 /**
@@ -122,27 +107,6 @@ export interface ProjectInfo {
 export interface SessionTailInfo extends SessionEnrichment {
   // Maps agentId → description, populated from queue-operation enqueue entries.
   agentDescriptions: Map<string, string>;
-}
-
-export interface StatusEvent {
-  event: string;
-  state: SessionState;
-  timestamp: string; // ISO 8601
-  session_id: string;
-  working_dir: string;
-  notificationMessage?: string;
-  notificationTimestamp?: string;
-}
-
-// Legacy single-object format for migration from ccmon-status.json.
-interface StatusFileLegacy {
-  state: SessionState;
-  timestamp: string;
-  session_id: string;
-  working_dir: string;
-  notificationMessage?: string;
-  notificationTimestamp?: string;
-  lastSubagentStoppedAt?: string;
 }
 
 export interface ProjectState extends ProjectInfo, SessionEnrichment {
@@ -315,86 +279,6 @@ export async function scanProjects(
   }
 
   return results;
-}
-
-/**
- * Reads the status event log from {projectDir}/ccmon-status.jsonl.
- * Returns events in chronological order (oldest first).
- *
- * Only reads the last STATUS_LOG_TAIL_BYTES of the file to bound I/O.
- * Falls back to legacy ccmon-status.json if the .jsonl file is absent.
- */
-export async function readStatusLog(
-  projectDir: string,
-): Promise<StatusEvent[]> {
-  const logPath = join(projectDir, STATUS_LOG_FILE);
-
-  let raw: string | null = null;
-  let slicedMidFile = false;
-  try {
-    const file = Bun.file(logPath);
-    const size = file.size;
-    if (size > STATUS_LOG_TAIL_BYTES) {
-      raw = await file.slice(-STATUS_LOG_TAIL_BYTES).text();
-      slicedMidFile = true;
-    } else {
-      raw = await file.text();
-    }
-  } catch {
-    // .jsonl absent — try legacy .json fallback
-  }
-
-  if (raw !== null) {
-    return parseStatusLines(raw, slicedMidFile);
-  }
-
-  // Migration fallback: read legacy ccmon-status.json and convert.
-  const legacyPath = join(projectDir, STATUS_FILE_LEGACY);
-  try {
-    const legacyRaw = await Bun.file(legacyPath).text();
-    const parsed = JSON.parse(legacyRaw);
-    if (isStatusFileLegacy(parsed)) {
-      const event: StatusEvent = {
-        event: "Stop",
-        state: parsed.state,
-        timestamp: parsed.timestamp,
-        session_id: parsed.session_id,
-        working_dir: parsed.working_dir,
-      };
-      if (parsed.notificationMessage !== undefined) {
-        event.notificationMessage = parsed.notificationMessage;
-      }
-      if (parsed.notificationTimestamp !== undefined) {
-        event.notificationTimestamp = parsed.notificationTimestamp;
-      }
-      return [event];
-    }
-  } catch {
-    // Legacy file absent or corrupt — return empty.
-  }
-
-  return [];
-}
-
-/**
- * Parses NDJSON lines into StatusEvent[], skipping corrupt lines.
- * When slicedMidFile is true, the first line is discarded (may be partial).
- */
-function parseStatusLines(raw: string, slicedMidFile: boolean): StatusEvent[] {
-  const lines = raw.split("\n").filter((l) => l.trim() !== "");
-  const startIdx = slicedMidFile && lines.length > 0 ? 1 : 0;
-  const events: StatusEvent[] = [];
-  for (let i = startIdx; i < lines.length; i++) {
-    try {
-      const parsed = JSON.parse(lines[i]);
-      if (isStatusEvent(parsed)) {
-        events.push(parsed);
-      }
-    } catch {
-      // Skip corrupt lines.
-    }
-  }
-  return events;
 }
 
 /**
@@ -1329,6 +1213,7 @@ async function readProjectInfo(
     projectName: basename(firstLine.cwd),
     sessionId: firstLine.sessionId,
     latestJSONL,
+    source: "claude",
   };
 }
 
@@ -1381,139 +1266,6 @@ async function readFirstLine(
   } catch {
     return null;
   }
-}
-
-/** Events that don't carry session state (excluded from state resolution). */
-const NON_STATE_EVENTS = new Set(["Notification", "SubagentStop"]);
-
-/** Events that resolve an outstanding PermissionRequest. */
-const PERMISSION_RESOLVERS = new Set([
-  "Stop",
-  "StopFailure",
-  "SessionEnd",
-  "UserPromptSubmit",
-]);
-
-/**
- * Resolves session state from the status event log and JSONL mtime.
- *
- * Priority order:
- * 1. Unresolved PermissionRequest (not followed by Stop/StopFailure/SessionEnd/UserPromptSubmit,
- *    fresh < PERMISSION_STALE_MS) → waiting_for_permission
- * 2. Latest state-bearing event is SessionEnd → closed
- * 2b. Latest state-bearing event is Stop → stopped
- * 3. Latest state-bearing event is PostToolUse/UserPromptSubmit within JSONL_ACTIVE_THRESHOLD_MS → running
- * 4. JSONL mtime within JSONL_ACTIVE_THRESHOLD_MS → running
- * 4.5. Latest state-bearing event is StopFailure → error
- * 5. Default → stopped
- *
- * Exported for unit testing only.
- */
-export function resolveState(
-  jsonlMtimeMs: number | null,
-  events: StatusEvent[],
-): SessionState {
-  // Filter to state-bearing events only.
-  const stateful = events.filter((e) => !NON_STATE_EVENTS.has(e.event));
-
-  // Priority 1: scan backward for unresolved PermissionRequest.
-  // A PermissionRequest is resolved if the same session later fires PostToolUse
-  // (the tool ran, meaning the user clicked Allow). Sub-agent PostToolUse events
-  // have different session_id values and must not resolve a main session's request.
-  for (let i = stateful.length - 1; i >= 0; i--) {
-    const e = stateful[i];
-    if (PERMISSION_RESOLVERS.has(e.event)) break;
-    if (e.event === "PermissionRequest") {
-      // Forward-scan from this position for a same-session PostToolUse.
-      const sid = e.session_id;
-      const permTs = new Date(e.timestamp).getTime();
-      let resolved = false;
-      for (let j = i + 1; j < stateful.length; j++) {
-        const candidate = stateful[j];
-        if (candidate.session_id === sid && candidate.event === "PostToolUse") {
-          // Require a minimum gap to rule out same-session sub-agent PostToolUse
-          // events that arrive concurrently (all hooks share the same session_id).
-          const candidateTs = new Date(candidate.timestamp).getTime();
-          if (
-            !Number.isNaN(permTs) &&
-            !Number.isNaN(candidateTs) &&
-            candidateTs >= permTs + PERMISSION_RESOLVE_GAP_MS
-          ) {
-            resolved = true;
-            break;
-          }
-        }
-      }
-      if (resolved) break;
-
-      const age = Date.now() - new Date(e.timestamp).getTime();
-      if (!Number.isNaN(age) && age < PERMISSION_STALE_MS) {
-        return "waiting_for_permission";
-      }
-      break;
-    }
-  }
-
-  // Priority 2 & 3: check latest state-bearing event.
-  if (stateful.length > 0) {
-    const latest = stateful[stateful.length - 1];
-    if (latest.event === "SessionEnd") {
-      return "closed";
-    }
-    if (latest.event === "Stop") {
-      return "stopped";
-    }
-    if (latest.event === "PostToolUse" || latest.event === "UserPromptSubmit") {
-      const age = Date.now() - new Date(latest.timestamp).getTime();
-      if (!Number.isNaN(age) && age < JSONL_ACTIVE_THRESHOLD_MS) {
-        return "running";
-      }
-    }
-  }
-
-  // Priority 4: JSONL mtime fallback.
-  if (
-    jsonlMtimeMs !== null &&
-    jsonlMtimeMs > Date.now() - JSONL_ACTIVE_THRESHOLD_MS
-  ) {
-    return "running";
-  }
-
-  // Priority 4.5: StopFailure → error (after JSONL mtime so a resumed session overrides it).
-  if (
-    stateful.length > 0 &&
-    stateful[stateful.length - 1].event === "StopFailure"
-  ) {
-    return "error";
-  }
-
-  // Priority 5: default.
-  return "stopped";
-}
-
-export function isStatusEvent(v: unknown): v is StatusEvent {
-  if (typeof v !== "object" || v === null) return false;
-  const obj = v as Record<string, unknown>;
-  return (
-    typeof obj.event === "string" &&
-    typeof obj.state === "string" &&
-    VALID_STATES.has(obj.state) &&
-    typeof obj.timestamp === "string" &&
-    typeof obj.session_id === "string" &&
-    typeof obj.working_dir === "string"
-  );
-}
-
-function isStatusFileLegacy(v: unknown): v is StatusFileLegacy {
-  if (typeof v !== "object" || v === null) return false;
-  const obj = v as Record<string, unknown>;
-  return (
-    typeof obj.state === "string" &&
-    VALID_STATES.has(obj.state) &&
-    typeof obj.timestamp === "string" &&
-    typeof obj.session_id === "string" &&
-    typeof obj.working_dir === "string"
-  );
 }
 
 function isFirstLineRecord(

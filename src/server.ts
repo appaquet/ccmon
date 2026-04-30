@@ -2,14 +2,10 @@ import { readFileSync } from "node:fs";
 import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
 import type { ServerWebSocket } from "bun";
+import type { SessionBackend } from "./backends/types";
 import { DEFAULT_CONFIG } from "./config";
 import type { ProjectState } from "./sessions";
-import {
-  DEFAULT_CLAUDE_DIR,
-  filterStaleProjects,
-  getProjectState,
-} from "./sessions";
-import { watchForChanges } from "./watcher";
+import { filterStaleProjects } from "./sessions";
 
 const htmlPath = join(import.meta.dir, "..", "public", "index.html");
 let html: string;
@@ -22,7 +18,7 @@ try {
 export interface ServerOptions {
   port?: number;
   hostname?: string;
-  claudeDir?: string;
+  backends: SessionBackend[];
   maxInactivityHours?: number;
   /** Override the periodic broadcast interval in ms. Defaults to 30000. Used in tests only. */
   broadcastIntervalMs?: number;
@@ -33,23 +29,23 @@ export interface ServerOptions {
  * Returns the actual port (useful when port 0 is passed for OS assignment), a stop function,
  * and a `ready` promise that resolves after the initial state map scan completes.
  */
-export function startServer(options: ServerOptions = {}): {
+export function startServer(options: ServerOptions): {
   port: number;
   stop: () => void;
   ready: Promise<void>;
 } {
   const port = options.port ?? DEFAULT_CONFIG.port;
   const hostname = options.hostname ?? DEFAULT_CONFIG.host;
-  const claudeDir = options.claudeDir ?? DEFAULT_CLAUDE_DIR;
+  const backends = options.backends;
   const maxInactivityHours =
     options.maxInactivityHours ?? DEFAULT_CONFIG.maxInactivityHours;
 
   const clients = new Set<ServerWebSocket<unknown>>();
 
-  // Server-owned state map: projectDir (full path) → ProjectState.
-  // Populated on startup, updated by watcher events. WS open and /api/state
-  // read directly from here — no on-demand rescans.
+  // Per-backend state map: backend.projectKey(project) → ProjectState
   const stateMap = new Map<string, ProjectState>();
+  const backendIndex = new Map<string, SessionBackend>();
+  const backendToKeys = new Map<SessionBackend, Set<string>>();
 
   function currentFilteredState(): ProjectState[] {
     return filterStaleProjects([...stateMap.values()], maxInactivityHours);
@@ -66,55 +62,81 @@ export function startServer(options: ServerOptions = {}): {
     }
   }
 
-  async function updateProject(changedProjectDir: string): Promise<void> {
-    const newStates = await getProjectState(claudeDir, changedProjectDir);
-
-    // Find the updated project state from the rescan result.
-    const updatedState = newStates.find((s) => {
-      const fullPath = join(claudeDir, s.projectDir);
-      return fullPath === changedProjectDir;
-    });
-
-    if (updatedState === undefined) {
-      // Project disappeared — remove immediately.
-      stateMap.delete(changedProjectDir);
-      broadcastCurrent();
+  async function buildStateForBackend(backend: SessionBackend): Promise<void> {
+    let projects: Awaited<ReturnType<SessionBackend["scanProjects"]>>;
+    try {
+      projects = await backend.scanProjects();
+    } catch {
       return;
     }
 
-    stateMap.set(changedProjectDir, updatedState);
-    broadcastCurrent();
+    for (const info of projects) {
+      let state: ProjectState;
+      try {
+        state = await backend.buildProjectState(info);
+      } catch {
+        continue;
+      }
+      const key = backend.projectKey(state);
+      stateMap.set(key, state);
+      backendIndex.set(key, backend);
+      let keySet = backendToKeys.get(backend);
+      if (!keySet) {
+        keySet = new Set();
+        backendToKeys.set(backend, keySet);
+      }
+      keySet.add(key);
+    }
   }
 
-  // Watcher reference is set after the initial scan completes to avoid a race where a watcher
-  // event fires before ready resolves and then stateMap.clear() discards the interim update.
-  let watcher: ReturnType<typeof watchForChanges> | null = null;
+  async function rescanAllBackends(): Promise<void> {
+    stateMap.clear();
+    backendIndex.clear();
+    backendToKeys.clear();
 
-  // Periodic safety broadcast: re-pushes current state every 30 s so clients recover from
-  // any silent watcher death without needing to reconnect.
+    for (const backend of backends) {
+      await buildStateForBackend(backend);
+    }
+  }
+
+  async function rescanBackend(backend: SessionBackend): Promise<void> {
+    const keySet = backendToKeys.get(backend);
+    if (keySet) {
+      for (const key of keySet) {
+        stateMap.delete(key);
+        backendIndex.delete(key);
+      }
+      backendToKeys.delete(backend);
+    }
+
+    await buildStateForBackend(backend);
+  }
+
+  // Periodic safety broadcast: re-pushes current state every 30 s so clients recover.
   const BROADCAST_INTERVAL_MS = options.broadcastIntervalMs ?? 30_000;
   const broadcastInterval = setInterval(
     broadcastCurrent,
     BROADCAST_INTERVAL_MS,
   );
 
-  // Populate the state map on startup, then start the watcher so events are never lost.
-  const ready = getProjectState(claudeDir)
-    .then((states) => {
-      stateMap.clear();
-      for (const s of states) {
-        const fullPath = join(claudeDir, s.projectDir);
-        stateMap.set(fullPath, s);
-      }
-      // Clients that connected before the initial scan completed received an empty
-      // project list. Broadcast now that the map is populated.
-      broadcastCurrent();
-      watcher = watchForChanges(claudeDir, (projectDir: string) => {
-        updateProject(projectDir).catch((err: unknown) => {
+  // Start watchers for each backend
+  const watcherStops: Array<{ stop: () => void }> = [];
+  for (const backend of backends) {
+    const watcher = backend.watchForChanges(() => {
+      rescanBackend(backend)
+        .then(() => broadcastCurrent())
+        .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
           process.stderr.write(`ccmon: broadcast error: ${msg}\n`);
         });
-      });
+    });
+    watcherStops.push(watcher);
+  }
+
+  // Populate the state map on startup
+  const ready = rescanAllBackends()
+    .then(() => {
+      broadcastCurrent();
     })
     .catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
@@ -127,7 +149,6 @@ export function startServer(options: ServerOptions = {}): {
     websocket: {
       open(ws) {
         clients.add(ws);
-        // Send current map contents — no rescan.
         ws.send(
           JSON.stringify({
             hostname: osHostname(),
@@ -150,12 +171,10 @@ export function startServer(options: ServerOptions = {}): {
         if (!upgraded) {
           return new Response("WebSocket upgrade failed", { status: 400 });
         }
-        // upgrade() returns undefined when successful; Response must not be returned
         return undefined;
       }
 
       if (url.pathname === "/api/state") {
-        // Return map contents — no rescan.
         return Response.json(currentFilteredState());
       }
 
@@ -177,7 +196,7 @@ export function startServer(options: ServerOptions = {}): {
     ready,
     stop(): void {
       clearInterval(broadcastInterval);
-      watcher?.stop();
+      for (const w of watcherStops) w.stop();
       server.stop(true);
     },
   };

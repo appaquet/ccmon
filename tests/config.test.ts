@@ -1,18 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DEFAULT_CONFIG, loadConfig, mergeCliOverrides } from "../src/config";
-
-const TMPDIR = Bun.env.TMPDIR || "/tmp";
-
-async function makeTempDir(prefix: string): Promise<string> {
-  const dir = join(
-    TMPDIR,
-    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  );
-  await mkdir(dir, { recursive: true });
-  return dir;
-}
+import { makeTempDir } from "./_helpers";
 
 describe("loadConfig", () => {
   let tmpDir: string;
@@ -144,5 +134,96 @@ describe("mergeCliOverrides", () => {
     const base = { ...DEFAULT_CONFIG };
     const result = mergeCliOverrides(base, {});
     expect(result).toEqual(base);
+  });
+});
+
+describe("backends config", () => {
+  let tmpDir: string;
+  const originalEnv: Record<string, string | undefined> = {};
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir("ccmon-config-backends");
+    originalEnv.CCMON_CONFIG = process.env.CCMON_CONFIG;
+    originalEnv.XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME;
+    delete process.env.CCMON_CONFIG;
+    delete process.env.XDG_CONFIG_HOME;
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+    if (originalEnv.CCMON_CONFIG === undefined) {
+      delete process.env.CCMON_CONFIG;
+    } else {
+      process.env.CCMON_CONFIG = originalEnv.CCMON_CONFIG;
+    }
+    if (originalEnv.XDG_CONFIG_HOME === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = originalEnv.XDG_CONFIG_HOME;
+    }
+  });
+
+  test("backends config: claude enabled parses correctly", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        backends: [{ type: "claude", enabled: true }],
+      }),
+    );
+
+    const config = loadConfig(configPath);
+    expect(config.backends).toHaveLength(1);
+    expect(config.backends[0].type).toBe("claude");
+    expect(config.backends[0].enabled).toBe(true);
+  });
+
+  test("backends config: opencode enabled parses correctly", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        backends: [{ type: "opencode", enabled: true }],
+      }),
+    );
+
+    const config = loadConfig(configPath);
+    expect(config.backends).toHaveLength(1);
+    expect(config.backends[0].type).toBe("opencode");
+    expect(config.backends[0].enabled).toBe(true);
+  });
+
+  test("absent backends field: defaults to both backends", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(configPath, JSON.stringify({ maxInactivityHours: 3 }));
+
+    const config = loadConfig(configPath);
+    expect(config.backends).toHaveLength(2);
+    expect(config.backends[0].type).toBe("claude");
+    expect(config.backends[0].enabled).toBe(true);
+    expect(config.backends[1].type).toBe("opencode");
+    expect(config.backends[1].enabled).toBe(true);
+  });
+
+  test("disabled backend still present in parsed config", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        backends: [
+          { type: "claude", enabled: false },
+          { type: "opencode", enabled: true },
+        ],
+      }),
+    );
+
+    const config = loadConfig(configPath);
+    expect(config.backends).toHaveLength(2);
+    expect(config.backends.find((b) => b.type === "claude")?.enabled).toBe(
+      false,
+    );
+    expect(config.backends.find((b) => b.type === "opencode")?.enabled).toBe(
+      true,
+    );
   });
 });

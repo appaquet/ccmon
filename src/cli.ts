@@ -1,12 +1,13 @@
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { createBackends } from "./backends";
+import type { SessionBackend } from "./backends/types";
 import { loadConfig, mergeCliOverrides } from "./config";
 import { restoreProcessEnv } from "./env";
 import { startServer } from "./server";
 import {
   filterStaleProjects,
-  getProjectState,
   mapHookEventToState,
   type StatusEvent,
   scanProjects,
@@ -15,7 +16,6 @@ import {
   writeStatusTruncate,
   writeSubagentStatus,
 } from "./sessions";
-import { watchForChanges } from "./watcher";
 
 restoreProcessEnv();
 
@@ -87,10 +87,12 @@ if (subcommand === "dump") {
   }
 
   const serveConfig = mergeCliOverrides(config, { port, host });
+  const { backends, close } = createBackends(config);
   const { port: resolvedPort, stop } = startServer({
     port: serveConfig.port,
     hostname: serveConfig.host,
     maxInactivityHours: serveConfig.maxInactivityHours,
+    backends,
   });
   process.stdout.write(
     `ccmon server listening on http://${serveConfig.host}:${resolvedPort}\n`,
@@ -98,10 +100,12 @@ if (subcommand === "dump") {
 
   process.on("SIGINT", () => {
     stop();
+    close();
     process.exit(0);
   });
   process.on("SIGTERM", () => {
     stop();
+    close();
     process.exit(0);
   });
 } else {
@@ -109,7 +113,7 @@ if (subcommand === "dump") {
     `Usage: ccmon <subcommand>
 
 Subcommands:
-  dump                   Print current Claude Code project state as JSON
+  dump                   Print current session state as JSON
   dump --watch           Watch for changes and print updates
   dump --max-age <hours> Override maxInactivityHours from config
   dump --no-filter       Disable inactivity filter
@@ -120,15 +124,48 @@ Subcommands:
   sub                    Connect to running server, stream state as NDJSON
   sub --host <addr>      Connect to custom host (default: localhost)
   sub --port <N>         Connect to custom port (default: 8080)
+
+Supports Claude Code and OpenCode monitoring. Configure backends in
+~/.config/ccmon/config.json (default: Claude Code only).
 `,
   );
   process.exit(1);
 }
 
+async function buildProjectMap(
+  backends: SessionBackend[],
+): Promise<
+  Map<string, Awaited<ReturnType<SessionBackend["buildProjectState"]>>>
+> {
+  const map = new Map<
+    string,
+    Awaited<ReturnType<SessionBackend["buildProjectState"]>>
+  >();
+  for (const backend of backends) {
+    let projects: Awaited<ReturnType<SessionBackend["scanProjects"]>>;
+    try {
+      projects = await backend.scanProjects();
+    } catch {
+      continue;
+    }
+    for (const info of projects) {
+      try {
+        const state = await backend.buildProjectState(info);
+        map.set(backend.projectKey(state), state);
+      } catch {}
+    }
+  }
+  return map;
+}
+
 async function runDump(): Promise<void> {
   try {
-    const rawState = await getProjectState(claudeDir);
-    const state = filterStaleProjects(rawState, config.maxInactivityHours);
+    const { backends, close } = createBackends(config);
+    const projectMap = await buildProjectMap(backends);
+
+    const allProjects = [...projectMap.values()];
+    const state = filterStaleProjects(allProjects, config.maxInactivityHours);
+
     if (projectFilter !== null) {
       const match = state.find((p) => p.projectName === projectFilter) ?? null;
       if (match !== null) {
@@ -137,6 +174,7 @@ async function runDump(): Promise<void> {
     } else {
       console.log(JSON.stringify(state, null, 2));
     }
+    close();
     process.exit(0);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -146,10 +184,15 @@ async function runDump(): Promise<void> {
 }
 
 async function runDumpWatch(): Promise<void> {
-  function formatWatchOutput(
-    rawState: Awaited<ReturnType<typeof getProjectState>>,
-  ): string {
-    const state = filterStaleProjects(rawState, config.maxInactivityHours);
+  const { backends, close } = createBackends(config);
+  const projectMap = new Map<
+    string,
+    Awaited<ReturnType<SessionBackend["buildProjectState"]>>
+  >();
+
+  function formatWatchOutput(): string {
+    const allProjects = [...projectMap.values()];
+    const state = filterStaleProjects(allProjects, config.maxInactivityHours);
     if (projectFilter !== null) {
       const match = state.find((p) => p.projectName === projectFilter) ?? null;
       return match !== null ? JSON.stringify(match, null, 2) : "";
@@ -158,8 +201,9 @@ async function runDumpWatch(): Promise<void> {
   }
 
   try {
-    const state = await getProjectState(claudeDir);
-    const output = formatWatchOutput(state);
+    const initial = await buildProjectMap(backends);
+    for (const [k, v] of initial) projectMap.set(k, v);
+    const output = formatWatchOutput();
     if (output) console.log(output);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -167,19 +211,35 @@ async function runDumpWatch(): Promise<void> {
     process.exit(1);
   }
 
-  const watcher = watchForChanges(claudeDir, async (projectDir: string) => {
-    try {
-      const state = await getProjectState(claudeDir, projectDir);
-      const output = formatWatchOutput(state);
-      if (output) console.log(output);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`Error getting state update: ${message}\n`);
-    }
-  });
+  const watcherStops: Array<{ stop: () => void }> = [];
+  for (const backend of backends) {
+    const watcher = backend.watchForChanges(async () => {
+      try {
+        let projects: Awaited<ReturnType<SessionBackend["scanProjects"]>>;
+        try {
+          projects = await backend.scanProjects();
+        } catch {
+          return;
+        }
+        for (const info of projects) {
+          try {
+            const state = await backend.buildProjectState(info);
+            projectMap.set(backend.projectKey(state), state);
+          } catch {}
+        }
+        const output = formatWatchOutput();
+        if (output) console.log(output);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`Error getting state update: ${message}\n`);
+      }
+    });
+    watcherStops.push(watcher);
+  }
 
   process.on("SIGINT", () => {
-    watcher.stop();
+    for (const w of watcherStops) w.stop();
+    close();
     process.exit(0);
   });
 }

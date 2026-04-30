@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { makeTempDir } from "./_helpers";
 
 const STATUS_LOG_FILE = "ccmon-status.jsonl";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const TMPDIR = Bun.env.TMPDIR || "/tmp";
 const CLI_PATH = join(import.meta.dir, "..", "src", "cli.ts");
 const BUN = process.execPath;
 
@@ -34,15 +34,6 @@ function splitJsonBlocks(text: string): string[] {
   }
 
   return blocks;
-}
-
-async function makeTempDir(prefix: string): Promise<string> {
-  const dir = join(
-    TMPDIR,
-    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  );
-  await mkdir(dir, { recursive: true });
-  return dir;
 }
 
 function makeFirstLine(cwd: string, sessionId: string): string {
@@ -119,8 +110,17 @@ describe("dump", () => {
       `${makeFirstLine("/home/user/proj", "sid1")}\n`,
     );
 
+    const configPath = join(tmpDir, "ccmon-config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ backends: [{ type: "claude", enabled: true }] }),
+    );
+
     const result = await spawnCli(["dump"], {
-      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+      env: {
+        CLAUDE_PROJECTS_DIR: tmpDir,
+        CCMON_CONFIG: configPath,
+      },
     });
 
     expect(result.exitCode).toBe(0);

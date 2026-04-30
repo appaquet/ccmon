@@ -315,6 +315,16 @@
     .badge-waiting  { background: rgba(239,68,68,0.12);  color: var(--waiting); }
     .badge-closed   { background: rgba(107,114,128,0.12); color: var(--closed); border: 1px solid rgba(107,114,128,0.18); }
 
+    .badge-source {
+      background: rgba(148,163,184,0.08);
+      color: #64748b;
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 9999px;
+      border: 1px solid rgba(148,163,184,0.12);
+      flex-shrink: 0;
+    }
+
     .dot-running  { background: var(--running); animation: pulse-dot 1.8s ease-in-out infinite; }
     .dot-stopped  { background: var(--stopped); }
     .dot-waiting  { background: var(--waiting); }
@@ -676,10 +686,12 @@
       const sessionSuffix = proj.sessionName
         ? ` <span style="font-weight:normal;color:var(--muted)">(${esc(proj.sessionName)})</span>`
         : '';
+      const sourceLabel = (proj.source === "opencode") ? "OC" : "CC";
       const cardTitle = proj.sessionName ? `${cardName} (${proj.sessionName})` : cardName;
       let html = `
         <div class="card-header">
           <span class="card-name" title="${esc(cardTitle)}">${esc(cardName)}${sessionSuffix}</span>
+          <span class="badge-source">${esc(sourceLabel)}</span>
           <span class="badge ${badgeClass}">
             <span class="dot ${dotClass}"></span>
             ${esc(label)}

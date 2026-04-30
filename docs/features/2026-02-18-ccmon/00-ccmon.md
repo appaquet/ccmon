@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 42 (Remove sessions-index.json) complete. Removed all `sessions-index.json` support (~519 lines deleted). JSONL is now the sole project discovery mechanism. Fixed `readFirstLine()` to scan multiple lines in 4096-byte buffer, handling new JSONL files that start with `permission-mode` records. Removed index-only fields from ProjectInfo (`gitBranch`, `summary`, `firstPrompt`, `messageCount`, `sessionModified`). 225 tests pass, lint + typecheck clean.
+Phase 45 (Review Fixes) complete. All 18 REVIEW comments addressed: 3 release-blocking (session-core.ts extraction, BackendSource discriminated union, silent DB skip), 5 high, 5 medium, 5 low priority fixes across 8 files + 2 new files. 258 tests pass, typecheck clean, no REVIEW markers remain.
 
 ## Requirements
 
@@ -250,6 +250,23 @@ Phase 42 (Remove sessions-index.json) complete. Removed all `sessions-index.json
   - R68.2: `readFirstLine()` scans all lines in 4096-byte buffer until `isFirstLineRecord()` match
   - R68.3: Index-only fields removed from `ProjectInfo` (`gitBranch`, `summary`, `firstPrompt`, `messageCount`, `sessionModified`)
 
+### Multi-Backend + OpenCode Support
+
+- R69: ⬜ Abstract data source behind `SessionBackend` interface (Phase: OpenCode Backend)
+  - R69.1: `scanProjects()`, `buildProjectState()`, `watchForChanges()`, `resolveState()`, `enrichProject()`, `getSubagents()`, `projectKey()` methods
+- R70: ⬜ Claude Code backend as thin wrapper around existing functions, zero behavior change (Phase: Claude Backend Extraction)
+- R71: ⬜ OpenCode backend reads SQLite database read-only via Bun's built-in `bun:sqlite` (Phase: OpenCode Backend)
+  - R71.1: Project discovery from `session` + `project` tables
+  - R71.2: State inferred from `time_updated` recency (running when <60s, stopped otherwise)
+  - R71.3: Enrichment from `message.data` + `part.data` JSON blobs (model, messages, tokens)
+  - R71.4: Sub-agents via `parent_id` linking
+  - R71.5: Change detection via SQLite polling at configurable interval
+- R72: ⬜ Config supports `backends` array (`{ type, enabled, ...opts }`), defaults to both backends enabled (Phase: Config)
+- R73: ⬜ Server merges projects from all backends, `source` field on each `ProjectState` (Phase: Multi-Backend Server)
+- R74: ⬜ CLI `dump` / `dump --watch` / `serve` work with all backends (Phase: CLI)
+- R75: ⬜ `ccmon status` subcommand remains Claude-only — hook processing unchanged (Phase: CLI)
+- R76: ⬜ Frontend shows source badge ("CC" / "OC") on project cards (Phase: Frontend)
+
 #### Out of Scope
 
 - Authentication / multi-user support
@@ -476,6 +493,11 @@ Reduce sub-agent active threshold (45s→15s) and expiry (5min→30s) so complet
 
 New `closed` state for SessionEnd events. Closed projects removed from dashboard after 1 minute (vs `maxInactivityHours` for idle/stopped). Grey "Closed" badge in UI.
 
+### 🔄 45 Phase: Review Fixes — OpenCode Support
+[45-review-fixes](45-review-fixes.md)
+
+Address 18 REVIEW comments from 4 review agents (style, correctness, architecture, requirements) planted during Phase 44. 3 release-blocking, 5 high, 5 medium, 5 low priority fixes across 8 files.
+
 ### ⬜ 36 Phase: Status Dir Mismatch Fix
 
 [36-server-state-staleness](36-server-state-staleness.md)
@@ -520,6 +542,11 @@ Remove deprecated `sessions-index.json` support entirely. Make JSONL the sole di
 
 Replace `Bun.env.HOME ?? "/root"` and `process.env.HOME ?? "/root"` with `os.homedir()` from `node:os`. Bun 1.3.11 from Nix doesn't expose env variables to JS, so the fallback incorrectly resolves to `/root`. `os.homedir()` reads `/etc/passwd` and works regardless.
 
+### 🔄 44 Phase: OpenCode Support — Multi-Backend Abstraction
+[44-opencode-support](44-opencode-support.md)
+
+Refactor ccmon to support both Claude Code and OpenCode as data sources. Abstract session scanning behind a `SessionBackend` interface with per-backend implementations: `ClaudeBackend` (filesystem/JSONL, extracted from existing code) and `OpencodeBackend` (SQLite read-only via `bun:sqlite`). Update server, CLI, config, and frontend to merge projects from all backends. All 14 tasks implemented, 256 tests pass (256 pass, 0 fail).
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
@@ -547,4 +574,9 @@ Replace `Bun.env.HOME ?? "/root"` and `process.env.HOME ?? "/root"` with `os.hom
 - **tests/config.test.ts**: Config loading tests; 22+ tests covering partial config, invalid types (Phase: Review Fixes 2)
 - **tests/server.test.ts**: Tests for server.ts — HTTP endpoints, WebSocket, WS envelope + hostname field, periodic broadcast (Phase: Backend, Multi-Backend, Watcher Resilience)
 - **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)
-- **docs/features/2026-02-18-ccmon/06-notifications-streaming.md**: Phase 06 plan — notifications, JSONL streaming, sub-agent consolidation (Phase: Notifications & Streaming)
+- **docs/features/2026-02-18-ccmon/44-opencode-support.md**: Phase 44 plan — multi-backend abstraction, OpenCode SQLite backend; R72.2 updated to "both backends enabled" (Phase: OpenCode Support)
+- **tests/backends/opencode.test.ts**: 23 OpenCode backend tests with in-memory SQLite (Phase: OpenCode Support)
+- **tests/integration.test.ts**: 4 integration tests verifying both backends coexist (dump, buildProjectState, WS broadcast, projectKey) (Phase: OpenCode Support)
+- **docs/features/2026-02-18-ccmon/45-review-fixes.md**: Phase 45 plan — 18 REVIEW comment fixes (3 release-blocking, 5 high, 5 medium, 5 low) across 8 files (Phase: Review Fixes)
+- **src/session-core.ts** (planned): Extracted resolveState, readStatusLog, shared types from sessions.ts (Phase: Review Fixes)
+- **tests/_helpers.ts** (planned): Shared makeTempDir utility (Phase: Review Fixes)

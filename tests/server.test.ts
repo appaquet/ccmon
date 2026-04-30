@@ -2,19 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { utimesSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { ClaudeBackend } from "../src/backends/claude";
 import { startServer } from "../src/server";
 import { _resetCachesForTesting } from "../src/sessions";
-
-const TMPDIR = Bun.env.TMPDIR || "/tmp";
-
-async function makeTempDir(prefix: string): Promise<string> {
-  const dir = join(
-    TMPDIR,
-    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  );
-  await mkdir(dir, { recursive: true });
-  return dir;
-}
+import { makeTempDir } from "./_helpers";
 
 describe("HTTP server", () => {
   let tmpDir: string;
@@ -33,7 +24,7 @@ describe("HTTP server", () => {
   });
 
   test("GET / returns HTML", async () => {
-    const srv = startServer({ port: 0, claudeDir: tmpDir });
+    const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
     stop = srv.stop;
 
     const res = await fetch(`http://localhost:${srv.port}/`);
@@ -56,7 +47,7 @@ describe("HTTP server", () => {
     });
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
 
-    const srv = startServer({ port: 0, claudeDir: tmpDir });
+    const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
     stop = srv.stop;
     await srv.ready;
 
@@ -71,7 +62,7 @@ describe("HTTP server", () => {
   });
 
   test("GET /unknown returns 404", async () => {
-    const srv = startServer({ port: 0, claudeDir: tmpDir });
+    const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
     stop = srv.stop;
 
     const res = await fetch(`http://localhost:${srv.port}/unknown`);
@@ -114,7 +105,7 @@ describe("HTTP server with maxInactivityHours filter", () => {
     // maxInactivityHours = 1 → filters the 10-hour-old project
     const srv = startServer({
       port: 0,
-      claudeDir: tmpDir,
+      backends: [new ClaudeBackend(tmpDir)],
       maxInactivityHours: 1,
     });
     stop = srv.stop;
@@ -139,7 +130,7 @@ describe("HTTP server with maxInactivityHours filter", () => {
 
     const srv = startServer({
       port: 0,
-      claudeDir: tmpDir,
+      backends: [new ClaudeBackend(tmpDir)],
       maxInactivityHours: Infinity,
     });
     stop = srv.stop;
@@ -202,7 +193,7 @@ describe("WebSocket server", () => {
     });
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
 
-    const srv = startServer({ port: 0, claudeDir: tmpDir });
+    const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
     stop = srv.stop;
     await srv.ready;
 
@@ -266,7 +257,7 @@ describe("WebSocket server", () => {
     });
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
 
-    const srv = startServer({ port: 0, claudeDir: tmpDir });
+    const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
     stop = srv.stop;
     await srv.ready;
 
@@ -301,7 +292,7 @@ describe("WebSocket server", () => {
   });
 
   test("WebSocket message includes hostname field", async () => {
-    const srv = startServer({ port: 0, claudeDir: tmpDir });
+    const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
     stop = srv.stop;
     await srv.ready;
 
@@ -364,7 +355,7 @@ describe("server-side state map (R31)", () => {
 
     const srv = startServer({
       port: 0,
-      claudeDir: tmpDir,
+      backends: [new ClaudeBackend(tmpDir)],
       maxInactivityHours: Infinity,
     });
     stop = srv.stop;
@@ -412,7 +403,7 @@ describe("server-side state map (R31)", () => {
 
     const srv = startServer({
       port: 0,
-      claudeDir: tmpDir,
+      backends: [new ClaudeBackend(tmpDir)],
       maxInactivityHours: Infinity,
     });
     stop = srv.stop;
@@ -459,7 +450,7 @@ describe("periodic safety broadcast (R61)", () => {
     // Use a short interval to avoid waiting 30 s in the test
     const srv = startServer({
       port: 0,
-      claudeDir: tmpDir,
+      backends: [new ClaudeBackend(tmpDir)],
       maxInactivityHours: Infinity,
       broadcastIntervalMs: 100,
     });
@@ -535,7 +526,7 @@ describe("state propagation (R34)", () => {
 
     const srv = startServer({
       port: 0,
-      claudeDir: tmpDir,
+      backends: [new ClaudeBackend(tmpDir)],
       maxInactivityHours: Infinity,
     });
     stop = srv.stop;
