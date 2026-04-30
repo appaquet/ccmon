@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 45 (Review Fixes) complete. All 18 REVIEW comments addressed: 3 release-blocking (session-core.ts extraction, BackendSource discriminated union, silent DB skip), 5 high, 5 medium, 5 low priority fixes across 8 files + 2 new files. 258 tests pass, typecheck clean, no REVIEW markers remain.
+Phase 46 (Dependabot Setup) complete. Added `.github/dependabot.yml` with `bun` package-ecosystem, `daily` check schedule, and `cooldown.default-days: 7` for supply chain attack mitigation. After merge, Dependabot checks daily but only opens PRs for releases ≥7 days old.
 
 ## Requirements
 
@@ -547,6 +547,11 @@ Replace `Bun.env.HOME ?? "/root"` and `process.env.HOME ?? "/root"` with `os.hom
 
 Refactor ccmon to support both Claude Code and OpenCode as data sources. Abstract session scanning behind a `SessionBackend` interface with per-backend implementations: `ClaudeBackend` (filesystem/JSONL, extracted from existing code) and `OpencodeBackend` (SQLite read-only via `bun:sqlite`). Update server, CLI, config, and frontend to merge projects from all backends. All 14 tasks implemented, 256 tests pass (256 pass, 0 fail).
 
+### ⬜ 46 Phase: Dependabot Setup
+[46-dependabot](46-dependabot.md)
+
+Configure Dependabot version updates for the `bun` ecosystem with daily checks and a 7-day release cooldown (`cooldown.default-days: 7`). Prevents supply chain attacks by only opening PRs for releases published ≥7 days ago.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
@@ -560,6 +565,7 @@ Refactor ccmon to support both Claude Code and OpenCode as data sources. Abstrac
 - **bun.lock**: Bun lockfile (Phase: Session Detection, Linting Setup)
 - **biome.json**: Biome linter + formatter config — 2-space indent, recommended rules (Phase: Linting Setup)
 - **.github/workflows/ci.yml**: GHA CI workflow — lint + typecheck + test on push and pull_request (Phase: GitHub Actions CI)
+- **.github/dependabot.yml**: Dependabot config — bun ecosystem, daily checks, 7-day release cooldown (Phase: Dependabot Setup)
 - **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown; `lastMessageAt` heartbeat tracking + zombie detection (>60s no message); `visibilitychange` handler force-reconnects all backends on wake (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend, Sleep/Wake WS Reconnect, StopFailure Hook, Card Height Cap)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed; `homedir()` replaces `process.env.HOME` fallback (Phase: Backend, Review Fixes, Home Resolution Fix)
 - **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatusLog()`, `getProjectState()`, `mapHookEventToState()`, `writeStatusEvent()`, `writeStatusTruncate()`, `filterStaleProjects()`; `StatusEvent` type, append-only NDJSON status log, `resolveState()` with event-scan logic; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; `findLatestJSONL` excludes status log files; `homedir()` replaces `Bun.env.HOME` fallback (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook, Home Resolution Fix)

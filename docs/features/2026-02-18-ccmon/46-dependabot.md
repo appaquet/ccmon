@@ -6,12 +6,13 @@ See [00-ccmon](00-ccmon.md). Configure Dependabot version updates for the `bun` 
 
 ## Tasks
 
-- [ ] Create `.github/dependabot.yml` — `bun` ecosystem, root directory, `schedule.interval: "weekly"` (7-day cooldown)
+- [x] Create `.github/dependabot.yml` — `bun` ecosystem, root directory, `schedule.interval: "daily"` + `cooldown.default-days: 7` (supply chain mitigation)
   - AC: YAML parses without errors
   - AC: Uses `package-ecosystem: "bun"` (supported since Feb 2025)
-  - AC: `schedule.interval: "weekly"` ensures PRs are opened at most once per 7 days
+  - AC: `schedule.interval: "daily"` checks for updates daily
+  - AC: `cooldown.default-days: 7` delays PRs until 7 days after release (supply chain attack mitigation)
+  - AC: Security updates bypass the cooldown automatically
   - AC: Existing CI workflow (`ci.yml`) continues to run on all Dependabot PRs
-  - AC: After merge, repo's Dependabot dashboard shows the config active
 
 ## Files
 
