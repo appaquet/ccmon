@@ -35,6 +35,12 @@ export class OpencodeBackend implements SessionBackend {
            s.time_updated
          FROM session s
          JOIN project p ON s.project_id = p.id
+         JOIN (
+           SELECT directory, MAX(time_updated) AS max_updated
+           FROM session
+           WHERE time_archived IS NULL AND parent_id IS NULL
+           GROUP BY directory
+         ) latest ON s.directory = latest.directory AND s.time_updated = latest.max_updated
          WHERE s.time_archived IS NULL
            AND s.parent_id IS NULL`,
       )

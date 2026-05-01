@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 46 (Dependabot Setup) complete. Added `.github/dependabot.yml` with `bun` package-ecosystem, `daily` check schedule, and `cooldown.default-days: 7` for supply chain attack mitigation. After merge, Dependabot checks daily but only opens PRs for releases ≥7 days old.
+Phase 48 (OpenCode Session Dedup) complete. `OpencodeBackend.scanProjects()` now returns only the latest session per `directory` via `MAX(time_updated)` grouping, matching Claude Code's `findLatestJSONL()` behavior. 260 tests pass (2 new). Lint/typecheck not runnable due to env permission issue on home dir.
 
 ## Requirements
 
@@ -256,7 +256,7 @@ Phase 46 (Dependabot Setup) complete. Added `.github/dependabot.yml` with `bun` 
   - R69.1: `scanProjects()`, `buildProjectState()`, `watchForChanges()`, `resolveState()`, `enrichProject()`, `getSubagents()`, `projectKey()` methods
 - R70: ⬜ Claude Code backend as thin wrapper around existing functions, zero behavior change (Phase: Claude Backend Extraction)
 - R71: ⬜ OpenCode backend reads SQLite database read-only via Bun's built-in `bun:sqlite` (Phase: OpenCode Backend)
-  - R71.1: Project discovery from `session` + `project` tables
+  - R71.1: 🔄 Project discovery from `session` + `project` tables; returns only latest session per `directory` via `MAX(time_updated)` grouping (Phase: OpenCode Session Deduplication)
   - R71.2: State inferred from `time_updated` recency (running when <60s, stopped otherwise)
   - R71.3: Enrichment from `message.data` + `part.data` JSON blobs (model, messages, tokens)
   - R71.4: Sub-agents via `parent_id` linking
@@ -557,6 +557,11 @@ Configure Dependabot version updates for the `bun` ecosystem with daily checks a
 
 Right-align the OC/CC backend indicator pill by wrapping it in a pills-group container with the status pill. Fixes the gap between project name and OC/CC pill caused by `justify-content: space-between` distributing three children evenly across the header.
 
+### ⬜ 48 Phase: OpenCode Session Deduplication
+[48-opencode-session-dedup](48-opencode-session-dedup.md)
+
+Fix `OpencodeBackend.scanProjects()` returning all sessions for the same project directory. Modify SQL query to return only the session with `MAX(time_updated)` per unique `directory`, matching Claude Code's `findLatestJSONL()` behavior.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
@@ -573,6 +578,7 @@ Right-align the OC/CC backend indicator pill by wrapping it in a pills-group con
 - **.github/dependabot.yml**: Dependabot config — bun ecosystem, daily checks, 7-day release cooldown (Phase: Dependabot Setup)
 - **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown; `lastMessageAt` heartbeat tracking + zombie detection (>60s no message); `visibilitychange` handler force-reconnects all backends on wake; `.card-pills` container groups source + status badges at right edge (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend, Sleep/Wake WS Reconnect, StopFailure Hook, Card Height Cap, Backend Pill Alignment)
 - **docs/features/2026-02-18-ccmon/47-backend-pill-alignment.md**: Phase 47 plan — backend pill right-alignment in card header (Phase: Backend Pill Alignment)
+- **docs/features/2026-02-18-ccmon/48-opencode-session-dedup.md**: Phase 48 plan — deduplicate OpenCode sessions per directory via SQL `MAX(time_updated)` (Phase: OpenCode Session Deduplication)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed; `homedir()` replaces `process.env.HOME` fallback (Phase: Backend, Review Fixes, Home Resolution Fix)
 - **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatusLog()`, `getProjectState()`, `mapHookEventToState()`, `writeStatusEvent()`, `writeStatusTruncate()`, `filterStaleProjects()`; `StatusEvent` type, append-only NDJSON status log, `resolveState()` with event-scan logic; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; `findLatestJSONL` excludes status log files; `homedir()` replaces `Bun.env.HOME` fallback (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook, Home Resolution Fix)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed; exponential backoff restart-on-error for both watchers (Phase: Session Detection, Review Fixes, Watcher Resilience)
@@ -587,7 +593,8 @@ Right-align the OC/CC backend indicator pill by wrapping it in a pills-group con
 - **tests/server.test.ts**: Tests for server.ts — HTTP endpoints, WebSocket, WS envelope + hostname field, periodic broadcast (Phase: Backend, Multi-Backend, Watcher Resilience)
 - **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)
 - **docs/features/2026-02-18-ccmon/44-opencode-support.md**: Phase 44 plan — multi-backend abstraction, OpenCode SQLite backend; R72.2 updated to "both backends enabled" (Phase: OpenCode Support)
-- **tests/backends/opencode.test.ts**: 23 OpenCode backend tests with in-memory SQLite (Phase: OpenCode Support)
+- **src/backends/opencode.ts**: `OpencodeBackend` — SQLite-based session scanning, enrichment, sub-agents, polling; scanProjects deduplicates by directory (Phase: OpenCode Support, OpenCode Session Deduplication)
+- **tests/backends/opencode.test.ts**: 27 OpenCode backend tests with in-memory SQLite (Phase: OpenCode Support, OpenCode Session Deduplication)
 - **tests/integration.test.ts**: 4 integration tests verifying both backends coexist (dump, buildProjectState, WS broadcast, projectKey) (Phase: OpenCode Support)
 - **docs/features/2026-02-18-ccmon/45-review-fixes.md**: Phase 45 plan — 18 REVIEW comment fixes (3 release-blocking, 5 high, 5 medium, 5 low) across 8 files (Phase: Review Fixes)
 - **src/session-core.ts** (planned): Extracted resolveState, readStatusLog, shared types from sessions.ts (Phase: Review Fixes)

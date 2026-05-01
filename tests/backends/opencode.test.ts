@@ -212,6 +212,84 @@ describe("OpencodeBackend — core", () => {
     expect(projects[0].source).toBe("opencode");
   });
 
+  test("scanProjects returns only the latest session per directory", async () => {
+    const now = Date.now();
+    const projId = "proj-dedup";
+    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+      projId,
+      "dedupproj",
+      "/home/user/dedupproj",
+    ]);
+
+    // Newest session (now)
+    db.run(
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      ["ses_new", "Newer", "/home/user/dedupproj", now - 60000, now, projId],
+    );
+    // Older session in same directory (60s ago)
+    db.run(
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "ses_old",
+        "Older",
+        "/home/user/dedupproj",
+        now - 120000,
+        now - 60000,
+        projId,
+      ],
+    );
+
+    const projects = await backend.scanProjects();
+    expect(projects).toHaveLength(1);
+    expect(projects[0].sessionId).toBe("ses_new");
+  });
+
+  test("scanProjects returns one session per directory when multiple directories exist", async () => {
+    const now = Date.now();
+    const projId = "proj-multidir";
+    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+      projId,
+      "multidir",
+      "/home/user/multidir",
+    ]);
+
+    // Dir A: two sessions, newest = ses_a2
+    db.run(
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "ses_a1",
+        "A1",
+        "/home/user/dir-a",
+        now - 120000,
+        now - 60000,
+        projId,
+      ],
+    );
+    db.run(
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      ["ses_a2", "A2", "/home/user/dir-a", now - 60000, now, projId],
+    );
+    // Dir B: one session
+    db.run(
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "ses_b",
+        "B",
+        "/home/user/dir-b",
+        now - 60000,
+        now - 30000,
+        projId,
+      ],
+    );
+
+    const projects = await backend.scanProjects();
+    expect(projects).toHaveLength(2);
+    const ids = projects.map((p) => p.sessionId);
+    expect(ids).toContain("ses_a2");
+    expect(ids).toContain("ses_b");
+    expect(ids).not.toContain("ses_a1");
+  });
+
   test("resolveState returns running when time_updated < 30s ago", async () => {
     const now = Date.now();
     const projId = "proj-state";
