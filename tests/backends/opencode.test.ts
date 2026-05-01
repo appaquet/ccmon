@@ -256,14 +256,7 @@ describe("OpencodeBackend — core", () => {
     // Dir A: two sessions, newest = ses_a2
     db.run(
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
-      [
-        "ses_a1",
-        "A1",
-        "/home/user/dir-a",
-        now - 120000,
-        now - 60000,
-        projId,
-      ],
+      ["ses_a1", "A1", "/home/user/dir-a", now - 120000, now - 60000, projId],
     );
     db.run(
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
@@ -272,14 +265,7 @@ describe("OpencodeBackend — core", () => {
     // Dir B: one session
     db.run(
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
-      [
-        "ses_b",
-        "B",
-        "/home/user/dir-b",
-        now - 60000,
-        now - 30000,
-        projId,
-      ],
+      ["ses_b", "B", "/home/user/dir-b", now - 60000, now - 30000, projId],
     );
 
     const projects = await backend.scanProjects();
