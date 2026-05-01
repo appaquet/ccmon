@@ -291,6 +291,13 @@
       text-overflow: ellipsis;
     }
 
+    .card-pills {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
     .badge {
       display: inline-flex;
       align-items: center;
@@ -691,11 +698,13 @@
       let html = `
         <div class="card-header">
           <span class="card-name" title="${esc(cardTitle)}">${esc(cardName)}${sessionSuffix}</span>
-          <span class="badge-source">${esc(sourceLabel)}</span>
-          <span class="badge ${badgeClass}">
-            <span class="dot ${dotClass}"></span>
-            ${esc(label)}
-          </span>
+          <div class="card-pills">
+            <span class="badge-source">${esc(sourceLabel)}</span>
+            <span class="badge ${badgeClass}">
+              <span class="dot ${dotClass}"></span>
+              ${esc(label)}
+            </span>
+          </div>
         </div>
       `;
 
