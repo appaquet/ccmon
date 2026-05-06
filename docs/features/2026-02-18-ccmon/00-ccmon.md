@@ -17,7 +17,13 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 51 (Review Fixes 4) complete. Phase 52 (OpenCode State Detection Fix) planned — investigation complete, root cause identified. Next: implement fix for `OpencodeBackend.resolveState()` to consider child session activity when parent is stale.
+Phase 52 (OpenCode State Detection Fix) complete. Phase 53 (Server Staleness Fix) and Phase 54 (OpenCode Sub-Agent Detection Hardening) planned — root causes identified:
+
+1. Server staleness (Bug 1): R61 "periodic safety broadcast" only re-sends frozen `stateMap` without re-scanning from disk. When watchers die, state freezes permanently. Fix: change 30s interval to `rescanAllBackends()` + `broadcastCurrent()`.
+
+2. OpenCode sub-agent detection (Bug 2): Phase 52 fix is deployed and correct, but user reports sub-agents not detected. Need investigation logging + fallback child query for resilience.
+
+Next: implement both phases.
 
 ## Requirements
 
@@ -280,6 +286,14 @@ Phase 51 (Review Fixes 4) complete. Phase 52 (OpenCode State Detection Fix) plan
 - Q3: ✅ Runtime/package manager → Bun (native TypeScript, ESM, built-in test runner `bun:test`). No tsconfig required but will add for IDE support. Types via `@types/bun`.
 - Q4: ✅ How does ccmon discover the working directory? → Read `cwd` from the first line of the most recent JSONL session file. Directory name encoding is lossy (hyphens ambiguous), so dir name decoding is not reliable.
 - Q5: ✅ Path encoding no longer primary concern. `sessions-index.json` provides `originalPath` for lookup. Fall back to `/` → `-` encoding only when index is absent. Verified empirically: encoding matches observed dirs.
+- Q6: 🔄 Why does server show stale state (godepsfix running) when dump shows stopped? (May 2026)
+  * Traced: R61 periodic safety broadcast only calls `broadcastCurrent()` (reads frozen `stateMap`) instead of `rescanAllBackends()` (reads from disk). When fs.watch fails silently, stateMap freezes.
+  * Fix: Phase 53 — change 30s interval to rescan from disk.
+- Q7: 🔄 Why are OpenCode sub-agents not detected? (May 2026)
+  * Verified: Phase 52 resolveState child check + getSubagents parent_id query are both correct and deployed.
+  * Verified on live DB: sub-agents have parent_id set, scanProjects returns correct sessionId.
+  * Hypothesis: intermittent edge case not caught by synthetic test harness. Adding debug logging in Phase 54.
+  * Hypothesis: Fallback child query (by directory, not just parent_id) may catch edge cases where parent_id linkage is missing.
 
 ## Phases
 
@@ -503,10 +517,20 @@ Address 18 REVIEW comments from 4 review agents (style, correctness, architectur
 
 Address 19 REVIEW comments from 4 review agents. 2 critical (R63 regression — project name disambiguation missing from all production output paths), 14 medium, 3 low. 7 files affected.
 
-### 🔄 52 Phase: OpenCode State Detection Fix
+### ✅ 52 Phase: OpenCode State Detection Fix
 [52-opencode-state-detection](52-opencode-state-detection.md)
 
 Fix OpenCode projects showing "stopped" when sub-agents are actively running. Root cause: `resolveState` only checks parent `session.time_updated` but sub-agent activity updates child `session` rows. Fix adds child session activity check to `resolveState` and corrects `lastUpdated` to reflect most recent activity across parent and children.
+
+### ⬜ 53 Phase: Server Staleness Fix
+[53-server-staleness-fix](53-server-staleness-fix.md)
+
+Fix server `stateMap` freezing when backend change detection mechanisms fail. R61 "periodic safety broadcast" only re-sends frozen state — change 30s interval to actually re-scan from disk.
+
+### ⬜ 54 Phase: OpenCode Sub-Agent Detection Hardening
+[54-opencode-subagent-harden](54-opencode-subagent-harden.md)
+
+Investigate and harden OpenCode sub-agent detection. Add debug logging to diagnose edge cases. Add fallback child session query as safety net when `parent_id` linkage has edge cases.
 
 ### ⬜ 36 Phase: Status Dir Mismatch Fix
 
@@ -603,6 +627,8 @@ Address 2 deferred REVIEW comments: (1) Extract `sessionTailCache` and `projectS
 - **docs/features/2026-02-18-ccmon/50-session-store.md**: Phase 50 plan — SessionStore class (cache extraction) + enrichment module split (~320 lines) (Phase: SessionStore + Module Split)
 - **docs/features/2026-02-18-ccmon/51-review-fixes-4.md**: Phase 51 plan — 19 REVIEW comment fixes (2 critical, 14 medium, 3 low) across 7 files (Phase: Review Fixes 4)
 - **docs/features/2026-02-18-ccmon/52-opencode-state-detection.md**: Phase 52 plan — fix OpenCode state detection when sub-agents are active; child session activity consideration in resolveState + lastUpdated (Phase: OpenCode State Detection Fix)
+- **docs/features/2026-02-18-ccmon/53-server-staleness-fix.md**: Phase 53 plan — fix server stateMap freezing; change periodic interval to rescan from disk (Phase: Server Staleness Fix)
+- **docs/features/2026-02-18-ccmon/54-opencode-subagent-harden.md**: Phase 54 plan — investigation + hardening OpenCode sub-agent detection; debug logging + fallback child query (Phase: OpenCode Sub-Agent Detection Hardening)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed; `homedir()` replaces `process.env.HOME` fallback (Phase: Backend, Review Fixes, Home Resolution Fix)
 - **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatusLog()`, `getProjectState()`, `mapHookEventToState()`, `writeStatusEvent()`, `writeStatusTruncate()`, `filterStaleProjects()`; `StatusEvent` type, append-only NDJSON status log, `resolveState()` with event-scan logic; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; `findLatestJSONL` excludes status log files; `homedir()` replaces `Bun.env.HOME` fallback (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook, Home Resolution Fix)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed; exponential backoff restart-on-error for both watchers (Phase: Session Detection, Review Fixes, Watcher Resilience)
