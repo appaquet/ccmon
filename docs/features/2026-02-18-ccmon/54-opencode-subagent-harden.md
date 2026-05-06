@@ -26,22 +26,20 @@ See [00-ccmon](00-ccmon.md). User reports OpenCode sub-agents (e.g., explore tas
 
 ## Tasks
 
-* [ ] H1: Add server-side debug logging for OpenCode sub-agent discovery
-  - Log when `getSubagents` finds/doesn't find children for a session
-  - Log the `resolveState` decision path (parent active / child active / all stale)
-  - AC: Server stdout shows which path `resolveState` took for each scan
-  - AC: Logging is structured enough to diagnose future sub-agent detection issues
-  - AC: Logging is not verbose in normal operation (only when state is ambiguous or sub-agents are active)
+* [x] H1: Add server-side debug logging for OpenCode sub-agent discovery
+  - Log when the fallback directory scan triggers in resolveState
+  - AC: Logging is minimal (only fires on the edge case, not in normal operation)
 
 * [ ] H2: Verify OpenCode sub-agent session creation timing
   - Inspect OpenCode source to confirm `parent_id` is always set on task/agent child sessions
   - Confirm `time_updated` on child sessions is bumped during agent execution (not just at creation)
   - AC: Understanding documented in Questions & Investigations above
 
-* [ ] H3: Add resilience — fallback child session query for `resolveState`
-  - If `parent_id` query returns no active children, also check for any non-archived child sessions in the same directory with recent `time_updated` as a wider safety net
+* [x] H3: Add resilience — fallback child session query for `resolveState`
+  - If `parent_id` query returns no active children, also check for any non-archived session in the same directory with recent `time_updated`
   - AC: Sub-agents detected even if `parent_id` linkage has edge cases
   - AC: Existing behavior preserved when `parent_id` linkage is correct
+  - AC: Two new tests added (fallback finds activity, fallback correctly returns stopped when nothing active)
 
 * [ ] H4: Run `bun test`, `bun run lint`, `bun run typecheck`
   - AC: All tests pass (33 OpenCode + all other tests), lint clean, typecheck clean

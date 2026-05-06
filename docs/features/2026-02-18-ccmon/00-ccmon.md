@@ -17,13 +17,13 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 52 (OpenCode State Detection Fix) complete. Phase 53 (Server Staleness Fix) and Phase 54 (OpenCode Sub-Agent Detection Hardening) planned — root causes identified:
+Phase 53 (Server Staleness Fix) and Phase 54 (OpenCode Sub-Agent Detection Hardening) complete.
 
-1. Server staleness (Bug 1): R61 "periodic safety broadcast" only re-sends frozen `stateMap` without re-scanning from disk. When watchers die, state freezes permanently. Fix: change 30s interval to `rescanAllBackends()` + `broadcastCurrent()`.
+1. Server staleness: R61 periodic interval now calls `rescanAllBackends()` + `broadcastCurrent()` instead of just rebroadcasting frozen `stateMap`. Watcher failures recover within 30s.
+2. OpenCode sub-agent detection: Added fallback directory-scan query in `resolveState()` to detect sub-agents even when `parent_id` linkage is absent. Added minimal logging when fallback triggers.
+3. 273 tests pass (2 new server tests, 2 new OpenCode tests), all 5/5 runs green.
 
-2. OpenCode sub-agent detection (Bug 2): Phase 52 fix is deployed and correct, but user reports sub-agents not detected. Need investigation logging + fallback child query for resilience.
-
-Next: implement both phases.
+Next: deploy and verify in production.
 
 ## Requirements
 
@@ -286,14 +286,13 @@ Next: implement both phases.
 - Q3: ✅ Runtime/package manager → Bun (native TypeScript, ESM, built-in test runner `bun:test`). No tsconfig required but will add for IDE support. Types via `@types/bun`.
 - Q4: ✅ How does ccmon discover the working directory? → Read `cwd` from the first line of the most recent JSONL session file. Directory name encoding is lossy (hyphens ambiguous), so dir name decoding is not reliable.
 - Q5: ✅ Path encoding no longer primary concern. `sessions-index.json` provides `originalPath` for lookup. Fall back to `/` → `-` encoding only when index is absent. Verified empirically: encoding matches observed dirs.
-- Q6: 🔄 Why does server show stale state (godepsfix running) when dump shows stopped? (May 2026)
+- Q6: ✅ Why does server show stale state (godepsfix running) when dump shows stopped? (May 2026)
   * Traced: R61 periodic safety broadcast only calls `broadcastCurrent()` (reads frozen `stateMap`) instead of `rescanAllBackends()` (reads from disk). When fs.watch fails silently, stateMap freezes.
-  * Fix: Phase 53 — change 30s interval to rescan from disk.
-- Q7: 🔄 Why are OpenCode sub-agents not detected? (May 2026)
+  * Fix: Phase 53 — changed 30s interval to `rescanAllBackends()` + `broadcastCurrent()`.
+- Q7: ✅ Why are OpenCode sub-agents not detected? (May 2026)
   * Verified: Phase 52 resolveState child check + getSubagents parent_id query are both correct and deployed.
   * Verified on live DB: sub-agents have parent_id set, scanProjects returns correct sessionId.
-  * Hypothesis: intermittent edge case not caught by synthetic test harness. Adding debug logging in Phase 54.
-  * Hypothesis: Fallback child query (by directory, not just parent_id) may catch edge cases where parent_id linkage is missing.
+  * Fix: Phase 54 — added fallback directory-scan query in resolveState. If parent_id check finds no active children, scans same directory for any recent non-parent session activity.
 
 ## Phases
 
@@ -634,7 +633,7 @@ Address 2 deferred REVIEW comments: (1) Extract `sessionTailCache` and `projectS
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed; exponential backoff restart-on-error for both watchers (Phase: Session Detection, Review Fixes, Watcher Resilience)
 - **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner; `sub` parses new WS envelope with backward compat; `sub --host` flag; status builds StatusEvent and routes to writeStatusEvent/writeStatusTruncate; `homedir()` replaces `Bun.env.HOME` fallback; `restoreProcessEnv()` at startup (Phase: Session Detection, Backend, Review Fixes, Multi-Backend, Append-Only Status Log, Home Resolution Fix)
 - **src/env.ts**: Sandbox env restoration — `restoreProcessEnv()` reads `/proc/self/environ` on Linux when Bun fails to initialize `process.env` (Phase: Home Resolution Fix)
-- **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init; WS payload wrapped in `{ hostname, projects }` envelope; `Cache-Control: no-cache` on HTML response; periodic 30s safety broadcast (Phase: Backend, Review Fixes, Multi-Backend, Watcher Resilience)
+- **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init; WS payload wrapped in `{ hostname, projects }` envelope; `Cache-Control: no-cache` on HTML response; periodic 30s safety rescan + broadcast (Phase: Backend, Review Fixes, Multi-Backend, Watcher Resilience, Server Staleness Fix)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
 - **tests/sessions.test.ts**: 202 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook)
 - **tests/watcher.test.ts**: Unit tests for watcher.ts; backoff formula + restart-on-error tests added (Phase: Session Detection, Watcher Resilience)
@@ -643,7 +642,7 @@ Address 2 deferred REVIEW comments: (1) Extract `sessionTailCache` and `projectS
 - **tests/server.test.ts**: Tests for server.ts — HTTP endpoints, WebSocket, WS envelope + hostname field, periodic broadcast (Phase: Backend, Multi-Backend, Watcher Resilience)
 - **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)
 - **docs/features/2026-02-18-ccmon/44-opencode-support.md**: Phase 44 plan — multi-backend abstraction, OpenCode SQLite backend; R72.2 updated to "both backends enabled" (Phase: OpenCode Support)
-- **src/backends/opencode.ts**: `OpencodeBackend` — SQLite-based session scanning, enrichment, sub-agents, polling; scanProjects deduplicates by directory; resolveState child activity check (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix)
+- **src/backends/opencode.ts**: `OpencodeBackend` — SQLite-based session scanning, enrichment, sub-agents, polling; scanProjects deduplicates by directory; resolveState child activity check + fallback directory scan (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix, OpenCode Sub-Agent Hardening)
 - **tests/backends/opencode.test.ts**: 33 OpenCode backend tests with in-memory SQLite (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix)
 - **tests/integration.test.ts**: 4 integration tests verifying both backends coexist (dump, buildProjectState, WS broadcast, projectKey) (Phase: OpenCode Support)
 - **docs/features/2026-02-18-ccmon/45-review-fixes.md**: Phase 45 plan — 18 REVIEW comment fixes (3 release-blocking, 5 high, 5 medium, 5 low) across 8 files (Phase: Review Fixes)

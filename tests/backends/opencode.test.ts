@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { OpencodeBackend } from "../../src/backends/opencode";
-import type { BackendSource } from "../../src/backends/types";
+import type { BackendSource } from "../../src/sessions";
 
 function createSchema(db: Database): void {
   db.run(`
@@ -858,6 +858,60 @@ describe("OpencodeBackend — sub-agents", () => {
         now - 120000,
         now - 120000,
         projId,
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const state = await backend.resolveState(project);
+    expect(state).toBe("stopped");
+  });
+
+  test("resolveState returns running via fallback directory scan when parent_id linkage is absent", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+
+    db.run("UPDATE session SET time_updated = ? WHERE id = ?", [
+      now - 60000,
+      parentId,
+    ]);
+
+    // Child session without parent_id — simulates missing linkage
+    db.run(
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "ses_unlinked_child",
+        "Unlinked Child",
+        "/home/user/parentproj",
+        now - 10000,
+        now,
+        "proj-parent",
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const state = await backend.resolveState(project);
+    expect(state).toBe("running");
+  });
+
+  test("resolveState returns stopped when fallback directory scan also finds nothing active", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+
+    db.run("UPDATE session SET time_updated = ? WHERE id = ?", [
+      now - 120000,
+      parentId,
+    ]);
+
+    // Stale unlinked session in same directory — should be ignored
+    db.run(
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "ses_stale_unlinked",
+        "Stale Unlinked",
+        "/home/user/parentproj",
+        now - 120000,
+        now - 120000,
+        "proj-parent",
       ],
     );
 

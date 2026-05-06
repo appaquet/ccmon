@@ -125,12 +125,17 @@ export function startServer(options: ServerOptions): {
     disambiguateProjectNames([...stateMap.values()]);
   }
 
-  // Periodic safety broadcast: re-pushes current state every 30 s so clients recover.
+  // Periodic safety rescan + broadcast: re-scans from disk and pushes current
+  // state every 30 s so clients recover from watcher failures or missed events.
   const BROADCAST_INTERVAL_MS = options.broadcastIntervalMs ?? 30_000;
-  const broadcastInterval = setInterval(
-    broadcastCurrent,
-    BROADCAST_INTERVAL_MS,
-  );
+  const broadcastInterval = setInterval(() => {
+    rescanAllBackends()
+      .then(() => broadcastCurrent())
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`ccmon: periodic rescan error: ${msg}\n`);
+      });
+  }, BROADCAST_INTERVAL_MS);
 
   // Start watchers for each backend
   const watcherStops: Array<{ stop: () => void }> = [];
@@ -205,7 +210,7 @@ export function startServer(options: ServerOptions): {
   });
 
   return {
-    port: server.port,
+    port: server.port ?? port,
     ready,
     stop(): void {
       clearInterval(broadcastInterval);

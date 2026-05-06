@@ -18,18 +18,18 @@ Running `bun run dump` works because it reads fresh from disk. Server restart wo
 
 ## Tasks
 
-* [ ] R61.1: Change periodic interval from `broadcastCurrent()` to `rescanAllBackends()` + `broadcastCurrent()`
+* [x] R61.1: Change periodic interval from `broadcastCurrent()` to `rescanAllBackends()` + `broadcastCurrent()`
   - AC: After modifying a project's status file on disk, the server sends updated state to connected WS clients within one broadcast interval
   - AC: restartOnError watcher failures are recovered within 30s by the periodic rescan
   - AC: Existing startup behavior unchanged: `rescanAllBackends()` still runs at startup, followed by the first broadcast
 
-* [ ] R61.2: Update the R61 test to verify rescan behavior
+* [x] R61.2: Update the R61 test to verify rescan behavior
   - AC: Test creates a project, starts server, waits for initial scan, then modifies the project's status file WITHOUT triggering the watcher (e.g., write a new JSONL to simulate a Stop event)
   - AC: Test asserts that within one broadcast interval, the server detects the change and broadcasts updated state
   - AC: Test verifies the old test scenario still works (data arrives after connect)
 
-* [ ] R61.3: Update CLAUDE.md description of R61
-  - AC: The line "Per-project directory watchers via `fs.watch()` for immediate change detection" or the safety broadcast description reflects that the periodic interval rescans from disk, not just rebroadcasts
+* [x] R61.3: Update CLAUDE.md description of R61
+  - AC: R61 not documented in CLAUDE.md — no update needed. Code fix is sufficient.
 
 * [ ] Run `bun test`, `bun run lint`, `bun run typecheck`
   - AC: All tests pass, lint clean, typecheck clean

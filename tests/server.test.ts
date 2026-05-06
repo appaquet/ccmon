@@ -3,9 +3,47 @@ import { utimesSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ClaudeBackend } from "../src/backends/claude";
+import type { SessionBackend } from "../src/backends/types";
 import { startServer } from "../src/server";
+import type {
+  ProjectInfo,
+  ProjectState,
+  SessionEnrichment,
+  SessionState,
+  SubagentInfo,
+} from "../src/sessions";
 import { replaceDefaultStore, SessionStore } from "../src/sessions";
 import { makeTempDir } from "./_helpers";
+
+/**
+ * Wraps a SessionBackend so watchForChanges is a no-op.
+ * Used to test the periodic rescan path independently of watchers.
+ */
+class NoWatchBackend implements SessionBackend {
+  constructor(private inner: SessionBackend) {}
+
+  scanProjects() {
+    return this.inner.scanProjects();
+  }
+  buildProjectState(info: ProjectInfo): Promise<ProjectState> {
+    return this.inner.buildProjectState(info);
+  }
+  watchForChanges(_onUpdate: () => void): { stop: () => void } {
+    return { stop() {} };
+  }
+  resolveState(info: ProjectInfo): Promise<SessionState> {
+    return this.inner.resolveState(info);
+  }
+  enrichProject(info: ProjectInfo): Promise<SessionEnrichment> {
+    return this.inner.enrichProject(info);
+  }
+  getSubagents(info: ProjectInfo): Promise<SubagentInfo[]> {
+    return this.inner.getSubagents(info);
+  }
+  projectKey(project: ProjectInfo): string {
+    return this.inner.projectKey(project);
+  }
+}
 
 describe("HTTP server", () => {
   let tmpDir: string;
@@ -482,6 +520,65 @@ describe("periodic safety broadcast (R61)", () => {
       );
       expect(entry).toBeDefined();
     }
+  }, 5000);
+
+  test("R61: periodic rescan detects state change even without watcher", async () => {
+    const projDir = join(tmpDir, "-home-user-r61rescan");
+    await mkdir(projDir, { recursive: true });
+    const firstLine = JSON.stringify({
+      sessionId: "r61-rescan",
+      cwd: "/home/user/r61rescan",
+      timestamp: new Date().toISOString(),
+    });
+    const jsonlPath = join(projDir, "session.jsonl");
+    await writeFile(jsonlPath, `${firstLine}\n`);
+
+    // Use NoWatchBackend so watchers don't fire — only periodic rescan can update
+    const backend = new NoWatchBackend(new ClaudeBackend(tmpDir));
+    const srv = startServer({
+      port: 0,
+      backends: [backend],
+      maxInactivityHours: Infinity,
+      broadcastIntervalMs: 100,
+    });
+    stop = srv.stop;
+    await srv.ready;
+
+    // Collect initial state
+    const initialRes = await fetch(`http://localhost:${srv.port}/api/state`);
+    const initial = (await initialRes.json()) as Record<string, unknown>[];
+    const found = initial.find((e) => e.projectName === "r61rescan") as
+      | Record<string, unknown>
+      | undefined;
+    expect(found).toBeDefined();
+    // Without a status log, JSONL mtime is ≤60s → "running"
+    expect(found?.state).toBe("running");
+
+    // Write a Stop event to ccmon-status.jsonl so the periodic rescan sees it
+    const statusLine = JSON.stringify({
+      state: "stopped",
+      event: "Stop",
+      timestamp: new Date().toISOString(),
+      session_id: "r61-rescan",
+      working_dir: "/home/user/r61rescan",
+    });
+    await writeFile(join(projDir, "ccmon-status.jsonl"), `${statusLine}\n`);
+
+    // Wait for the periodic rescan to pick up the change.
+    // Poll API state until stopped or timeout (100ms interval + margin).
+    let updatedEntry: Record<string, unknown> | undefined;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await Bun.sleep(50);
+      const updatedRes = await fetch(`http://localhost:${srv.port}/api/state`);
+      const updated = (await updatedRes.json()) as Record<string, unknown>[];
+      updatedEntry = updated.find((e) => e.projectName === "r61rescan") as
+        | Record<string, unknown>
+        | undefined;
+      if (updatedEntry?.state === "stopped") break;
+    }
+    expect(updatedEntry).toBeDefined();
+    // Periodic rescan should have picked up the Stop event → "stopped"
+    expect(updatedEntry?.state).toBe("stopped");
   }, 5000);
 });
 

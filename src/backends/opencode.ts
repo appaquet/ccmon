@@ -97,9 +97,15 @@ export class OpencodeBackend implements SessionBackend {
 
   async resolveState(projectInfo: ProjectInfo): Promise<SessionState> {
     const row = this.db
-      .query(`SELECT time_updated, time_archived FROM session WHERE id = ?`)
+      .query(
+        `SELECT time_updated, time_archived, directory FROM session WHERE id = ?`,
+      )
       .get(projectInfo.sessionId) as
-      | { time_updated: number; time_archived: number | null }
+      | {
+          time_updated: number;
+          time_archived: number | null;
+          directory: string;
+        }
       | undefined;
 
     if (!row) return "stopped";
@@ -110,13 +116,37 @@ export class OpencodeBackend implements SessionBackend {
     if (age < OPENCODE_ACTIVE_THRESHOLD_MS) return "running";
 
     const cutoff = Date.now() - OPENCODE_ACTIVE_THRESHOLD_MS;
+
+    // Primary: check for active children via parent_id linkage.
     const activeChild = this.db
       .query(
         "SELECT 1 FROM session WHERE parent_id = ? AND time_archived IS NULL AND time_updated > ? LIMIT 1",
       )
       .get(projectInfo.sessionId, cutoff);
 
-    return activeChild !== null ? "running" : "stopped";
+    if (activeChild !== null) return "running";
+
+    // Fallback: check for any recent non-parent session in the same directory.
+    // Catches sub-agents where parent_id linkage may be absent.
+    const siblingActive = this.db
+      .query(
+        `SELECT 1 FROM session
+         WHERE directory = ?1
+           AND id != ?2
+           AND time_archived IS NULL
+           AND time_updated > ?3
+         LIMIT 1`,
+      )
+      .get(row.directory, projectInfo.sessionId, cutoff);
+
+    if (siblingActive !== null) {
+      process.stderr.write(
+        `ccmon: opencode resolveState fallback triggered for ${projectInfo.projectName} (parent_id check found no active children, but directory scan found activity)\n`,
+      );
+      return "running";
+    }
+
+    return "stopped";
   }
 
   async enrichProject(projectInfo: ProjectInfo): Promise<SessionEnrichment> {
@@ -331,7 +361,6 @@ export class OpencodeBackend implements SessionBackend {
     return rows
       .filter((row) => {
         const isActive = row.time_updated > activeCutoff;
-        // Exclude stale sub-agents (not active and older than 30s)
         return isActive || row.time_updated > expiryCutoff;
       })
       .map((row) => ({
