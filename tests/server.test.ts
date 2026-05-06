@@ -4,7 +4,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ClaudeBackend } from "../src/backends/claude";
 import { startServer } from "../src/server";
-import { SessionStore, replaceDefaultStore } from "../src/sessions";
+import { replaceDefaultStore, SessionStore } from "../src/sessions";
 import { makeTempDir } from "./_helpers";
 
 describe("HTTP server", () => {

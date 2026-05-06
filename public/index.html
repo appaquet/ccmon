@@ -534,7 +534,7 @@
       closed: 'Closed',
     };
 
-    const stateColor = {
+    const _stateColor = {
       running: '#22c55e',
       stopped: '#f97316',
       waiting_for_permission: '#ef4444',
@@ -558,7 +558,7 @@
       closed: 'dot-closed',
     };
 
-    function relativeTime(iso) {
+    function _relativeTime(iso) {
       if (!iso) return '';
       const diffMs = Date.now() - new Date(iso).getTime();
       const mins = Math.floor(diffMs / 60000);
@@ -579,7 +579,7 @@
 
     function truncate(str, max) {
       if (!str) return '';
-      return str.length > max ? str.slice(0, max) + '…' : str;
+      return str.length > max ? `${str.slice(0, max)}…` : str;
     }
 
     function shortModel(model) {
@@ -591,7 +591,7 @@
       return model;
     }
 
-    function fmtTokens(n) {
+    function _fmtTokens(n) {
       if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
       if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
       return String(n);
@@ -604,7 +604,7 @@
       const fillClass = tokens > 120_000 ? 'ctx-fill ctx-fill-danger'
         : tokens > 100_000 ? 'ctx-fill ctx-fill-warn'
         : 'ctx-fill';
-      const label = tokens >= 1000 ? Math.round(tokens / 1000) + 'k' : String(tokens);
+      const label = tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens);
       const tasksHtml = tasksTotal > 0
         ? `<span class="ctx-tasks">📋 ${tasksDone}/${tasksTotal}</span>`
         : '';
@@ -628,7 +628,7 @@
         ? `<span class="agent-model">🤖 ${esc(shortModel(model))}</span>`
         : '';
       let userHtml = '';
-      if (userActivity && userActivity.text) {
+      if (userActivity?.text) {
         userHtml = `<div class="agent-msg agent-msg-in">▶ ${esc(truncate(userActivity.text, 80))}</div>`;
       }
       let assistantHtml = '';
@@ -661,7 +661,7 @@
         : flashStopped ? ' card-flashing-stopped'
         : flashNotification ? ' card-flashing-notification'
         : '';
-      card.className = 'card' + flashClasses;
+      card.className = `card${flashClasses}`;
 
       if (isWaitingFlash) {
         card.addEventListener('click', () => {
@@ -720,7 +720,7 @@
 
       if (proj.subagents && proj.subagents.length > 0) {
         for (const agent of proj.subagents) {
-          const agentLabel = 'Sub: ' + (agent.description ?? agent.slug ?? agent.agentId);
+          const agentLabel = `Sub: ${agent.description ?? agent.slug ?? agent.agentId}`;
           agentsHtml += renderAgentRow({
             label: agentLabel,
             model: agent.model,
@@ -745,7 +745,7 @@
     const flashErrorDismissed = new Set();      // projKey → dismissed via click-acknowledgement
 
     // Composite key that uniquely identifies a project across multiple backends
-    const projKey = (p) => p._backendKey + '::' + (p.projectDir || p.projectName);
+    const projKey = (p) => `${p._backendKey}::${p.projectDir || p.projectName}`;
 
     let lastSortOrder = [];  // projKey[] — cached sort order, refreshed every 30s
     let lastSortTime = 0;    // ms timestamp of last sort
@@ -847,7 +847,7 @@
       for (const proj of all) {
         const key = projKey(proj);
         const displayName = nameCounts.get(proj.projectName) > 1
-          ? proj._backendKey + ':' + proj.projectName
+          ? `${proj._backendKey}:${proj.projectName}`
           : undefined;
         grid.appendChild(createCard(
           proj,

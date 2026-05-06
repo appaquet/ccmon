@@ -1,5 +1,4 @@
 import type {
-  BackendSource,
   ProjectInfo,
   ProjectState,
   SessionEnrichment,

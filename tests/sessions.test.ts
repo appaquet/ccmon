@@ -11,8 +11,6 @@ import {
 import { join } from "node:path";
 import type { StatusEvent } from "../src/sessions";
 import {
-  SessionStore,
-  replaceDefaultStore,
   CLOSED_PROJECT_TTL_MS,
   disambiguateProjectNames,
   filterStaleProjects,
@@ -23,7 +21,9 @@ import {
   PERMISSION_RESOLVE_GAP_MS,
   readSessionTail,
   readStatusLog,
+  replaceDefaultStore,
   resolveState,
+  SessionStore,
   STATUS_FILE_LEGACY,
   STATUS_LOG_FILE,
   scanProjects,

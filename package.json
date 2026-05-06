@@ -7,7 +7,7 @@
     "sub": "bun run src/cli.ts sub",
     "test": "bun test",
     "lint": "bunx biome check src/ tests/",
-    "lint:fix": "bunx biome check --write src/ tests/",
+    "lint:fix": "bunx biome check --write --unsafe src/ tests/",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
