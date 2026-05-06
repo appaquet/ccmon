@@ -5,7 +5,7 @@ import type { ServerWebSocket } from "bun";
 import type { SessionBackend } from "./backends/types";
 import { DEFAULT_CONFIG } from "./config";
 import type { ProjectState } from "./sessions";
-import { filterStaleProjects } from "./sessions";
+import { disambiguateProjectNames, filterStaleProjects } from "./sessions";
 
 const htmlPath = join(import.meta.dir, "..", "public", "index.html");
 let html: string;
@@ -42,13 +42,20 @@ export function startServer(options: ServerOptions): {
 
   const clients = new Set<ServerWebSocket<unknown>>();
 
-  // Per-backend state map: backend.projectKey(project) → ProjectState
+  // Per-backend state map: backend.projectKey(project) → ProjectState.
+  // Each backend's keys are tracked independently via backendToKeys so a
+  // temporary failure in one backend preserves state from healthy backends.
   const stateMap = new Map<string, ProjectState>();
   const backendIndex = new Map<string, SessionBackend>();
   const backendToKeys = new Map<SessionBackend, Set<string>>();
 
   function currentFilteredState(): ProjectState[] {
-    return filterStaleProjects([...stateMap.values()], maxInactivityHours);
+    const filtered = filterStaleProjects(
+      [...stateMap.values()],
+      maxInactivityHours,
+    );
+    disambiguateProjectNames(filtered);
+    return filtered;
   }
 
   function broadcastCurrent(): void {
@@ -90,13 +97,18 @@ export function startServer(options: ServerOptions): {
   }
 
   async function rescanAllBackends(): Promise<void> {
-    stateMap.clear();
-    backendIndex.clear();
-    backendToKeys.clear();
-
     for (const backend of backends) {
+      const keySet = backendToKeys.get(backend);
+      if (keySet) {
+        for (const key of keySet) {
+          stateMap.delete(key);
+          backendIndex.delete(key);
+        }
+        backendToKeys.delete(backend);
+      }
       await buildStateForBackend(backend);
     }
+    disambiguateProjectNames([...stateMap.values()]);
   }
 
   async function rescanBackend(backend: SessionBackend): Promise<void> {
@@ -110,6 +122,7 @@ export function startServer(options: ServerOptions): {
     }
 
     await buildStateForBackend(backend);
+    disambiguateProjectNames([...stateMap.values()]);
   }
 
   // Periodic safety broadcast: re-pushes current state every 30 s so clients recover.
@@ -192,7 +205,7 @@ export function startServer(options: ServerOptions): {
   });
 
   return {
-    port: server.port as number,
+    port: server.port,
     ready,
     stop(): void {
       clearInterval(broadcastInterval);

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ClaudeBackend } from "../src/backends/claude";
 import { OpencodeBackend } from "../src/backends/opencode";
 import { startServer } from "../src/server";
-import { _resetCachesForTesting } from "../src/sessions";
+import { replaceDefaultStore, SessionStore } from "../src/sessions";
 import { makeTempDir } from "./_helpers";
 
 describe("integration — both backends", () => {
@@ -15,12 +15,13 @@ describe("integration — both backends", () => {
   let stop: (() => void) | null = null;
 
   beforeEach(async () => {
-    _resetCachesForTesting();
     tmpDir = await makeTempDir("ccmon-integration");
 
     // Set up Claude Code directory
     claudeDir = join(tmpDir, "claude-projects");
     await mkdir(claudeDir, { recursive: true });
+
+    replaceDefaultStore(new SessionStore(tmpDir));
 
     const projDir = join(claudeDir, "-home-user-claude-proj");
     await mkdir(projDir, { recursive: true });

@@ -65,11 +65,20 @@ export class OpencodeBackend implements SessionBackend {
   async buildProjectState(projectInfo: ProjectInfo): Promise<ProjectState> {
     const state = await this.resolveState(projectInfo);
 
-    const row = this.db
-      .query(`SELECT time_updated FROM session WHERE id = ?`)
-      .get(projectInfo.sessionId) as { time_updated: number } | undefined;
+    // Use MAX of parent and child session time_updated so sub-agent
+    // activity is reflected in the lastUpdated timestamp.
+    const maxRow = this.db
+      .query(
+        "SELECT MAX(time_updated) AS max_updated FROM session WHERE id = ? OR parent_id = ?",
+      )
+      .get(projectInfo.sessionId, projectInfo.sessionId) as
+      | { max_updated: number | null }
+      | undefined;
 
-    const lastUpdated = row ? new Date(row.time_updated).toISOString() : null;
+    const lastUpdated =
+      maxRow?.max_updated != null
+        ? new Date(maxRow.max_updated).toISOString()
+        : null;
 
     const base: ProjectState = { ...projectInfo, state, lastUpdated };
 
@@ -98,13 +107,32 @@ export class OpencodeBackend implements SessionBackend {
     if (row.time_archived !== null) return "stopped";
 
     const age = Date.now() - row.time_updated;
-    return age < OPENCODE_ACTIVE_THRESHOLD_MS ? "running" : "stopped";
+    if (age < OPENCODE_ACTIVE_THRESHOLD_MS) return "running";
+
+    const cutoff = Date.now() - OPENCODE_ACTIVE_THRESHOLD_MS;
+    const activeChild = this.db
+      .query(
+        "SELECT 1 FROM session WHERE parent_id = ? AND time_archived IS NULL AND time_updated > ? LIMIT 1",
+      )
+      .get(projectInfo.sessionId, cutoff);
+
+    return activeChild !== null ? "running" : "stopped";
   }
 
   async enrichProject(projectInfo: ProjectInfo): Promise<SessionEnrichment> {
     const enrichment: SessionEnrichment = {};
 
-    // Session name from session.title
+    await this.enrichSessionName(projectInfo, enrichment);
+    await this.enrichTasks(projectInfo, enrichment);
+    await this.enrichMessages(projectInfo, enrichment);
+
+    return enrichment;
+  }
+
+  private async enrichSessionName(
+    projectInfo: ProjectInfo,
+    enrichment: SessionEnrichment,
+  ): Promise<void> {
     try {
       const sessionRow = this.db
         .query("SELECT title FROM session WHERE id = ?")
@@ -114,10 +142,13 @@ export class OpencodeBackend implements SessionBackend {
       }
     } catch {
       console.warn("Enrich: failed to read session title");
-      // skip
     }
+  }
 
-    // Tasks from todo table
+  private async enrichTasks(
+    projectInfo: ProjectInfo,
+    enrichment: SessionEnrichment,
+  ): Promise<void> {
     try {
       const todos = this.db
         .query(
@@ -130,7 +161,7 @@ export class OpencodeBackend implements SessionBackend {
         position: number;
       }[];
       if (todos.length > 0) {
-        enrichment.tasks = todos.map((t, _i) => ({
+        enrichment.tasks = todos.map((t) => ({
           id: String(t.position),
           subject: t.content,
           status: t.status,
@@ -144,8 +175,12 @@ export class OpencodeBackend implements SessionBackend {
     } catch {
       // skip
     }
+  }
 
-    // Messages: role + modelID + tokens are inside the data JSON column
+  private async enrichMessages(
+    projectInfo: ProjectInfo,
+    enrichment: SessionEnrichment,
+  ): Promise<void> {
     try {
       const msgs = this.db
         .query(
@@ -156,6 +191,25 @@ export class OpencodeBackend implements SessionBackend {
         data: string;
         time_created: number;
       }[];
+
+      const msgIds = msgs.map((m) => m.id);
+      const partsByMsg = new Map<string, { data: string }[]>();
+      if (msgIds.length > 0) {
+        const placeholders = msgIds.map(() => "?").join(",");
+        const partRows = this.db
+          .query(
+            `SELECT message_id, data FROM part WHERE message_id IN (${placeholders})`,
+          )
+          .all(...msgIds) as { message_id: string; data: string }[];
+        for (const row of partRows) {
+          const parts = partsByMsg.get(row.message_id);
+          if (parts) {
+            parts.push({ data: row.data });
+          } else {
+            partsByMsg.set(row.message_id, [{ data: row.data }]);
+          }
+        }
+      }
 
       // Most recent assistant message for model + tokens
       for (const msg of msgs) {
@@ -192,9 +246,7 @@ export class OpencodeBackend implements SessionBackend {
 
         // Assistant activity from parts
         if (!enrichment.latestAssistantActivity) {
-          const parts = this.db
-            .query("SELECT data FROM part WHERE message_id = ?")
-            .all(msg.id) as { data: string }[];
+          const parts = partsByMsg.get(msg.id) ?? [];
           let text: string | undefined;
           let tool: string | undefined;
           for (const part of parts) {
@@ -237,9 +289,7 @@ export class OpencodeBackend implements SessionBackend {
         }
         if (parsed.role !== "user") continue;
 
-        const parts = this.db
-          .query("SELECT data FROM part WHERE message_id = ?")
-          .all(msg.id) as { data: string }[];
+        const parts = partsByMsg.get(msg.id) ?? [];
         for (const part of parts) {
           let p: Record<string, unknown>;
           try {
@@ -260,8 +310,6 @@ export class OpencodeBackend implements SessionBackend {
     } catch {
       // message or part tables don't exist — skip enrichment
     }
-
-    return enrichment;
   }
 
   async getSubagents(projectInfo: ProjectInfo): Promise<SubagentInfo[]> {
@@ -298,7 +346,7 @@ export class OpencodeBackend implements SessionBackend {
       .sort((a, b) => b.launchTime.localeCompare(a.launchTime));
   }
 
-  watchForChanges(onUpdate: (maybeProject?: ProjectInfo) => void): {
+  watchForChanges(onUpdate: () => void): {
     stop: () => void;
   } {
     let stopped = false;

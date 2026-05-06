@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 48 (OpenCode Session Dedup) complete. `OpencodeBackend.scanProjects()` now returns only the latest session per `directory` via `MAX(time_updated)` grouping, matching Claude Code's `findLatestJSONL()` behavior. 260 tests pass (2 new). Lint/typecheck not runnable due to env permission issue on home dir.
+Phase 51 (Review Fixes 4) complete. Phase 52 (OpenCode State Detection Fix) planned — investigation complete, root cause identified. Next: implement fix for `OpencodeBackend.resolveState()` to consider child session activity when parent is stale.
 
 ## Requirements
 
@@ -229,7 +229,7 @@ Phase 48 (OpenCode Session Dedup) complete. `OpencodeBackend.scanProjects()` now
 
 ### Project Name Disambiguation
 
-- R63: ✅ Projects with duplicate leaf names get `projectName` expanded with parent path segments until unique (Phase: Project Name Disambiguation)
+- R63: ✅ Projects with duplicate leaf names get `projectName` expanded with parent path segments until unique (Phase: Project Name Disambiguation, Review Fixes 4)
   - R63.1: `disambiguateProjectNames()` groups by basename, expands `projectName` with parent segments until unique
   - R63.2: Unique basenames keep their short name; no separate `displayName` field needed
 
@@ -257,7 +257,7 @@ Phase 48 (OpenCode Session Dedup) complete. `OpencodeBackend.scanProjects()` now
 - R70: ⬜ Claude Code backend as thin wrapper around existing functions, zero behavior change (Phase: Claude Backend Extraction)
 - R71: ⬜ OpenCode backend reads SQLite database read-only via Bun's built-in `bun:sqlite` (Phase: OpenCode Backend)
   - R71.1: 🔄 Project discovery from `session` + `project` tables; returns only latest session per `directory` via `MAX(time_updated)` grouping (Phase: OpenCode Session Deduplication)
-  - R71.2: State inferred from `time_updated` recency (running when <60s, stopped otherwise)
+  - R71.2: 🔄 State inferred from `time_updated` recency; also considers child session activity so active sub-agents keep the parent project "running" (Phase: OpenCode State Detection Fix)
   - R71.3: Enrichment from `message.data` + `part.data` JSON blobs (model, messages, tokens)
   - R71.4: Sub-agents via `parent_id` linking
   - R71.5: Change detection via SQLite polling at configurable interval
@@ -493,10 +493,20 @@ Reduce sub-agent active threshold (45s→15s) and expiry (5min→30s) so complet
 
 New `closed` state for SessionEnd events. Closed projects removed from dashboard after 1 minute (vs `maxInactivityHours` for idle/stopped). Grey "Closed" badge in UI.
 
-### 🔄 45 Phase: Review Fixes — OpenCode Support
+### ✅ 45 Phase: Review Fixes — OpenCode Support
 [45-review-fixes](45-review-fixes.md)
 
-Address 18 REVIEW comments from 4 review agents (style, correctness, architecture, requirements) planted during Phase 44. 3 release-blocking, 5 high, 5 medium, 5 low priority fixes across 8 files.
+Address 18 REVIEW comments from 4 review agents (style, correctness, architecture, requirements) planted during Phase 44. 3 release-blocking, 5 high, 5 medium, 5 low priority fixes across 8 files. All 18 tasks complete.
+
+### ✅ 51 Phase: Review Fixes 4
+[51-review-fixes-4](51-review-fixes-4.md)
+
+Address 19 REVIEW comments from 4 review agents. 2 critical (R63 regression — project name disambiguation missing from all production output paths), 14 medium, 3 low. 7 files affected.
+
+### 🔄 52 Phase: OpenCode State Detection Fix
+[52-opencode-state-detection](52-opencode-state-detection.md)
+
+Fix OpenCode projects showing "stopped" when sub-agents are actively running. Root cause: `resolveState` only checks parent `session.time_updated` but sub-agent activity updates child `session` rows. Fix adds child session activity check to `resolveState` and corrects `lastUpdated` to reflect most recent activity across parent and children.
 
 ### ⬜ 36 Phase: Status Dir Mismatch Fix
 
@@ -562,6 +572,16 @@ Right-align the OC/CC backend indicator pill by wrapping it in a pills-group con
 
 Fix `OpencodeBackend.scanProjects()` returning all sessions for the same project directory. Modify SQL query to return only the session with `MAX(time_updated)` per unique `directory`, matching Claude Code's `findLatestJSONL()` behavior.
 
+### ✅ 49 Phase: Review Fixes 3
+[49-review-fixes-3](49-review-fixes-3.md)
+
+Address 21 REVIEW comments from second review pass. 4 high (DRY buildProjectState, --project filter mutation, enrichProject bypass, two-tier cache error isolation), 7 medium (import hygiene, onUpdate callback, arg parsing, method splitting), 8 low (comment cleanup, dead code, type assertions). 2 items deferred: module-level caches + god module refactoring. 19/19 tasks completed, 260 tests pass.
+
+### ✅ 50 Phase: SessionStore + Module Split
+[50-session-store](50-session-store.md)
+
+Address 2 deferred REVIEW comments: (1) Extract `sessionTailCache` and `projectStateCache` from module-level globals into a `SessionStore` class with instance-level state. (2) Split the 1312-line god module by extracting enrichment parsing (~290 lines) into `session-enrichment.ts`. Eliminates 31 `_resetCachesForTesting()` calls across 3 test files.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
@@ -579,6 +599,10 @@ Fix `OpencodeBackend.scanProjects()` returning all sessions for the same project
 - **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown; `lastMessageAt` heartbeat tracking + zombie detection (>60s no message); `visibilitychange` handler force-reconnects all backends on wake; `.card-pills` container groups source + status badges at right edge (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend, Sleep/Wake WS Reconnect, StopFailure Hook, Card Height Cap, Backend Pill Alignment)
 - **docs/features/2026-02-18-ccmon/47-backend-pill-alignment.md**: Phase 47 plan — backend pill right-alignment in card header (Phase: Backend Pill Alignment)
 - **docs/features/2026-02-18-ccmon/48-opencode-session-dedup.md**: Phase 48 plan — deduplicate OpenCode sessions per directory via SQL `MAX(time_updated)` (Phase: OpenCode Session Deduplication)
+- **docs/features/2026-02-18-ccmon/49-review-fixes-3.md**: Phase 49 plan — 21 REVIEW comment fixes (4 high, 7 medium, 8 low) across 9 files; 2 items deferred (Phase: Review Fixes 3)
+- **docs/features/2026-02-18-ccmon/50-session-store.md**: Phase 50 plan — SessionStore class (cache extraction) + enrichment module split (~320 lines) (Phase: SessionStore + Module Split)
+- **docs/features/2026-02-18-ccmon/51-review-fixes-4.md**: Phase 51 plan — 19 REVIEW comment fixes (2 critical, 14 medium, 3 low) across 7 files (Phase: Review Fixes 4)
+- **docs/features/2026-02-18-ccmon/52-opencode-state-detection.md**: Phase 52 plan — fix OpenCode state detection when sub-agents are active; child session activity consideration in resolveState + lastUpdated (Phase: OpenCode State Detection Fix)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed; `homedir()` replaces `process.env.HOME` fallback (Phase: Backend, Review Fixes, Home Resolution Fix)
 - **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatusLog()`, `getProjectState()`, `mapHookEventToState()`, `writeStatusEvent()`, `writeStatusTruncate()`, `filterStaleProjects()`; `StatusEvent` type, append-only NDJSON status log, `resolveState()` with event-scan logic; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; `findLatestJSONL` excludes status log files; `homedir()` replaces `Bun.env.HOME` fallback (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook, Home Resolution Fix)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed; exponential backoff restart-on-error for both watchers (Phase: Session Detection, Review Fixes, Watcher Resilience)
@@ -593,8 +617,8 @@ Fix `OpencodeBackend.scanProjects()` returning all sessions for the same project
 - **tests/server.test.ts**: Tests for server.ts — HTTP endpoints, WebSocket, WS envelope + hostname field, periodic broadcast (Phase: Backend, Multi-Backend, Watcher Resilience)
 - **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)
 - **docs/features/2026-02-18-ccmon/44-opencode-support.md**: Phase 44 plan — multi-backend abstraction, OpenCode SQLite backend; R72.2 updated to "both backends enabled" (Phase: OpenCode Support)
-- **src/backends/opencode.ts**: `OpencodeBackend` — SQLite-based session scanning, enrichment, sub-agents, polling; scanProjects deduplicates by directory (Phase: OpenCode Support, OpenCode Session Deduplication)
-- **tests/backends/opencode.test.ts**: 27 OpenCode backend tests with in-memory SQLite (Phase: OpenCode Support, OpenCode Session Deduplication)
+- **src/backends/opencode.ts**: `OpencodeBackend` — SQLite-based session scanning, enrichment, sub-agents, polling; scanProjects deduplicates by directory; resolveState child activity check (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix)
+- **tests/backends/opencode.test.ts**: 33 OpenCode backend tests with in-memory SQLite (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix)
 - **tests/integration.test.ts**: 4 integration tests verifying both backends coexist (dump, buildProjectState, WS broadcast, projectKey) (Phase: OpenCode Support)
 - **docs/features/2026-02-18-ccmon/45-review-fixes.md**: Phase 45 plan — 18 REVIEW comment fixes (3 release-blocking, 5 high, 5 medium, 5 low) across 8 files (Phase: Review Fixes)
 - **src/session-core.ts** (planned): Extracted resolveState, readStatusLog, shared types from sessions.ts (Phase: Review Fixes)

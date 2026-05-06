@@ -1,12 +1,11 @@
 import type {
+  BackendSource,
   ProjectInfo,
   ProjectState,
   SessionEnrichment,
   SessionState,
   SubagentInfo,
 } from "../sessions";
-
-export type BackendSource = "claude" | "opencode";
 
 /**
  * Abstraction over a data source that provides Claude Code / OpenCode
@@ -30,9 +29,11 @@ export interface SessionBackend {
   /**
    * Starts backend-specific change detection.
    * Calls `onUpdate()` whenever a project's data has changed.
+   * Callers should do a full rescan on each notification since the
+   * callback provides no parameters guaranteeing completeness.
    * Returns a `{ stop }` handle to tear down.
    */
-  watchForChanges(onUpdate: (maybeProject?: ProjectInfo) => void): {
+  watchForChanges(onUpdate: () => void): {
     stop: () => void;
   };
 

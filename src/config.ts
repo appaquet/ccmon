@@ -54,20 +54,13 @@ export function mergeCliOverrides(
   config: CcmonConfig,
   overrides: Partial<CcmonConfig>,
 ): CcmonConfig {
-  const result = { ...config };
-  if (overrides.maxInactivityHours !== undefined) {
-    result.maxInactivityHours = overrides.maxInactivityHours;
-  }
-  if (overrides.host !== undefined) {
-    result.host = overrides.host;
-  }
-  if (overrides.port !== undefined) {
-    result.port = overrides.port;
-  }
-  if (overrides.backends !== undefined) {
-    result.backends = overrides.backends;
-  }
-  return result;
+  return {
+    maxInactivityHours:
+      overrides.maxInactivityHours ?? config.maxInactivityHours,
+    host: overrides.host ?? config.host,
+    port: overrides.port ?? config.port,
+    backends: overrides.backends ?? config.backends,
+  };
 }
 
 function resolveConfigPath(): string {

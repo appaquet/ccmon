@@ -1,12 +1,13 @@
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { createBackends } from "./backends";
 import type { SessionBackend } from "./backends/types";
 import { loadConfig, mergeCliOverrides } from "./config";
 import { restoreProcessEnv } from "./env";
 import { startServer } from "./server";
 import {
+  disambiguateProjectNames,
   filterStaleProjects,
   mapHookEventToState,
   type StatusEvent,
@@ -28,6 +29,19 @@ const claudeDir =
 
 const VERSION = "0.1.0";
 
+function parseStringFlag(argv: string[], name: string): string | null {
+  const idx = argv.indexOf(name);
+  if (idx === -1) return null;
+  return argv[idx + 1] ?? null;
+}
+
+function parseNumberFlag(argv: string[], name: string): number | undefined {
+  const idx = argv.indexOf(name);
+  if (idx === -1) return undefined;
+  const value = parseFloat(argv[idx + 1] ?? "");
+  return Number.isNaN(value) ? undefined : value;
+}
+
 const subcommand = process.argv[2];
 
 if (subcommand === "--version" || subcommand === "-v") {
@@ -35,18 +49,14 @@ if (subcommand === "--version" || subcommand === "-v") {
   exit(0);
 }
 
-const projectFlagIdx = process.argv.indexOf("--project");
-const projectFilter =
-  projectFlagIdx !== -1 ? (process.argv[projectFlagIdx + 1] ?? null) : null;
-if (projectFlagIdx !== -1 && !projectFilter) {
+const projectFilter = parseStringFlag(process.argv, "--project");
+if (process.argv.includes("--project") && projectFilter === null) {
   process.stderr.write("Error: --project requires a value\n");
   exit(1);
 }
 
-const maxAgeIdx = process.argv.indexOf("--max-age");
-const maxAgeArg =
-  maxAgeIdx !== -1 ? parseFloat(process.argv[maxAgeIdx + 1] ?? "") : undefined;
-if (maxAgeIdx !== -1 && (maxAgeArg === undefined || Number.isNaN(maxAgeArg))) {
+const maxAgeArg = parseNumberFlag(process.argv, "--max-age");
+if (process.argv.includes("--max-age") && maxAgeArg === undefined) {
   process.stderr.write("Error: --max-age requires a valid number\n");
   exit(1);
 }
@@ -70,23 +80,22 @@ if (subcommand === "dump") {
 } else if (subcommand === "sub") {
   await runSub();
 } else if (subcommand === "serve") {
-  const portArg = process.argv.indexOf("--port");
-  const port =
-    portArg !== -1 ? parseInt(process.argv[portArg + 1], 10) : undefined;
-
-  if (port !== undefined && Number.isNaN(port)) {
+  const port = parseNumberFlag(process.argv, "--port");
+  if (process.argv.includes("--port") && port === undefined) {
     process.stderr.write("Error: --port requires a valid number\n");
     exit(1);
   }
 
-  const hostArg = process.argv.indexOf("--host");
-  const host = hostArg !== -1 ? process.argv[hostArg + 1] : undefined;
-  if (hostArg !== -1 && !host) {
+  const host = parseStringFlag(process.argv, "--host");
+  if (process.argv.includes("--host") && host === null) {
     process.stderr.write("Error: --host requires a value\n");
     exit(1);
   }
 
-  const serveConfig = mergeCliOverrides(config, { port, host });
+  const serveConfig = mergeCliOverrides(config, {
+    port,
+    host: host ?? undefined,
+  });
   const { backends, close } = createBackends(config);
   const { port: resolvedPort, stop } = startServer({
     port: serveConfig.port,
@@ -164,10 +173,16 @@ async function runDump(): Promise<void> {
     const projectMap = await buildProjectMap(backends);
 
     const allProjects = [...projectMap.values()];
+    disambiguateProjectNames(allProjects);
     const state = filterStaleProjects(allProjects, config.maxInactivityHours);
 
     if (projectFilter !== null) {
-      const match = state.find((p) => p.projectName === projectFilter) ?? null;
+      const match =
+        state.find(
+          (p) =>
+            p.projectName === projectFilter ||
+            basename(p.cwd) === projectFilter,
+        ) ?? null;
       if (match !== null) {
         console.log(JSON.stringify(match, null, 2));
       }
@@ -192,9 +207,15 @@ async function runDumpWatch(): Promise<void> {
 
   function formatWatchOutput(): string {
     const allProjects = [...projectMap.values()];
+    disambiguateProjectNames(allProjects);
     const state = filterStaleProjects(allProjects, config.maxInactivityHours);
     if (projectFilter !== null) {
-      const match = state.find((p) => p.projectName === projectFilter) ?? null;
+      const match =
+        state.find(
+          (p) =>
+            p.projectName === projectFilter ||
+            basename(p.cwd) === projectFilter,
+        ) ?? null;
       return match !== null ? JSON.stringify(match, null, 2) : "";
     }
     return JSON.stringify(state, null, 2);
@@ -303,6 +324,10 @@ async function runStatus(): Promise<void> {
     process.exit(0);
   }
 
+  // Per-sub-agent status files use .json (single object) rather than
+  // .jsonl (NDJSON). This is intentional: sub-agent status tracks a single
+  // "stopped" state, not an event sequence like the main session log.
+
   if (hook_event_name === "SubagentStop") {
     const agentTranscriptPath = payload.agent_transcript_path;
     if (agentTranscriptPath) {
@@ -389,20 +414,16 @@ async function resolveProjectDir(cwd: string, dir: string): Promise<string> {
 }
 
 async function runSub(): Promise<void> {
-  const portArg = process.argv.indexOf("--port");
   const port =
-    portArg !== -1
-      ? parseInt(process.argv[portArg + 1] ?? "", 10)
-      : config.port;
-  if (portArg !== -1 && Number.isNaN(port)) {
+    parseNumberFlag(process.argv, "--port") ??
+    (process.argv.includes("--port") ? NaN : config.port);
+  if (process.argv.includes("--port") && Number.isNaN(port)) {
     process.stderr.write("Error: --port requires a valid number\n");
     exit(1);
   }
 
-  const hostArg = process.argv.indexOf("--host");
-  const host =
-    hostArg !== -1 ? (process.argv[hostArg + 1] ?? null) : "localhost";
-  if (hostArg !== -1 && !host) {
+  const host = parseStringFlag(process.argv, "--host") ?? "localhost";
+  if (process.argv.includes("--host") && host === null) {
     process.stderr.write("Error: --host requires a value\n");
     exit(1);
   }

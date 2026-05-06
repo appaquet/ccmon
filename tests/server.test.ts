@@ -4,7 +4,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ClaudeBackend } from "../src/backends/claude";
 import { startServer } from "../src/server";
-import { _resetCachesForTesting } from "../src/sessions";
+import { SessionStore, replaceDefaultStore } from "../src/sessions";
 import { makeTempDir } from "./_helpers";
 
 describe("HTTP server", () => {
@@ -329,7 +329,7 @@ describe("server-side state map (R31)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-server-r31");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -493,7 +493,7 @@ describe("state propagation (R34)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-server-r34");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {

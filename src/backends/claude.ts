@@ -1,4 +1,5 @@
-import { basename, join } from "node:path";
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
 import { readStatusLog, resolveState } from "../session-core";
 import type {
   ProjectInfo,
@@ -8,101 +9,37 @@ import type {
   StatusEvent,
   SubagentInfo,
 } from "../sessions";
-import { getSubagentInfos, readSessionTail, scanProjects } from "../sessions";
+import { SessionStore } from "../sessions";
 import { watchForChanges } from "../watcher";
 import type { SessionBackend } from "./types";
 
 /**
  * Wraps existing Claude Code file-system monitoring logic behind
- * the SessionBackend interface. Thin delegation layer — no behavior change.
+ * the SessionBackend interface. Uses a SessionStore instance for
+ * cache-dependent operations, giving each backend its own cache scope.
  */
 export class ClaudeBackend implements SessionBackend {
-  constructor(private claudeDir: string) {}
+  private store: SessionStore;
+
+  constructor(
+    private claudeDir: string,
+    store?: SessionStore,
+  ) {
+    this.store = store ?? new SessionStore(claudeDir);
+  }
 
   async scanProjects(): Promise<ProjectInfo[]> {
-    const projects = await scanProjects(this.claudeDir);
+    const projects = await this.store.scanProjects();
     return projects.map((p) => ({ ...p, source: "claude" }));
   }
 
   async buildProjectState(projectInfo: ProjectInfo): Promise<ProjectState> {
-    const { state, events, jsonlMtimeMs } =
-      await this.fetchStateEvents(projectInfo);
-
-    const latestEventTs =
-      events.length > 0 ? events[events.length - 1].timestamp : null;
-    const lastUpdated: string | null =
-      jsonlMtimeMs !== null
-        ? new Date(jsonlMtimeMs).toISOString()
-        : latestEventTs;
-
-    const base: ProjectState = {
-      ...projectInfo,
-      source: "claude",
-      state,
-      lastUpdated,
-    };
-
-    const tail = await readSessionTail(projectInfo.latestJSONL);
-
-    // Find stoppedAtMs from latest Stop/SessionEnd event
-    let stoppedAtMs: number | null = null;
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i];
-      if (e.event === "Stop" || e.event === "SessionEnd") {
-        stoppedAtMs = new Date(e.timestamp).getTime();
-        break;
-      }
-    }
-
-    const subagents =
-      state === "running" || state === "waiting_for_permission"
-        ? await getSubagentInfos(projectInfo.latestJSONL, stoppedAtMs)
-        : [];
-    const subagentCount = subagents.filter((s) => s.isActive).length;
-
-    // Extract notification fields from latest event
-    let notificationMessage: string | undefined;
-    let notificationTimestamp: string | undefined;
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i];
-      if (e.notificationMessage !== undefined) {
-        notificationMessage = e.notificationMessage;
-        notificationTimestamp = e.notificationTimestamp;
-        break;
-      }
-    }
-
-    return {
-      ...base,
-      latestUserActivity: tail.latestUserActivity,
-      latestAssistantActivity: tail.latestAssistantActivity,
-      model: tail.model,
-      sessionName: tail.sessionName,
-      tasks: tail.tasks,
-      tasksDone: tail.tasksDone,
-      tasksTotal: tail.tasksTotal,
-      inputTokens: tail.inputTokens,
-      outputTokens: tail.outputTokens,
-      notificationMessage,
-      notificationTimestamp,
-      subagents: subagents.length > 0 ? subagents : undefined,
-      subagentCount: subagentCount > 0 ? subagentCount : undefined,
-    };
+    return this.store.buildProjectState(projectInfo);
   }
 
-  watchForChanges(onUpdate: (maybeProject?: ProjectInfo) => void): {
-    stop: () => void;
-  } {
-    return watchForChanges(this.claudeDir, (projectDir: string) => {
-      const info: ProjectInfo = {
-        projectDir: basename(projectDir),
-        cwd: "",
-        projectName: basename(projectDir),
-        sessionId: "",
-        latestJSONL: "",
-        source: "claude",
-      };
-      onUpdate(info);
+  watchForChanges(onUpdate: () => void): { stop: () => void } {
+    return watchForChanges(this.claudeDir, () => {
+      onUpdate();
     });
   }
 
@@ -121,7 +58,6 @@ export class ClaudeBackend implements SessionBackend {
 
     let jsonlMtimeMs: number | null = null;
     try {
-      const { stat } = await import("node:fs/promises");
       const s = await stat(projectInfo.latestJSONL);
       jsonlMtimeMs = s.mtimeMs;
     } catch {
@@ -132,8 +68,13 @@ export class ClaudeBackend implements SessionBackend {
     return { state, events, jsonlMtimeMs };
   }
 
+  /**
+   * Secondary convenience method for enrichment-only access.
+   * buildProjectState() is the primary path; use this when you only need
+   * enrichment data without state resolution or sub-agent info.
+   */
   async enrichProject(projectInfo: ProjectInfo): Promise<SessionEnrichment> {
-    const tail = await readSessionTail(projectInfo.latestJSONL);
+    const tail = await this.store.readSessionTail(projectInfo.latestJSONL);
     return {
       model: tail.model,
       latestUserActivity: tail.latestUserActivity,
@@ -147,8 +88,16 @@ export class ClaudeBackend implements SessionBackend {
     };
   }
 
+  /**
+   * Returns sub-agents for the session identified by latestJSONL.
+   *
+   * Does NOT apply SUBAGENT_STOP_GRACE_MS (the grace period after session stop).
+   * Callers needing accurate stopped sub-agent detection should use
+   * buildProjectState(), which computes stoppedAtMs from the status log and
+   * passes it to getSubagentInfos internally.
+   */
   async getSubagents(projectInfo: ProjectInfo): Promise<SubagentInfo[]> {
-    return getSubagentInfos(projectInfo.latestJSONL);
+    return this.store.getSubagentInfos(projectInfo.latestJSONL);
   }
 
   projectKey(project: ProjectInfo): string {

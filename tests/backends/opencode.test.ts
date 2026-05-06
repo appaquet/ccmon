@@ -761,6 +761,163 @@ describe("OpencodeBackend — sub-agents", () => {
     expect(state.subagents?.length).toBe(1);
     expect(state.subagentCount).toBe(1);
   });
+
+  test("resolveState returns running when parent is stale but child is active", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+
+    db.run("UPDATE session SET time_updated = ? WHERE id = ?", [
+      now - 60000,
+      parentId,
+    ]);
+
+    db.run(
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_child_active_state",
+        "Active Child",
+        "/home/user/parentproj",
+        now - 10000,
+        now,
+        parentId,
+        "proj-parent",
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const state = await backend.resolveState(project);
+    expect(state).toBe("running");
+  });
+
+  test("resolveState returns stopped when parent and all children are stale", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+
+    db.run("UPDATE session SET time_updated = ? WHERE id = ?", [
+      now - 60000,
+      parentId,
+    ]);
+
+    db.run(
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_child_stale_state",
+        "Stale Child",
+        "/home/user/parentproj",
+        now - 120000,
+        now - 60000,
+        parentId,
+        "proj-parent",
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const state = await backend.resolveState(project);
+    expect(state).toBe("stopped");
+  });
+
+  test("resolveState returns running via parent activity (regression guard)", async () => {
+    const now = Date.now();
+    const projId = "proj-regression";
+    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+      projId,
+      "regressionproj",
+      "/home/user/regressionproj",
+    ]);
+    db.run(
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "ses_regression",
+        "Regression",
+        "/home/user/regressionproj",
+        now - 60000,
+        now,
+        projId,
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const state = await backend.resolveState(project);
+    expect(state).toBe("running");
+  });
+
+  test("resolveState returns stopped for stale parent with no children (regression guard)", async () => {
+    const now = Date.now();
+    const projId = "proj-nochild";
+    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+      projId,
+      "nochildproj",
+      "/home/user/nochildproj",
+    ]);
+    db.run(
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "ses_nochild",
+        "No Children",
+        "/home/user/nochildproj",
+        now - 120000,
+        now - 120000,
+        projId,
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const state = await backend.resolveState(project);
+    expect(state).toBe("stopped");
+  });
+
+  test("buildProjectState lastUpdated uses child time_updated when child is more recent", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+
+    const parentUpdated = now - 60000;
+    db.run("UPDATE session SET time_updated = ? WHERE id = ?", [
+      parentUpdated,
+      parentId,
+    ]);
+
+    const childUpdated = now - 10000;
+    db.run(
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_child_lastupdated",
+        "Child Recent",
+        "/home/user/parentproj",
+        now - 30000,
+        childUpdated,
+        parentId,
+        "proj-parent",
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const state = await backend.buildProjectState(project);
+    expect(state.lastUpdated).toBe(new Date(childUpdated).toISOString());
+  });
+
+  test("buildProjectState lastUpdated uses parent time_updated when parent is more recent", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+
+    const parentUpdated = now;
+
+    db.run(
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_child_old_lastupdated",
+        "Child Old",
+        "/home/user/parentproj",
+        now - 120000,
+        now - 60000,
+        parentId,
+        "proj-parent",
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const state = await backend.buildProjectState(project);
+    expect(state.lastUpdated).toBe(new Date(parentUpdated).toISOString());
+  });
 });
 
 describe("OpencodeBackend — polling", () => {

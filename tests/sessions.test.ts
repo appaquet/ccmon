@@ -11,7 +11,8 @@ import {
 import { join } from "node:path";
 import type { StatusEvent } from "../src/sessions";
 import {
-  _resetCachesForTesting,
+  SessionStore,
+  replaceDefaultStore,
   CLOSED_PROJECT_TTL_MS,
   disambiguateProjectNames,
   filterStaleProjects,
@@ -958,11 +959,8 @@ describe("session enrichment", () => {
 
   // ── readSessionTail ──
 
-  function makeUserEntry(content: string | object[]): string {
-    const message =
-      typeof content === "string"
-        ? { role: "user", content }
-        : { role: "user", content };
+  function makeUserEntry(content: string): string {
+    const message = { role: "user", content };
     return JSON.stringify({ type: "user", message });
   }
 
@@ -1224,7 +1222,7 @@ describe("session enrichment", () => {
   });
 
   test("readSessionTail (R27): delta read merges new content, preserves old", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r27-delta.jsonl");
 
     // Initial file with a user message and TodoWrite
@@ -1278,7 +1276,7 @@ describe("session enrichment", () => {
   });
 
   test("readSessionTail (R27): file shrink triggers full re-read", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r27-shrink.jsonl");
 
     // First: write a large-ish file
@@ -1431,7 +1429,7 @@ describe("session enrichment", () => {
   });
 
   test("readSessionTail (R50): delta-read merge preserves latestAssistantActivity from base when scan has none", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r50-delta-merge.jsonl");
 
     // First read: assistant entry sets latestAssistantActivity
@@ -1513,7 +1511,7 @@ describe("session enrichment", () => {
   // ── getSubagentInfos (R29) ──
 
   test("getSubagentInfos (R29): returns SubagentInfo array with enrichment", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
     const sessionId = "r29-enrichment-session";
     const sessionDir = join(tmpDir, sessionId);
     const subagentsDir = join(sessionDir, "subagents");
@@ -1545,7 +1543,7 @@ describe("session enrichment", () => {
   });
 
   test("getSubagentInfos (R29): isActive respects 15s threshold", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
     const sessionId = "r29-active-threshold";
     const sessionDir = join(tmpDir, sessionId);
     const subagentsDir = join(sessionDir, "subagents");
@@ -1595,7 +1593,7 @@ describe("session enrichment", () => {
   }
 
   test("readSessionTail (R36): agentDescriptions populated from queue-operation enqueue entries", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r36-queue-op.jsonl");
     const lines = [
       makeUserEntry("do the thing"),
@@ -1610,7 +1608,7 @@ describe("session enrichment", () => {
   });
 
   test("readSessionTail (R36): delta read merges new queue-operation entries without losing previous ones", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r36-queue-op-delta.jsonl");
 
     const initialLines = [
@@ -1637,7 +1635,7 @@ describe("session enrichment", () => {
   });
 
   test("getSubagentInfos (R36): attaches description from parent session agentDescriptions", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
     const sessionId = "r36-desc-session";
     const sessionDir = join(tmpDir, sessionId);
     const subagentsDir = join(sessionDir, "subagents");
@@ -1690,7 +1688,7 @@ describe("session enrichment", () => {
   }
 
   test("readSessionTail (R36): agentDescriptions populated from Task tool_use/toolUseResult correlation", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r36-task-tool.jsonl");
     const lines = [
       makeUserEntry("start task"),
@@ -1706,7 +1704,7 @@ describe("session enrichment", () => {
   });
 
   test("readSessionTail (R36): mixed queue-operation and Task tool_use entries both populate agentDescriptions", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r36-mixed-agents.jsonl");
     const lines = [
       makeUserEntry("start"),
@@ -1726,7 +1724,7 @@ describe("session enrichment", () => {
   });
 
   test("getProjectState includes subagents array (R29)", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
 
     // Build a project dir with a sessions-index, JSONL, and sub-agents
     const projDir = join(tmpDir, "-home-user-r29-proj");
@@ -1791,7 +1789,7 @@ describe("session enrichment", () => {
   });
 
   test("R41: stopped session still exposes enrichment fields (messages, model, tokens)", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
 
     const projDir = join(tmpDir, "-home-user-r41-stopped");
     await mkdir(projDir, { recursive: true });
@@ -1870,7 +1868,7 @@ describe("sessionTailCache (R20.4)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-tail-cache");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -1933,7 +1931,7 @@ describe("getProjectState targeted refresh (R20.5)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-targeted");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2029,7 +2027,7 @@ describe("readSessionTail token usage (R32)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-tokens");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2108,7 +2106,7 @@ describe("readSessionTail token usage (R32)", () => {
   });
 
   test("R32: delta reads — inputTokens last-wins, outputTokens accumulates", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r32-delta.jsonl");
 
     // Initial content
@@ -2139,7 +2137,7 @@ describe("readSessionTail token usage (R32)", () => {
   });
 
   test("R32: file shrink resets token counts to new content only", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r32-shrink.jsonl");
 
     await writeFile(
@@ -2174,7 +2172,7 @@ describe("readSessionTail latestUserActivity (R37, R49)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r37");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2283,7 +2281,7 @@ describe("readSessionTail accurate token totals (R39)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r39");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2396,7 +2394,7 @@ describe("readSessionTail input token last-value semantics (R47)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r47");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2441,7 +2439,7 @@ describe("readSessionTail input token last-value semantics (R47)", () => {
   });
 
   test("R47: delta merge — new scan value replaces base input, output accumulates", async () => {
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r47-delta-merge.jsonl");
 
     const initialLines = [makeAssistantWithUsage(5000, 100)];
@@ -2474,7 +2472,7 @@ describe("getSubagentInfos lifecycle (R40)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r40");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2624,7 +2622,7 @@ describe("getSubagentInfos status file detection", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-subagent-status");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2698,7 +2696,7 @@ describe("getSubagentInfos ordering (R43)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r43");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2742,7 +2740,7 @@ describe("readSessionTail TaskCreate/TaskUpdate task parsing (R46)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r46");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -3037,7 +3035,7 @@ describe("readSessionTail line boundary edge case (R27)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r27-boundary");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -3302,7 +3300,7 @@ describe("readSessionTail delta task completion (R46 Bug 1)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r46-delta");
-    _resetCachesForTesting();
+    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -3535,6 +3533,17 @@ describe("disambiguateProjectNames", () => {
     expect(projects[0].projectName).toBe("myapp");
   });
 
+  test("two projects with identical cwd do not cause infinite loop", () => {
+    const A = makeProjectState("/home/user/myproject");
+    const B = makeProjectState("/home/user/myproject");
+    B.source = "opencode";
+    disambiguateProjectNames([A, B]);
+    // Both share identical cwd — can't disambiguate by path segments.
+    // Names should be left as-is (source badge in UI already distinguishes them).
+    expect(A.projectName).toBe("myproject");
+    expect(B.projectName).toBe("myproject");
+  });
+
   test("re-run resets stale expanded names when a collision is resolved", () => {
     const a = makeProjectState("/home/user/projectA/backend");
     const b = makeProjectState("/home/user/projectB/backend");
@@ -3550,5 +3559,59 @@ describe("disambiguateProjectNames", () => {
     // Second call with only one project: no collision, should revert to short name.
     disambiguateProjectNames([a]);
     expect(a.projectName).toBe("backend");
+  });
+});
+
+// ── SessionStore cache isolation ─────────────────────────────────────────
+
+describe("SessionStore", () => {
+  test("constructing a fresh SessionStore gives clean caches", async () => {
+    const tmpDir = await makeTempDir("ccmon-store-isolation");
+    const store = new SessionStore(tmpDir);
+
+    // Store should have empty caches
+    await store.resetCaches();
+    expect(store.sessionTailCache.size).toBe(0);
+    expect(store.projectStateCache.size).toBe(0);
+
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test("two SessionStore instances have independent caches", async () => {
+    const tmpDirA = await makeTempDir("ccmon-store-a");
+    const tmpDirB = await makeTempDir("ccmon-store-b");
+
+    const storeA = new SessionStore(tmpDirA);
+    const storeB = new SessionStore(tmpDirB);
+
+    // Populate storeA's caches indirectly via readSessionTail on a temp file
+    storeA.sessionTailCache.set("/fake/path", {
+      mtime: Date.now(),
+      fileSize: 100,
+      data: { agentDescriptions: new Map() },
+    });
+
+    expect(storeA.sessionTailCache.size).toBe(1);
+    expect(storeB.sessionTailCache.size).toBe(0);
+
+    await rm(tmpDirA, { recursive: true, force: true });
+    await rm(tmpDirB, { recursive: true, force: true });
+  });
+
+  test("replaceDefaultStore swaps the singleton", async () => {
+    const tmpDir = await makeTempDir("ccmon-replace");
+    const newStore = new SessionStore(tmpDir);
+    newStore.sessionTailCache.set("/test", {
+      mtime: Date.now(),
+      fileSize: 100,
+      data: { agentDescriptions: new Map() },
+    });
+
+    replaceDefaultStore(newStore);
+    expect(newStore.sessionTailCache.size).toBe(1);
+
+    // Replace back with a fresh store (cleanup for other tests)
+    replaceDefaultStore(new SessionStore(tmpDir));
+    await rm(tmpDir, { recursive: true, force: true });
   });
 });

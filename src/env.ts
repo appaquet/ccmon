@@ -7,6 +7,9 @@ import { readFileSync } from "node:fs";
  * Bun's process.env may be empty/denuded even though the OS environment is
  * intact — other runtimes (Node.js, Python, bash) read it correctly.
  *
+ * This is a Linux-only workaround (/proc/self/environ does not exist on macOS).
+ * On non-Linux platforms the function is a no-op.
+ *
  * See https://github.com/oven-sh/bun/issues/27802
  */
 export function restoreProcessEnv(): void {
