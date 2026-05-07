@@ -1,5 +1,5 @@
-import type { Database } from "bun:sqlite";
 import { basename } from "node:path";
+import type Database from "better-sqlite3";
 import type {
   ProjectInfo,
   ProjectState,
@@ -18,7 +18,7 @@ export class OpencodeBackend implements SessionBackend {
   private pollIntervalMs: number;
 
   constructor(
-    private db: Database,
+    private db: InstanceType<typeof Database>,
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
   ) {
     this.pollIntervalMs = pollIntervalMs;
@@ -26,7 +26,7 @@ export class OpencodeBackend implements SessionBackend {
 
   async scanProjects(): Promise<ProjectInfo[]> {
     const rows = this.db
-      .query(
+      .prepare(
         `SELECT
            s.id AS sessionId,
            s.directory AS cwd,
@@ -68,7 +68,7 @@ export class OpencodeBackend implements SessionBackend {
     // Use MAX of parent and child session time_updated so sub-agent
     // activity is reflected in the lastUpdated timestamp.
     const maxRow = this.db
-      .query(
+      .prepare(
         "SELECT MAX(time_updated) AS max_updated FROM session WHERE id = ? OR parent_id = ?",
       )
       .get(projectInfo.sessionId, projectInfo.sessionId) as
@@ -97,7 +97,7 @@ export class OpencodeBackend implements SessionBackend {
 
   async resolveState(projectInfo: ProjectInfo): Promise<SessionState> {
     const row = this.db
-      .query(
+      .prepare(
         `SELECT time_updated, time_archived, directory FROM session WHERE id = ?`,
       )
       .get(projectInfo.sessionId) as
@@ -119,27 +119,27 @@ export class OpencodeBackend implements SessionBackend {
 
     // Primary: check for active children via parent_id linkage.
     const activeChild = this.db
-      .query(
+      .prepare(
         "SELECT 1 FROM session WHERE parent_id = ? AND time_archived IS NULL AND time_updated > ? LIMIT 1",
       )
       .get(projectInfo.sessionId, cutoff);
 
-    if (activeChild !== null) return "running";
+    if (activeChild != null) return "running";
 
     // Fallback: check for any recent non-parent session in the same directory.
     // Catches sub-agents where parent_id linkage may be absent.
     const siblingActive = this.db
-      .query(
+      .prepare(
         `SELECT 1 FROM session
-         WHERE directory = ?1
-           AND id != ?2
+         WHERE directory = ?
+           AND id != ?
            AND time_archived IS NULL
-           AND time_updated > ?3
+           AND time_updated > ?
          LIMIT 1`,
       )
       .get(row.directory, projectInfo.sessionId, cutoff);
 
-    if (siblingActive !== null) {
+    if (siblingActive != null) {
       process.stderr.write(
         `ccmon: opencode resolveState fallback triggered for ${projectInfo.projectName} (parent_id check found no active children, but directory scan found activity)\n`,
       );
@@ -165,7 +165,7 @@ export class OpencodeBackend implements SessionBackend {
   ): Promise<void> {
     try {
       const sessionRow = this.db
-        .query("SELECT title FROM session WHERE id = ?")
+        .prepare("SELECT title FROM session WHERE id = ?")
         .get(projectInfo.sessionId) as { title: string } | undefined;
       if (sessionRow?.title) {
         enrichment.sessionName = sessionRow.title;
@@ -181,7 +181,7 @@ export class OpencodeBackend implements SessionBackend {
   ): Promise<void> {
     try {
       const todos = this.db
-        .query(
+        .prepare(
           "SELECT content, status, priority, position FROM todo WHERE session_id = ? ORDER BY position",
         )
         .all(projectInfo.sessionId) as {
@@ -213,7 +213,7 @@ export class OpencodeBackend implements SessionBackend {
   ): Promise<void> {
     try {
       const msgs = this.db
-        .query(
+        .prepare(
           "SELECT id, data, time_created FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 50",
         )
         .all(projectInfo.sessionId) as {
@@ -227,7 +227,7 @@ export class OpencodeBackend implements SessionBackend {
       if (msgIds.length > 0) {
         const placeholders = msgIds.map(() => "?").join(",");
         const partRows = this.db
-          .query(
+          .prepare(
             `SELECT message_id, data FROM part WHERE message_id IN (${placeholders})`,
           )
           .all(...msgIds) as { message_id: string; data: string }[];
@@ -344,7 +344,7 @@ export class OpencodeBackend implements SessionBackend {
 
   async getSubagents(projectInfo: ProjectInfo): Promise<SubagentInfo[]> {
     const rows = this.db
-      .query(
+      .prepare(
         `SELECT id, time_created, time_updated FROM session
          WHERE parent_id = ?`,
       )

@@ -1,10 +1,10 @@
+import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { createBackends } from "./backends";
 import type { SessionBackend } from "./backends/types";
 import { loadConfig, mergeCliOverrides } from "./config";
-import { restoreProcessEnv } from "./env";
 import { startServer } from "./server";
 import {
   disambiguateProjectNames,
@@ -18,14 +18,12 @@ import {
   writeSubagentStatus,
 } from "./sessions";
 
-restoreProcessEnv();
-
 function exit(code: number): never {
   process.exit(code);
 }
 
 const claudeDir =
-  Bun.env.CLAUDE_PROJECTS_DIR ?? join(homedir(), ".claude", "projects");
+  process.env.CLAUDE_PROJECTS_DIR ?? join(homedir(), ".claude", "projects");
 
 const VERSION = "0.1.0";
 
@@ -452,7 +450,7 @@ async function runSub(): Promise<void> {
 }
 
 async function readStdin(): Promise<string> {
-  return new Response(Bun.stdin.stream()).text();
+  return readFileSync(process.stdin.fd, "utf-8");
 }
 
 interface HookPayload {

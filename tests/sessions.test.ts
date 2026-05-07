@@ -1,4 +1,3 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { utimesSync } from "node:fs";
 import {
   appendFile,
@@ -9,6 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { StatusEvent } from "../src/sessions";
 import {
   CLOSED_PROJECT_TTL_MS,
@@ -1243,7 +1243,7 @@ describe("session enrichment", () => {
     expect(first.tasksDone).toBe(1);
 
     // Append new lines (delta): a new user message and updated TodoWrite
-    await Bun.sleep(10); // ensure mtime changes
+    await new Promise((r) => setTimeout(r, 10)); // ensure mtime changes
     const appendedTodos = [
       { content: "Step 1", status: "completed" },
       { content: "Step 2", status: "in_progress" },
@@ -1259,8 +1259,8 @@ describe("session enrichment", () => {
       ]),
     ];
     // Append to existing file
-    const existingContent = await Bun.file(jsonlPath).text();
-    await Bun.write(
+    const existingContent = await readFile(jsonlPath, "utf8");
+    await writeFile(
       jsonlPath,
       `${existingContent + appendedLines.join("\n")}\n`,
     );
@@ -1294,7 +1294,7 @@ describe("session enrichment", () => {
     expect(first.tasksTotal).toBe(1);
 
     // Replace with a smaller new-session file (simulates session restart)
-    await Bun.sleep(10);
+    await new Promise((r) => setTimeout(r, 10));
     const newTodos = [
       { content: "New A", status: "pending" },
       { content: "New B", status: "pending" },
@@ -1306,7 +1306,7 @@ describe("session enrichment", () => {
       ]),
     ];
     // Write shorter content (file shrinks)
-    await Bun.write(jsonlPath, `${newLines[0]}\n`);
+    await writeFile(jsonlPath, `${newLines[0]}\n`);
 
     const second = await readSessionTail(jsonlPath);
     // Full re-read: should see only new content
@@ -1446,7 +1446,7 @@ describe("session enrichment", () => {
 
     // Append user-only line (no new assistant entry) — delta scan finds no assistant entry
     const userLine = makeUserEntry("follow-up question");
-    await Bun.write(jsonlPath, `${firstLines.join("\n")}\n${userLine}\n`);
+    await writeFile(jsonlPath, `${firstLines.join("\n")}\n${userLine}\n`);
 
     const second = await readSessionTail(jsonlPath);
     // latestAssistantActivity must be preserved from base (delta merge)
@@ -1620,9 +1620,9 @@ describe("session enrichment", () => {
     const first = await readSessionTail(jsonlPath);
     expect(first.agentDescriptions.get("agent-1")).toBe("First agent task");
 
-    await Bun.sleep(10);
-    const existing = await Bun.file(jsonlPath).text();
-    await Bun.write(
+    await new Promise((r) => setTimeout(r, 10));
+    const existing = await readFile(jsonlPath, "utf8");
+    await writeFile(
       jsonlPath,
       existing +
         makeQueueOperationEnqueue("agent-2", "Second agent task") +
@@ -1915,7 +1915,7 @@ describe("sessionTailCache (R20.4)", () => {
       "this is the first and longer message",
     );
 
-    await Bun.sleep(10);
+    await new Promise((r) => setTimeout(r, 10));
     // Replace with shorter content (file shrinks → full re-read)
     await writeFile(jsonlPath, `${makeUserLine("new")}\n`);
 
@@ -2121,13 +2121,13 @@ describe("readSessionTail token usage (R32)", () => {
     expect(first.outputTokens).toBe(80);
 
     // Append more content (simulates growing cache_read — new value is larger)
-    await Bun.sleep(10);
+    await new Promise((r) => setTimeout(r, 10));
     const appendedLines = [
       makeUserLine("second"),
       makeAssistantWithUsage("claude-sonnet-4-6", 500, 60),
     ];
-    const existing = await Bun.file(jsonlPath).text();
-    await Bun.write(jsonlPath, `${existing + appendedLines.join("\n")}\n`);
+    const existing = await readFile(jsonlPath, "utf8");
+    await writeFile(jsonlPath, `${existing + appendedLines.join("\n")}\n`);
 
     const second = await readSessionTail(jsonlPath);
     // inputTokens: new scan value replaces base (last-wins, not additive)
@@ -2152,8 +2152,8 @@ describe("readSessionTail token usage (R32)", () => {
     expect(first.inputTokens).toBe(1000);
 
     // Replace with shorter file (new session)
-    await Bun.sleep(10);
-    await Bun.write(
+    await new Promise((r) => setTimeout(r, 10));
+    await writeFile(
       jsonlPath,
       `${makeAssistantWithUsage("claude-sonnet-4-6", 50, 20)}\n`,
     );
@@ -2450,9 +2450,9 @@ describe("readSessionTail input token last-value semantics (R47)", () => {
     expect(first.outputTokens).toBe(100);
 
     // Append: new call with larger input (cache grew to 6000)
-    await Bun.sleep(10);
-    const existing = await Bun.file(jsonlPath).text();
-    await Bun.write(
+    await new Promise((r) => setTimeout(r, 10));
+    const existing = await readFile(jsonlPath, "utf8");
+    await writeFile(
       jsonlPath,
       `${existing + makeAssistantWithUsage(6000, 50)}\n`,
     );
@@ -3377,7 +3377,7 @@ describe("readSessionTail delta task completion (R46 Bug 1)", () => {
 
     // Second read: append TaskUpdate completing Task #1.
     const secondBatch = `${makeTaskUpdateEntry("1", "completed")}\n`;
-    const existing = await Bun.file(jsonlPath).text();
+    const existing = await readFile(jsonlPath, "utf8");
     await writeFile(jsonlPath, existing + secondBatch);
 
     const second = await readSessionTail(jsonlPath);
@@ -3403,7 +3403,7 @@ describe("readSessionTail delta task completion (R46 Bug 1)", () => {
 
     // Second read: TaskUpdate for task ID 99 which was never created
     const secondBatch = `${makeTaskUpdateEntry("99", "completed")}\n`;
-    const existing = await Bun.file(jsonlPath).text();
+    const existing = await readFile(jsonlPath, "utf8");
     await writeFile(jsonlPath, existing + secondBatch);
 
     const second = await readSessionTail(jsonlPath);

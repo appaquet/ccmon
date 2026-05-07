@@ -1,6 +1,6 @@
 # ccmon
 
-Claude Code Monitor - a Bun + TypeScript web app that shows the status of currently running Claude Code instances.
+Claude Code Monitor - a Node.js + TypeScript web app that shows the status of currently running Claude Code instances.
 
 ## Context
 
@@ -17,11 +17,19 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 53 (Server Staleness Fix) and Phase 54 (OpenCode Sub-Agent Detection Hardening) complete.
+Phase 55 (Migrate to Node.js) complete. Bun runtime fully replaced with Node.js 22 + tsx.
 
-1. Server staleness: R61 periodic interval now calls `rescanAllBackends()` + `broadcastCurrent()` instead of just rebroadcasting frozen `stateMap`. Watcher failures recover within 30s.
-2. OpenCode sub-agent detection: Added fallback directory-scan query in `resolveState()` to detect sub-agents even when `parent_id` linkage is absent. Added minimal logging when fallback triggers.
-3. 273 tests pass (2 new server tests, 2 new OpenCode tests), all 5/5 runs green.
+1. All Bun.* APIs replaced: Bun.file/write → node:fs, Bun.env → process.env, Bun.stdin → process.stdin
+2. Bun.serve() → http.createServer + ws WebSocketServer (with async port resolution)
+3. bun:sqlite → better-sqlite3 (all 10 .query() → .prepare(), null → undefined fix)
+4. bun:test → vitest (7 test files, same expect/describe API)
+5. Bun.sleep → setTimeout, Bun.spawn → execSync/spawn from node:child_process
+6. import.meta.dir → fileURLToPath(import.meta.url), tsx for extensionless imports
+7. package.json updated (npm scripts), bun.lock → package-lock.json, new deps: better-sqlite3, ws, vitest, tsx
+8. flake.nix: pkgs.bun → pkgs.nodejs_22, wrapper uses --import tsx/esm
+9. CI: setup-node@v4, npm ci; dependabot: npm ecosystem
+10. src/env.ts deleted (Node.js process.env works in sandbox without hack)
+11. 273 tests pass, lint clean, typecheck passes, integration check returns data
 
 Next: deploy and verify in production.
 
@@ -272,6 +280,22 @@ Next: deploy and verify in production.
 - R74: ⬜ CLI `dump` / `dump --watch` / `serve` work with all backends (Phase: CLI)
 - R75: ⬜ `ccmon status` subcommand remains Claude-only — hook processing unchanged (Phase: CLI)
 - R76: ⬜ Frontend shows source badge ("CC" / "OC") on project cards (Phase: Frontend)
+
+### Runtime Migration (Bun → Node.js)
+
+- R77: ⬜ All source code runs on Node.js 22 LTS without Bun runtime (Phase: Migrate to Node.js)
+  - R77.1: `node src/cli.ts <subcommand>` works identically to `bun run src/cli.ts <subcommand>`
+  - R77.2: No `Bun.*` API calls remain in production code
+  - R77.3: No `bun:` prefixed imports remain
+- R78: ⬜ Tests run on vitest (same expect/describe API as bun:test) (Phase: Migrate to Node.js)
+  - R78.1: All existing tests pass with same assertions
+  - R78.2: `npm test` runs all test files
+- R79: ⬜ Nix flake exposes ccmon via Node.js 22, not bun (Phase: Migrate to Node.js)
+  - R79.1: `nix build` succeeds
+  - R79.2: `nix develop` provides nodejs_22 shell
+- R80: ⬜ CI uses Node.js 22, not bun (Phase: Migrate to Node.js)
+- R81: ⬜ `npm run lint`, `npm run typecheck`, `npm test` all pass (Phase: Migrate to Node.js)
+- R82: ⬜ `src/env.ts` Bun sandbox workaround removed — Node.js process.env works correctly (Phase: Migrate to Node.js)
 
 #### Out of Scope
 
@@ -605,20 +629,27 @@ Address 21 REVIEW comments from second review pass. 4 high (DRY buildProjectStat
 
 Address 2 deferred REVIEW comments: (1) Extract `sessionTailCache` and `projectStateCache` from module-level globals into a `SessionStore` class with instance-level state. (2) Split the 1312-line god module by extracting enrichment parsing (~290 lines) into `session-enrichment.ts`. Eliminates 31 `_resetCachesForTesting()` calls across 3 test files.
 
+### ⬜ 55 Phase: Migrate from Bun to Node.js
+
+[55-migrate-to-node](55-migrate-to-node.md)
+
+Replace Bun runtime with Node.js 22 LTS (native TS via Amaro). Replace Bun.file/write → node:fs, Bun.serve → http+ws, bun:sqlite → better-sqlite3, bun:test → vitest. Delete env.ts sandbox workaround. Update flake.nix, CI, dependabot, lockfile. 13 tasks.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
-- **CLAUDE.md**: Development instructions; integration check section; lint/typecheck command docs; sub --host flag doc (Phase: Session Detection, Packaging, Review Fixes, Linting Setup, StopFailure Hook)
-- **README.md**: Install guide, hook config, commands reference (Phase: Packaging)
-- **flake.nix**: Nix devShell + packages/apps outputs for ccmon (Phase: Session Detection, Packaging)
+- **docs/features/2026-02-18-ccmon/55-migrate-to-node.md**: Phase 55 plan — Bun → Node.js migration (Phase: Migrate to Node.js)
+- **CLAUDE.md**: Development instructions; Node.js commands; integration check section; lint/typecheck command docs; sub --host flag doc (Phase: Session Detection, Packaging, Review Fixes, Linting Setup, StopFailure Hook, Migrate to Node.js)
+- **README.md**: Install guide, Node.js prerequisite, hook config, commands reference (Phase: Packaging, Migrate to Node.js)
+- **flake.nix**: Nix devShell + packages/apps outputs for ccmon; nodejs_22 wrapper (Phase: Session Detection, Packaging, Migrate to Node.js)
 - **.envrc**: direnv config — `use flake` (Phase: Session Detection)
 - **.gitignore**: Excludes `.direnv/` and `*.local.log` (Phase: Session Detection)
-- **package.json**: Bun project config — `"type": "module"`, `@types/bun`, `dump` script; `test`, `lint`, `lint:fix`, `typecheck` scripts; Biome + TypeScript devDeps (Phase: Session Detection, Linting Setup)
-- **tsconfig.json**: IDE TypeScript support — ESNext, moduleResolution bundler (Phase: Session Detection)
-- **bun.lock**: Bun lockfile (Phase: Session Detection, Linting Setup)
+- **package.json**: Node.js project config — `"type": "module"`, `@types/better-sqlite3`, `@types/ws`, `dump` script; `test`, `lint`, `lint:fix`, `typecheck` scripts; Biome + TypeScript + vitest devDeps; better-sqlite3 + ws deps (Phase: Session Detection, Linting Setup, Migrate to Node.js)
+- **package-lock.json**: npm lockfile (Phase: Migrate to Node.js)
+- **tsconfig.json**: IDE TypeScript support — ESNext, strict (Phase: Session Detection, Migrate to Node.js)
 - **biome.json**: Biome linter + formatter config — 2-space indent, recommended rules (Phase: Linting Setup)
-- **.github/workflows/ci.yml**: GHA CI workflow — lint + typecheck + test on push and pull_request (Phase: GitHub Actions CI)
-- **.github/dependabot.yml**: Dependabot config — bun ecosystem, daily checks, 7-day release cooldown (Phase: Dependabot Setup)
+- **.github/workflows/ci.yml**: GHA CI workflow — lint + typecheck + test on push and pull_request; Node.js 22 + npm (Phase: GitHub Actions CI, Migrate to Node.js)
+- **.github/dependabot.yml**: Dependabot config — npm ecosystem, daily checks, 7-day release cooldown (Phase: Dependabot Setup, Migrate to Node.js)
 - **public/index.html**: Single-page dashboard — dark theme, CSS grid, vanilla JS WebSocket client; R51-R55 card rework: context bar, unified agent rows, pulsing dots; R45-R50 features retained; permission/stopped/notification flash animations; JSON.parse try/catch, numeric esc(); `BackendManager` multi-WS, `mergeAndRender()`, aggregate status pill, settings dropdown; `lastMessageAt` heartbeat tracking + zombie detection (>60s no message); `visibilitychange` handler force-reconnects all backends on wake; `.card-pills` container groups source + status badges at right edge (Phase: Web UI, UI Enhancements, UI Polish, Dashboard Refinements, Review Fixes, Card Rework, Multi-Backend, Sleep/Wake WS Reconnect, StopFailure Hook, Card Height Cap, Backend Pill Alignment)
 - **docs/features/2026-02-18-ccmon/47-backend-pill-alignment.md**: Phase 47 plan — backend pill right-alignment in card header (Phase: Backend Pill Alignment)
 - **docs/features/2026-02-18-ccmon/48-opencode-session-dedup.md**: Phase 48 plan — deduplicate OpenCode sessions per directory via SQL `MAX(time_updated)` (Phase: OpenCode Session Deduplication)
@@ -629,22 +660,22 @@ Address 2 deferred REVIEW comments: (1) Extract `sessionTailCache` and `projectS
 - **docs/features/2026-02-18-ccmon/53-server-staleness-fix.md**: Phase 53 plan — fix server stateMap freezing; change periodic interval to rescan from disk (Phase: Server Staleness Fix)
 - **docs/features/2026-02-18-ccmon/54-opencode-subagent-harden.md**: Phase 54 plan — investigation + hardening OpenCode sub-agent detection; debug logging + fallback child query (Phase: OpenCode Sub-Agent Detection Hardening)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed; `homedir()` replaces `process.env.HOME` fallback (Phase: Backend, Review Fixes, Home Resolution Fix)
-- **src/sessions.ts**: Core session logic — `scanProjects()`, `readStatusLog()`, `getProjectState()`, `mapHookEventToState()`, `writeStatusEvent()`, `writeStatusTruncate()`, `filterStaleProjects()`; `StatusEvent` type, append-only NDJSON status log, `resolveState()` with event-scan logic; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; `findLatestJSONL` excludes status log files; `homedir()` replaces `Bun.env.HOME` fallback (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook, Home Resolution Fix)
+- **src/sessions.ts**: Core session logic — `scanProjects()`, `getProjectState()`, `mapHookEventToState()`, `writeStatusEvent()`, `writeStatusTruncate()`, `filterStaleProjects()`; `StatusEvent` type, append-only NDJSON status log, `resolveState()` with event-scan logic; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; `findLatestJSONL` excludes status log files; `homedir()` replaces `Bun.env.HOME` fallback; `readFileSync`/`writeFileSync` replace `Bun.file`/`Bun.write` (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook, Home Resolution Fix, Migrate to Node.js)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed; exponential backoff restart-on-error for both watchers (Phase: Session Detection, Review Fixes, Watcher Resilience)
-- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner; `sub` parses new WS envelope with backward compat; `sub --host` flag; status builds StatusEvent and routes to writeStatusEvent/writeStatusTruncate; `homedir()` replaces `Bun.env.HOME` fallback; `restoreProcessEnv()` at startup (Phase: Session Detection, Backend, Review Fixes, Multi-Backend, Append-Only Status Log, Home Resolution Fix)
-- **src/env.ts**: Sandbox env restoration — `restoreProcessEnv()` reads `/proc/self/environ` on Linux when Bun fails to initialize `process.env` (Phase: Home Resolution Fix)
-- **src/server.ts**: Bun HTTP + WebSocket server — `/`, `/api/state`, `/ws` endpoints; DEFAULT_CLAUDE_DIR imported from sessions.ts, HTML read at module init; WS payload wrapped in `{ hostname, projects }` envelope; `Cache-Control: no-cache` on HTML response; periodic 30s safety rescan + broadcast (Phase: Backend, Review Fixes, Multi-Backend, Watcher Resilience, Server Staleness Fix)
+- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner; `sub` parses new WS envelope with backward compat; `sub --host` flag; status builds StatusEvent and routes to writeStatusEvent/writeStatusTruncate; `homedir()` replaces `Bun.env.HOME` fallback; `process.env` for CLAUDE_PROJECTS_DIR; `process.stdin` for hook input (Phase: Session Detection, Backend, Review Fixes, Multi-Backend, Append-Only Status Log, Home Resolution Fix, Migrate to Node.js)
+- **src/env.ts**: Deleted — Bun sandbox workaround no longer needed with Node.js (Phase: Home Resolution Fix, Migrate to Node.js)
+- **src/server.ts**: Node.js HTTP + WebSocket server (http.createServer + ws) — `/`, `/api/state`, `/ws` endpoints; HTML read at module init; WS payload wrapped in `{ hostname, projects }` envelope; `Cache-Control: no-cache` on HTML response; periodic 30s safety rescan + broadcast; `fileURLToPath(import.meta.url)` replaces `import.meta.dir` (Phase: Backend, Review Fixes, Multi-Backend, Watcher Resilience, Server Staleness Fix, Migrate to Node.js)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
-- **tests/sessions.test.ts**: 202 unit tests for sessions.ts (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook)
-- **tests/watcher.test.ts**: Unit tests for watcher.ts; backoff formula + restart-on-error tests added (Phase: Session Detection, Watcher Resilience)
-- **tests/cli.test.ts**: CLI tests — arg-validation, status NDJSON format, dump --watch, --project filter (Phase: Review Fixes, Append-Only Status Log)
-- **tests/config.test.ts**: Config loading tests; 22+ tests covering partial config, invalid types (Phase: Review Fixes 2)
-- **tests/server.test.ts**: Tests for server.ts — HTTP endpoints, WebSocket, WS envelope + hostname field, periodic broadcast (Phase: Backend, Multi-Backend, Watcher Resilience)
+- **tests/sessions.test.ts**: 202 unit tests for sessions.ts; vitest imports; readFileSync/writeFileSync test I/O (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook, Migrate to Node.js)
+- **tests/watcher.test.ts**: Unit tests for watcher.ts; backoff formula + restart-on-error tests; vitest vi.fn() replaces bun mock (Phase: Session Detection, Watcher Resilience, Migrate to Node.js)
+- **tests/cli.test.ts**: CLI tests — arg-validation, status NDJSON format, dump --watch, --project filter; spawnSync replaces Bun.spawn; fileURLToPath replaces import.meta.dir; vitest imports (Phase: Review Fixes, Append-Only Status Log, Migrate to Node.js)
+- **tests/server.test.ts**: Tests for server.ts — HTTP endpoints, WebSocket, WS envelope + hostname field, periodic broadcast; vitest imports (Phase: Backend, Multi-Backend, Watcher Resilience, Migrate to Node.js)
 - **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)
 - **docs/features/2026-02-18-ccmon/44-opencode-support.md**: Phase 44 plan — multi-backend abstraction, OpenCode SQLite backend; R72.2 updated to "both backends enabled" (Phase: OpenCode Support)
-- **src/backends/opencode.ts**: `OpencodeBackend` — SQLite-based session scanning, enrichment, sub-agents, polling; scanProjects deduplicates by directory; resolveState child activity check + fallback directory scan (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix, OpenCode Sub-Agent Hardening)
-- **tests/backends/opencode.test.ts**: 33 OpenCode backend tests with in-memory SQLite (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix)
-- **tests/integration.test.ts**: 4 integration tests verifying both backends coexist (dump, buildProjectState, WS broadcast, projectKey) (Phase: OpenCode Support)
+- **src/backends/opencode.ts**: `OpencodeBackend` — better-sqlite3 session scanning, enrichment, sub-agents, polling; scanProjects deduplicates by directory; resolveState child activity check + fallback directory scan (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix, OpenCode Sub-Agent Hardening, Migrate to Node.js)
+- **src/backends/index.ts**: Backend factory — creates ClaudeBackend + OpencodeBackend from config; better-sqlite3 setup (Phase: OpenCode Support, Migrate to Node.js)
+- **tests/backends/opencode.test.ts**: 33 OpenCode backend tests with in-memory better-sqlite3; vitest imports (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix, Migrate to Node.js)
+- **tests/integration.test.ts**: 4 integration tests verifying both backends coexist; better-sqlite3 type (Phase: OpenCode Support, Migrate to Node.js)
 - **docs/features/2026-02-18-ccmon/45-review-fixes.md**: Phase 45 plan — 18 REVIEW comment fixes (3 release-blocking, 5 high, 5 medium, 5 low) across 8 files (Phase: Review Fixes)
-- **src/session-core.ts** (planned): Extracted resolveState, readStatusLog, shared types from sessions.ts (Phase: Review Fixes)
-- **tests/_helpers.ts** (planned): Shared makeTempDir utility (Phase: Review Fixes)
+- **src/session-core.ts**: Extracted resolveState, readStatusLog, shared types from sessions.ts; readFileSync replaces Bun.file (Phase: Review Fixes, Migrate to Node.js)
+- **tests/_helpers.ts**: Shared makeTempDir utility; process.env replaces Bun.env (Phase: Review Fixes, Migrate to Node.js)

@@ -1,4 +1,5 @@
 import type { Dirent } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { appendFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -189,8 +190,10 @@ export class SessionStore {
 
     let text: string;
     try {
-      const file = Bun.file(jsonlPath);
-      text = await file.slice(startOffset).text();
+      text = readFileSync(jsonlPath, "utf-8");
+      if (startOffset > 0) {
+        text = text.slice(startOffset);
+      }
     } catch {
       return { agentDescriptions: new Map() };
     }
@@ -425,7 +428,7 @@ export class SessionStore {
             `${nameWithout}.ccmon-status.json`,
           );
           try {
-            const raw = await Bun.file(agentStatusPath).text();
+            const raw = readFileSync(agentStatusPath, "utf-8");
             const parsed = JSON.parse(raw) as Record<string, unknown>;
             if (parsed.state === "stopped") isActive = false;
           } catch {
@@ -444,8 +447,10 @@ export class SessionStore {
         let slug: string | undefined;
         let launchTime: string = new Date(mtimeMs).toISOString(); // mtime fallback
         try {
-          const file = Bun.file(jsonlPath);
-          const text = await file.slice(0, 512).text();
+          const text = readFileSync(jsonlPath, { encoding: "utf-8" }).slice(
+            0,
+            512,
+          );
           const firstLine = text.split("\n")[0];
           if (firstLine) {
             const parsed = JSON.parse(firstLine) as Record<string, unknown>;
@@ -596,12 +601,14 @@ export async function writeStatusEvent(
   try {
     const s = await stat(logPath);
     if (s.size > MAX_STATUS_LOG_BYTES) {
-      const file = Bun.file(logPath);
-      const tail = await file.slice(-STATUS_LOG_TAIL_BYTES).text();
+      let raw = readFileSync(logPath, "utf-8");
+      if (raw.length > STATUS_LOG_TAIL_BYTES) {
+        raw = raw.slice(-STATUS_LOG_TAIL_BYTES);
+      }
       // Drop partial first line after slicing mid-file.
-      const firstNewline = tail.indexOf("\n");
-      const trimmed = firstNewline >= 0 ? tail.slice(firstNewline + 1) : tail;
-      await Bun.write(logPath, trimmed);
+      const firstNewline = raw.indexOf("\n");
+      const trimmed = firstNewline >= 0 ? raw.slice(firstNewline + 1) : raw;
+      writeFileSync(logPath, trimmed, "utf-8");
     }
   } catch {
     // stat or trim failed — not critical, the append already succeeded.
@@ -617,7 +624,7 @@ export async function writeStatusTruncate(
   event: StatusEvent,
 ): Promise<void> {
   const logPath = join(projectDirPath, STATUS_LOG_FILE);
-  await Bun.write(logPath, `${JSON.stringify(event)}\n`);
+  writeFileSync(logPath, `${JSON.stringify(event)}\n`, "utf-8");
 }
 
 /**
@@ -629,9 +636,10 @@ export async function writeSubagentStatus(
   agentStatusPath: string,
   projectDirPath: string,
 ): Promise<void> {
-  await Bun.write(
+  writeFileSync(
     agentStatusPath,
     JSON.stringify({ state: "stopped", timestamp: new Date().toISOString() }),
+    "utf-8",
   );
 
   const event: StatusEvent = {
@@ -730,7 +738,7 @@ async function readFirstLine(
   filePath: string,
 ): Promise<{ cwd: string; sessionId: string } | null> {
   try {
-    const text = await Bun.file(filePath).slice(0, 4096).text();
+    const text = readFileSync(filePath, { encoding: "utf-8" }).slice(0, 4096);
     const lines = text.split("\n");
     for (const line of lines) {
       const trimmed = line.trim();

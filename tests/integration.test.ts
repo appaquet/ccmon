@@ -1,17 +1,23 @@
-import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import Database from "better-sqlite3";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ClaudeBackend } from "../src/backends/claude";
 import { OpencodeBackend } from "../src/backends/opencode";
 import { startServer } from "../src/server";
 import { replaceDefaultStore, SessionStore } from "../src/sessions";
 import { makeTempDir } from "./_helpers";
 
+type DB = InstanceType<typeof Database>;
+
+function run(db: DB, sql: string, ...params: unknown[]): void {
+  db.prepare(sql).run(...params);
+}
+
 describe("integration — both backends", () => {
   let tmpDir: string;
   let claudeDir: string;
-  let opencodeDB: Database;
+  let opencodeDB: DB;
   let stop: (() => void) | null = null;
 
   beforeEach(async () => {
@@ -34,14 +40,19 @@ describe("integration — both backends", () => {
 
     // Set up OpenCode in-memory DB
     opencodeDB = new Database(":memory:");
-    opencodeDB.run(`
+    run(
+      opencodeDB,
+      `
       CREATE TABLE project (
         id TEXT PRIMARY KEY,
         name TEXT,
         root TEXT
       )
-    `);
-    opencodeDB.run(`
+    `,
+    );
+    run(
+      opencodeDB,
+      `
       CREATE TABLE session (
         id TEXT PRIMARY KEY,
         title TEXT,
@@ -52,14 +63,16 @@ describe("integration — both backends", () => {
         parent_id TEXT,
         project_id TEXT REFERENCES project(id)
       )
-    `);
+    `,
+    );
     const now = Date.now();
-    opencodeDB.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(opencodeDB, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       "proj-oc",
       "opencode-proj",
       "/home/user/opencode-proj",
     ]);
-    opencodeDB.run(
+    run(
+      opencodeDB,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_oc_1",

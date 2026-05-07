@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { utimesSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ClaudeBackend } from "../src/backends/claude";
 import type { SessionBackend } from "../src/backends/types";
 import { startServer } from "../src/server";
@@ -63,6 +63,7 @@ describe("HTTP server", () => {
 
   test("GET / returns HTML", async () => {
     const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
+    await srv.ready;
     stop = srv.stop;
 
     const res = await fetch(`http://localhost:${srv.port}/`);
@@ -86,6 +87,7 @@ describe("HTTP server", () => {
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
 
     const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
+    await srv.ready;
     stop = srv.stop;
     await srv.ready;
 
@@ -101,6 +103,7 @@ describe("HTTP server", () => {
 
   test("GET /unknown returns 404", async () => {
     const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
+    await srv.ready;
     stop = srv.stop;
 
     const res = await fetch(`http://localhost:${srv.port}/unknown`);
@@ -232,6 +235,7 @@ describe("WebSocket server", () => {
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
 
     const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
+    await srv.ready;
     stop = srv.stop;
     await srv.ready;
 
@@ -243,7 +247,7 @@ describe("WebSocket server", () => {
     };
 
     // Wait for initial state delivery
-    await Bun.sleep(100);
+    await new Promise((r) => setTimeout(r, 100));
 
     await writeFile(
       join(projDir, "ccmon-status.json"),
@@ -256,7 +260,7 @@ describe("WebSocket server", () => {
     );
 
     // Wait for debounced watcher to fire and broadcast
-    await Bun.sleep(400);
+    await new Promise((r) => setTimeout(r, 400));
 
     ws.close();
 
@@ -296,6 +300,7 @@ describe("WebSocket server", () => {
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
 
     const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
+    await srv.ready;
     stop = srv.stop;
     await srv.ready;
 
@@ -331,6 +336,7 @@ describe("WebSocket server", () => {
 
   test("WebSocket message includes hostname field", async () => {
     const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
+    await srv.ready;
     stop = srv.stop;
     await srv.ready;
 
@@ -503,7 +509,7 @@ describe("periodic safety broadcast (R61)", () => {
     };
 
     // Wait long enough for at least two interval fires (initial open + ≥1 periodic)
-    await Bun.sleep(450);
+    await new Promise((r) => setTimeout(r, 450));
     ws.close();
 
     // The open event sends one message; periodic interval should send at least one more
@@ -568,7 +574,7 @@ describe("periodic safety broadcast (R61)", () => {
     // Poll API state until stopped or timeout (100ms interval + margin).
     let updatedEntry: Record<string, unknown> | undefined;
     for (let attempt = 0; attempt < 10; attempt++) {
-      await Bun.sleep(50);
+      await new Promise((r) => setTimeout(r, 50));
       const updatedRes = await fetch(`http://localhost:${srv.port}/api/state`);
       const updated = (await updatedRes.json()) as Record<string, unknown>[];
       updatedEntry = updated.find((e) => e.projectName === "r61rescan") as
@@ -641,7 +647,7 @@ describe("state propagation (R34)", () => {
     };
 
     // Wait for initial state delivery
-    await Bun.sleep(100);
+    await new Promise((r) => setTimeout(r, 100));
     expect(messages.length).toBeGreaterThanOrEqual(1);
 
     // Initial state should be stopped

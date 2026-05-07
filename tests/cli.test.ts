@@ -1,14 +1,17 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { execSync, spawn } from "node:child_process";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { makeTempDir } from "./_helpers";
 
 const STATUS_LOG_FILE = "ccmon-status.jsonl";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const CLI_PATH = join(import.meta.dir, "..", "src", "cli.ts");
-const BUN = process.execPath;
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const CLI_PATH = join(__dirname, "..", "src", "cli.ts");
+const NODE = process.execPath;
 
 /**
  * Splits a string of concatenated pretty-printed JSON values into individual
@@ -64,29 +67,26 @@ async function spawnCli(
   args: string[],
   options: { stdin?: string; env?: Record<string, string> } = {},
 ): Promise<SpawnResult> {
-  const proc = Bun.spawn([BUN, "run", CLI_PATH, ...args], {
-    stdin:
-      options.stdin !== undefined
-        ? new TextEncoder().encode(options.stdin)
-        : "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, ...options.env },
-  });
-
-  if (options.stdin === undefined) {
-    // Close stdin immediately so the process doesn't block waiting for input
-    // proc.stdin is a Bun FileSink when stdin is 'pipe'
-    (proc.stdin as { end?: () => void } | null)?.end?.();
+  try {
+    const stdout = execSync(`npx tsx ${CLI_PATH} ${args.join(" ")}`, {
+      encoding: "utf-8",
+      stdio: "pipe",
+      env: { ...process.env, ...options.env },
+      input: options.stdin,
+    });
+    return { stdout: stdout.toString(), stderr: "", exitCode: 0 };
+  } catch (e) {
+    const err = e as {
+      stdout?: Buffer | string;
+      stderr?: Buffer | string;
+      status?: number;
+    };
+    return {
+      stdout: err.stdout?.toString() || "",
+      stderr: err.stderr?.toString() || "",
+      exitCode: err.status || 1,
+    };
   }
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-
-  return { stdout, stderr, exitCode };
 }
 
 // ─── dump ─────────────────────────────────────────────────────────────────────
@@ -252,21 +252,31 @@ describe("dump --watch --project", () => {
       `${makeFirstLine("/home/user/watchapp", "sess-wp")}\n`,
     );
 
-    const proc = Bun.spawn(
-      [BUN, "run", CLI_PATH, "dump", "--watch", "--project", "watchapp"],
+    const proc = spawn(
+      NODE,
+      [
+        "--import",
+        "tsx/esm",
+        CLI_PATH,
+        "dump",
+        "--watch",
+        "--project",
+        "watchapp",
+      ],
       {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
+        stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, CLAUDE_PROJECTS_DIR: tmpDir },
       },
     );
 
-    await Bun.sleep(300);
+    const stdoutChunks: Buffer[] = [];
+    proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+
+    await new Promise((r) => setTimeout(r, 300));
     proc.kill("SIGINT");
 
-    const stdout = await new Response(proc.stdout).text();
-    await proc.exited;
+    const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+    await new Promise((r) => proc.once("close", r));
 
     const blocks = splitJsonBlocks(stdout);
     expect(blocks.length).toBeGreaterThanOrEqual(1);
@@ -285,31 +295,42 @@ describe("dump --watch --project", () => {
       `${makeFirstLine("/home/user/watchapp2", "sess-wp2")}\n`,
     );
 
-    const proc = Bun.spawn(
-      [BUN, "run", CLI_PATH, "dump", "--watch", "--project", "watchapp2"],
+    const proc = spawn(
+      NODE,
+      [
+        "--import",
+        "tsx/esm",
+        CLI_PATH,
+        "dump",
+        "--watch",
+        "--project",
+        "watchapp2",
+      ],
       {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
+        stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, CLAUDE_PROJECTS_DIR: tmpDir },
       },
     );
 
-    await Bun.sleep(300);
+    const stdoutChunks: Buffer[] = [];
+    proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+
+    await new Promise((r) => setTimeout(r, 300));
 
     // Trigger a file change by touching the session JSONL (appending a line)
-    const existingContent = await Bun.file(
+    const existingContent = await readFile(
       join(projDir, "session.jsonl"),
-    ).text();
-    await Bun.write(
+      "utf-8",
+    );
+    await writeFile(
       join(projDir, "session.jsonl"),
       `${existingContent}${JSON.stringify({ type: "user", message: { role: "user", content: "hello" } })}\n`,
     );
-    await Bun.sleep(400);
+    await new Promise((r) => setTimeout(r, 400));
 
     proc.kill("SIGINT");
-    const stdout = await new Response(proc.stdout).text();
-    await proc.exited;
+    const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+    await new Promise((r) => proc.once("close", r));
 
     const blocks = splitJsonBlocks(stdout);
     expect(blocks.length).toBeGreaterThanOrEqual(2);
@@ -771,20 +792,36 @@ describe("dump --watch", () => {
       `${makeFirstLine("/home/user/watchproj", "sess-watch")}\n`,
     );
 
+    // Disable OpenCode backend to avoid contamination from real sessions
+    const cfgPath = join(tmpDir, "ccmon-config.json");
+    await writeFile(
+      cfgPath,
+      JSON.stringify({ backends: [{ type: "claude", enabled: true }] }),
+    );
+
     // Start the watcher, wait briefly, then kill it
-    const proc = Bun.spawn([BUN, "run", CLI_PATH, "dump", "--watch"], {
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, CLAUDE_PROJECTS_DIR: tmpDir },
-    });
+    const proc = spawn(
+      NODE,
+      ["--import", "tsx/esm", CLI_PATH, "dump", "--watch"],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          CLAUDE_PROJECTS_DIR: tmpDir,
+          CCMON_CONFIG: cfgPath,
+        },
+      },
+    );
+
+    const stdoutChunks: Buffer[] = [];
+    proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
 
     // Give it time to print the initial state
-    await Bun.sleep(300);
+    await new Promise((r) => setTimeout(r, 300));
     proc.kill("SIGINT");
 
-    const stdout = await new Response(proc.stdout).text();
-    await proc.exited;
+    const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+    await new Promise((r) => proc.once("close", r));
 
     // First output should be a valid JSON array
     const blocks = splitJsonBlocks(stdout);
@@ -802,15 +839,31 @@ describe("dump --watch", () => {
       `${makeFirstLine("/home/user/watchchange", "sess-change")}\n`,
     );
 
-    const proc = Bun.spawn([BUN, "run", CLI_PATH, "dump", "--watch"], {
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, CLAUDE_PROJECTS_DIR: tmpDir },
-    });
+    // Disable OpenCode backend to avoid contamination from real sessions
+    const cfgPath = join(tmpDir, "ccmon-config.json");
+    await writeFile(
+      cfgPath,
+      JSON.stringify({ backends: [{ type: "claude", enabled: true }] }),
+    );
+
+    const proc = spawn(
+      NODE,
+      ["--import", "tsx/esm", CLI_PATH, "dump", "--watch"],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          CLAUDE_PROJECTS_DIR: tmpDir,
+          CCMON_CONFIG: cfgPath,
+        },
+      },
+    );
+
+    const stdoutChunks: Buffer[] = [];
+    proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
 
     // Wait for initial state to print
-    await Bun.sleep(300);
+    await new Promise((r) => setTimeout(r, 300));
 
     // Trigger a status file change (NDJSON format)
     await appendFile(
@@ -818,11 +871,11 @@ describe("dump --watch", () => {
       `${makeStatusEvent("PostToolUse", "running")}\n`,
     );
     // Wait for watcher debounce + propagation
-    await Bun.sleep(400);
+    await new Promise((r) => setTimeout(r, 400));
 
     proc.kill("SIGINT");
-    const stdout = await new Response(proc.stdout).text();
-    await proc.exited;
+    const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+    await new Promise((r) => proc.once("close", r));
 
     // No separator lines — output is consecutive JSON blocks
     expect(stdout).not.toContain("---");
@@ -837,17 +890,21 @@ describe("dump --watch", () => {
   }, 5000);
 
   test("exits cleanly on SIGINT", async () => {
-    const proc = Bun.spawn([BUN, "run", CLI_PATH, "dump", "--watch"], {
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, CLAUDE_PROJECTS_DIR: tmpDir },
-    });
+    const proc = spawn(
+      NODE,
+      ["--import", "tsx/esm", CLI_PATH, "dump", "--watch"],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, CLAUDE_PROJECTS_DIR: tmpDir },
+      },
+    );
 
-    await Bun.sleep(200);
+    await new Promise((r) => setTimeout(r, 200));
     proc.kill("SIGINT");
 
-    const exitCode = await proc.exited;
+    const exitCode: number | null = await new Promise((resolve) => {
+      proc.once("close", (code: number | null) => resolve(code));
+    });
     // Clean exit: 0 or signal-terminated (130 for SIGINT, or null)
     expect(exitCode === 0 || exitCode === 130 || exitCode === null).toBe(true);
   }, 5000);

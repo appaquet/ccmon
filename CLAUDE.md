@@ -4,18 +4,18 @@ Claude Code Monitor — monitors Claude Code sessions. All timestamps are ISO 86
 
 ## Setup
 
-- `bun install` — install dependencies
+- `npm install` — install dependencies
 
 ## Commands
 
 ### dump
 ```bash
-bun run dump                              # All active projects as single JSON array
-bun run dump --project <name>             # Single project as JSON object (or empty if not found)
-bun run dump --max-age <hours>            # Override maxInactivityHours from config
-bun run dump --no-filter                  # Disable inactivity filter
-bun run dump --watch                      # Stream all projects, one JSON per line; Ctrl+C to stop
-bun run dump --watch --project <name>     # Stream single project, one JSON per line
+npm run dump                              # All active projects as single JSON array
+npm run dump --project <name>             # Single project as JSON object (or empty if not found)
+npm run dump --max-age <hours>            # Override maxInactivityHours from config
+npm run dump --no-filter                  # Disable inactivity filter
+npm run dump --watch                      # Stream all projects, one JSON per line; Ctrl+C to stop
+npm run dump --watch --project <name>     # Stream single project, one JSON per line
 ```
 
 Watch mode outputs are newline-delimited JSON (NDJSON), pipeable: `ccmon dump --watch | jq .`
@@ -25,37 +25,37 @@ Reads hook event from stdin (Stop, StopFailure, SessionEnd, SessionStart, Notifi
 
 ### serve
 ```bash
-bun run serve                  # HTTP + WebSocket server, auto-port
-bun run serve --port <N>       # Custom port
+npm run serve                  # HTTP + WebSocket server, auto-port
+npm run serve --port <N>       # Custom port
 ```
 
 ### sub
 ```bash
-bun run sub                    # Connect to running server, stream state as NDJSON
-bun run sub --host <addr>      # Connect to custom host (default: localhost)
-bun run sub --port <N>         # Connect to custom port (default: 8080)
+npm run sub                    # Connect to running server, stream state as NDJSON
+npm run sub --host <addr>      # Connect to custom host (default: localhost)
+npm run sub --port <N>         # Connect to custom port (default: 8080)
 ```
 
 ### test
 ```bash
-bun test                       # Run tests
+npm test                       # Run tests
 ```
 
 ### lint
 ```bash
-bun run lint          # Check for lint/format violations (Biome)
-bun run lint:fix      # Auto-fix violations
+npm run lint          # Check for lint/format violations (Biome)
+npm run lint:fix      # Auto-fix violations
 ```
 
 ### typecheck
 ```bash
-bun run typecheck     # TypeScript type checking (tsc --noEmit)
+npm run typecheck     # TypeScript type checking (tsc --noEmit)
 ```
 
 ### integration check
 ```bash
-bun run dump --no-filter   # must return ≥ 1 project; 0 = session scanning broken
-bun run dump               # apply stale filter; verify projects within activity window appear
+npm run dump --no-filter   # must return ≥ 1 project; 0 = session scanning broken
+npm run dump               # apply stale filter; verify projects within activity window appear
 ```
 
 After any change to `src/sessions.ts` (especially `readProjectInfo`, `readFirstLine`, `findLatestJSONL`, `filterStaleProjects`, `buildProjectState`), run the integration check to verify real project data is returned.

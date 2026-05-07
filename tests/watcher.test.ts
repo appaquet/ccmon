@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { _backoffDelayForTesting, watchForChanges } from "../src/watcher";
 import { makeTempDir } from "./_helpers";
 
@@ -54,9 +54,9 @@ describe("watchForChanges", () => {
     stop = watcher.stop;
 
     // Write to the status file to trigger a change
-    await Bun.sleep(50); // Let watcher settle
+    await new Promise((r) => setTimeout(r, 50)); // Let watcher settle
     await writeFile(statusFile, makeStatusPayload());
-    await Bun.sleep(200); // Let fs events propagate + debounce
+    await new Promise((r) => setTimeout(r, 200)); // Let fs events propagate + debounce
 
     expect(called.length).toBeGreaterThan(0);
     expect(called[0]).toBe(projDir);
@@ -76,11 +76,11 @@ describe("watchForChanges", () => {
     });
     stop = watcher.stop;
 
-    await Bun.sleep(50); // Let watcher settle
+    await new Promise((r) => setTimeout(r, 50)); // Let watcher settle
 
     // Simulate Claude appending a new line to the session JSONL
     await writeFile(jsonlFile, '{"type":"user"}\n{"type":"assistant"}\n');
-    await Bun.sleep(200); // Let fs events propagate + debounce
+    await new Promise((r) => setTimeout(r, 200)); // Let fs events propagate + debounce
 
     expect(called.length).toBeGreaterThan(0);
     expect(called[0]).toBe(projDir);
@@ -98,14 +98,14 @@ describe("watchForChanges", () => {
     });
     stop = watcher.stop;
 
-    await Bun.sleep(50); // Let watcher settle
+    await new Promise((r) => setTimeout(r, 50)); // Let watcher settle
 
     // Rapid writes within the debounce window (simulates Claude's frequent JSONL writes)
     for (let i = 0; i < 5; i++) {
       await writeFile(statusFile, makeStatusPayload());
     }
 
-    await Bun.sleep(300); // Wait for debounce window + propagation
+    await new Promise((r) => setTimeout(r, 300)); // Wait for debounce window + propagation
 
     expect(called.length).toBe(1);
   }, 3000);
@@ -117,7 +117,7 @@ describe("watchForChanges", () => {
 
     const errorMessages: string[] = [];
     const origError = console.error;
-    console.error = mock((...args: unknown[]) => {
+    console.error = vi.fn((...args: unknown[]) => {
       errorMessages.push(args.join(" "));
     });
 
@@ -125,13 +125,13 @@ describe("watchForChanges", () => {
     stop = watcher.stop;
 
     // Let watcher initialize and start watching projDir
-    await Bun.sleep(100);
+    await new Promise((r) => setTimeout(r, 100));
 
     // Removing the watched directory causes the watcher to receive an error on Linux
     await rm(projDir, { recursive: true, force: true });
 
     // Give watcher error handler time to fire
-    await Bun.sleep(300);
+    await new Promise((r) => setTimeout(r, 300));
 
     console.error = origError;
 

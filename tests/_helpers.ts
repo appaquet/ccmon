@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-const TMPDIR = Bun.env.TMPDIR || "/tmp";
+const TMPDIR = process.env.TMPDIR || "/tmp";
 
 export async function makeTempDir(prefix: string): Promise<string> {
   const dir = join(

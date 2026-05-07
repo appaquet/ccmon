@@ -1,7 +1,7 @@
-import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import type { CcmonConfig } from "../config";
 import { ClaudeBackend } from "./claude";
 import { OpencodeBackend } from "./opencode";
@@ -18,7 +18,7 @@ export function createBackends(config: CcmonConfig): {
   close: () => void;
 } {
   const backends: SessionBackend[] = [];
-  const dbs: Database[] = [];
+  const dbs: Array<InstanceType<typeof Database>> = [];
 
   for (const entry of config.backends) {
     if (!entry.enabled) continue;
@@ -44,10 +44,10 @@ export function createBackends(config: CcmonConfig): {
           }
           continue;
         }
-        let db: Database;
+        let db: InstanceType<typeof Database>;
         try {
           db = new Database(databasePath, { readonly: true });
-          db.run("PRAGMA busy_timeout = 5000");
+          db.pragma("busy_timeout = 5000");
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           console.warn(

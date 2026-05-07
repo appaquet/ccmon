@@ -1,13 +1,16 @@
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { hostname as osHostname } from "node:os";
-import { join } from "node:path";
-import type { ServerWebSocket } from "bun";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { type WebSocket, WebSocketServer } from "ws";
 import type { SessionBackend } from "./backends/types";
 import { DEFAULT_CONFIG } from "./config";
 import type { ProjectState } from "./sessions";
 import { disambiguateProjectNames, filterStaleProjects } from "./sessions";
 
-const htmlPath = join(import.meta.dir, "..", "public", "index.html");
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const htmlPath = join(__dirname, "..", "public", "index.html");
 let html: string;
 try {
   html = readFileSync(htmlPath, "utf8");
@@ -24,11 +27,6 @@ export interface ServerOptions {
   broadcastIntervalMs?: number;
 }
 
-/**
- * Starts the HTTP + WebSocket server.
- * Returns the actual port (useful when port 0 is passed for OS assignment), a stop function,
- * and a `ready` promise that resolves after the initial state map scan completes.
- */
 export function startServer(options: ServerOptions): {
   port: number;
   stop: () => void;
@@ -40,7 +38,7 @@ export function startServer(options: ServerOptions): {
   const maxInactivityHours =
     options.maxInactivityHours ?? DEFAULT_CONFIG.maxInactivityHours;
 
-  const clients = new Set<ServerWebSocket<unknown>>();
+  const clients = new Set<WebSocket>();
 
   // Per-backend state map: backend.projectKey(project) → ProjectState.
   // Each backend's keys are tracked independently via backendToKeys so a
@@ -151,71 +149,91 @@ export function startServer(options: ServerOptions): {
     watcherStops.push(watcher);
   }
 
-  // Populate the state map on startup
-  const ready = rescanAllBackends()
-    .then(() => {
-      broadcastCurrent();
-    })
-    .catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`ccmon: initial scan error: ${msg}\n`);
+  const wss = new WebSocketServer({ noServer: true });
+
+  wss.on("connection", (ws: WebSocket) => {
+    clients.add(ws);
+    ws.send(
+      JSON.stringify({
+        hostname: osHostname(),
+        projects: currentFilteredState(),
+      }),
+    );
+    ws.on("close", () => {
+      clients.delete(ws);
     });
-
-  const server = Bun.serve({
-    port,
-    hostname,
-    websocket: {
-      open(ws) {
-        clients.add(ws);
-        ws.send(
-          JSON.stringify({
-            hostname: osHostname(),
-            projects: currentFilteredState(),
-          }),
-        );
-      },
-      message(_ws, _data) {
-        // clients do not send messages to the server
-      },
-      close(ws) {
-        clients.delete(ws);
-      },
-    },
-    fetch(req, srv) {
-      const url = new URL(req.url);
-
-      if (url.pathname === "/ws") {
-        const upgraded = srv.upgrade(req);
-        if (!upgraded) {
-          return new Response("WebSocket upgrade failed", { status: 400 });
-        }
-        return undefined;
-      }
-
-      if (url.pathname === "/api/state") {
-        return Response.json(currentFilteredState());
-      }
-
-      if (url.pathname === "/") {
-        return new Response(html, {
-          headers: {
-            "Content-Type": "text/html; charset=utf-8",
-            "Cache-Control": "no-cache",
-          },
-        });
-      }
-
-      return new Response("Not Found", { status: 404 });
-    },
   });
 
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+
+    if (url.pathname === "/api/state") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(currentFilteredState()));
+      return;
+    }
+
+    if (url.pathname === "/") {
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-cache",
+      });
+      res.end(html);
+      return;
+    }
+
+    res.writeHead(404);
+    res.end("Not Found");
+  });
+
+  server.on("upgrade", (req, socket, head) => {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+    if (url.pathname === "/ws") {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit("connection", ws, req);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
+
+  let resolvedPort = port;
+
+  server.listen(port, hostname, () => {
+    const addr = server.address();
+    if (addr && typeof addr === "object") {
+      resolvedPort = addr.port;
+    }
+  });
+
+  const ready = new Promise<void>((resolveReady) => {
+    const check = setInterval(() => {
+      const addr = server.address();
+      if (addr && typeof addr === "object" && addr.port > 0) {
+        resolvedPort = addr.port;
+        clearInterval(check);
+        resolveReady();
+      }
+    }, 1);
+  }).then(() =>
+    rescanAllBackends()
+      .then(() => broadcastCurrent())
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`ccmon: initial scan error: ${msg}\n`);
+      }),
+  );
+
   return {
-    port: server.port ?? port,
+    get port() {
+      return resolvedPort;
+    },
     ready,
     stop(): void {
       clearInterval(broadcastInterval);
       for (const w of watcherStops) w.stop();
-      server.stop(true);
+      wss.close();
+      server.close();
     },
   };
 }

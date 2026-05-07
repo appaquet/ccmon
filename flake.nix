@@ -20,7 +20,7 @@
         src = ./.;
 
         ccmon = pkgs.writeShellScriptBin "ccmon" ''
-          exec ${pkgs.bun}/bin/bun run ${src}/src/cli.ts "$@"
+          NODE_PATH="${src}/node_modules" exec ${pkgs.nodejs_22}/bin/node --import tsx/esm ${src}/src/cli.ts "$@"
         '';
       in
       {
@@ -35,7 +35,7 @@
         };
 
         devShells.default = pkgs.mkShell {
-          buildInputs = [ pkgs.bun ];
+          buildInputs = [ pkgs.nodejs_22 ];
         };
       }
     );

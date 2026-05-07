@@ -9,7 +9,7 @@ Real-time dashboard for your Claude Code & OpenCode sessions.
 
 ## Quick Start
 
-1. [Installation](#installation) or run locally with `bun run serve`
+1. [Installation](#installation) or run locally with `npm run serve`
 2. [Hook Configuration](#hook-configuration) (for Claude Code)
 3. Start server with `ccmon serve`
 4. Open [http://localhost:8080](http://localhost:8080) in your browser
@@ -116,8 +116,8 @@ files.
 ## Development
 
 ```
-bun install     # Install dependencies
-bun test        # Run tests
-bun run dump    # Dump project states
-bun run serve   # Start server
+npm install     # Install dependencies
+npm test        # Run tests
+npm run dump    # Dump project states
+npm run serve   # Start server
 ```

@@ -1,17 +1,28 @@
-import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, test } from "bun:test";
+import Database from "better-sqlite3";
+import { beforeEach, describe, expect, test } from "vitest";
 import { OpencodeBackend } from "../../src/backends/opencode";
 import type { BackendSource } from "../../src/sessions";
 
-function createSchema(db: Database): void {
-  db.run(`
+type DB = InstanceType<typeof Database>;
+
+function run(db: DB, sql: string, ...params: unknown[]): void {
+  db.prepare(sql).run(...params);
+}
+
+function createSchema(db: DB): void {
+  run(
+    db,
+    `
     CREATE TABLE project (
       id TEXT PRIMARY KEY,
       name TEXT,
       root TEXT
     )
-  `);
-  db.run(`
+  `,
+  );
+  run(
+    db,
+    `
     CREATE TABLE session (
       id TEXT PRIMARY KEY,
       title TEXT,
@@ -22,8 +33,11 @@ function createSchema(db: Database): void {
       parent_id TEXT,
       project_id TEXT REFERENCES project(id)
     )
-  `);
-  db.run(`
+  `,
+  );
+  run(
+    db,
+    `
     CREATE TABLE message (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
@@ -31,8 +45,11 @@ function createSchema(db: Database): void {
       time_updated INTEGER NOT NULL,
       data TEXT NOT NULL
     )
-  `);
-  db.run(`
+  `,
+  );
+  run(
+    db,
+    `
     CREATE TABLE part (
       id TEXT PRIMARY KEY,
       message_id TEXT NOT NULL,
@@ -41,8 +58,11 @@ function createSchema(db: Database): void {
       time_updated INTEGER NOT NULL,
       data TEXT NOT NULL
     )
-  `);
-  db.run(`
+  `,
+  );
+  run(
+    db,
+    `
     CREATE TABLE todo (
       session_id TEXT,
       content TEXT,
@@ -52,11 +72,12 @@ function createSchema(db: Database): void {
       time_created INTEGER,
       time_updated INTEGER
     )
-  `);
+  `,
+  );
 }
 
 describe("OpencodeBackend — core", () => {
-  let db: Database;
+  let db: DB;
   let backend: OpencodeBackend;
 
   beforeEach(() => {
@@ -85,14 +106,15 @@ describe("OpencodeBackend — core", () => {
   test("scanProjects returns only active sessions (time_archived IS NULL, parent_id IS NULL)", async () => {
     const now = Date.now();
     const projId = "project-1";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "myproject",
       "/home/user/myproject",
     ]);
 
     // Active session
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_active",
@@ -104,7 +126,8 @@ describe("OpencodeBackend — core", () => {
       ],
     );
     // Stale session (time_updated 5 min ago)
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_stale",
@@ -116,7 +139,8 @@ describe("OpencodeBackend — core", () => {
       ],
     );
     // Archived session
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, time_archived, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
         "ses_archived",
@@ -129,7 +153,8 @@ describe("OpencodeBackend — core", () => {
       ],
     );
     // Sub-agent session (parent_id IS NOT NULL)
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
         "ses_child",
@@ -156,12 +181,13 @@ describe("OpencodeBackend — core", () => {
   test("scanProjects extracts project.name, session.directory as cwd, session.id", async () => {
     const now = Date.now();
     const projId = "proj-2";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "testproj",
       "/home/user/testproj",
     ]);
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_001",
@@ -190,11 +216,12 @@ describe("OpencodeBackend — core", () => {
   test("scanProjects falls back to basename(cwd) when project.name is null", async () => {
     const now = Date.now();
     const projId = "proj-noname";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, NULL, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, NULL, ?)", [
       projId,
       "/home/user/fallbackproj",
     ]);
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_noname",
@@ -215,19 +242,21 @@ describe("OpencodeBackend — core", () => {
   test("scanProjects returns only the latest session per directory", async () => {
     const now = Date.now();
     const projId = "proj-dedup";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "dedupproj",
       "/home/user/dedupproj",
     ]);
 
     // Newest session (now)
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       ["ses_new", "Newer", "/home/user/dedupproj", now - 60000, now, projId],
     );
     // Older session in same directory (60s ago)
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_old",
@@ -247,23 +276,26 @@ describe("OpencodeBackend — core", () => {
   test("scanProjects returns one session per directory when multiple directories exist", async () => {
     const now = Date.now();
     const projId = "proj-multidir";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "multidir",
       "/home/user/multidir",
     ]);
 
     // Dir A: two sessions, newest = ses_a2
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       ["ses_a1", "A1", "/home/user/dir-a", now - 120000, now - 60000, projId],
     );
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       ["ses_a2", "A2", "/home/user/dir-a", now - 60000, now, projId],
     );
     // Dir B: one session
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       ["ses_b", "B", "/home/user/dir-b", now - 60000, now - 30000, projId],
     );
@@ -279,12 +311,13 @@ describe("OpencodeBackend — core", () => {
   test("resolveState returns running when time_updated < 30s ago", async () => {
     const now = Date.now();
     const projId = "proj-state";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "stateproj",
       "/home/user/stateproj",
     ]);
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       ["ses_run", "Running", "/home/user/stateproj", now - 60000, now, projId],
     );
@@ -297,12 +330,13 @@ describe("OpencodeBackend — core", () => {
   test("resolveState returns stopped when time_updated > 30s ago", async () => {
     const now = Date.now();
     const projId = "proj-stopped";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "oldproj",
       "/home/user/oldproj",
     ]);
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_stopped",
@@ -322,12 +356,13 @@ describe("OpencodeBackend — core", () => {
   test("buildProjectState assembles full ProjectState with source opencode", async () => {
     const now = Date.now();
     const projId = "proj-full";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "fullproj",
       "/home/user/fullproj",
     ]);
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_full",
@@ -355,12 +390,13 @@ describe("OpencodeBackend — core", () => {
   test("buildProjectState for stale session returns stopped", async () => {
     const now = Date.now();
     const projId = "proj-stale-full";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "staleproj",
       "/home/user/staleproj",
     ]);
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_stale_full",
@@ -379,7 +415,7 @@ describe("OpencodeBackend — core", () => {
 });
 
 describe("OpencodeBackend — enrichment", () => {
-  let db: Database;
+  let db: DB;
   let backend: OpencodeBackend;
 
   beforeEach(() => {
@@ -391,13 +427,14 @@ describe("OpencodeBackend — enrichment", () => {
   function setupSession(): string {
     const now = Date.now();
     const projId = "proj-enrich";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "enrichproj",
       "/home/user/enrichproj",
     ]);
     const sessionId = "ses_enrich";
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         sessionId,
@@ -422,7 +459,8 @@ describe("OpencodeBackend — enrichment", () => {
   test("extracts model from most recent assistant message data JSON", async () => {
     const sessionId = setupSession();
     const msgId = "msg-assistant";
-    db.run(
+    run(
+      db,
       "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
       [
         msgId,
@@ -448,7 +486,8 @@ describe("OpencodeBackend — enrichment", () => {
   test("extracts latestUserActivity from most recent user message parts", async () => {
     const sessionId = setupSession();
     const msgId = "msg-user";
-    db.run(
+    run(
+      db,
       "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
       [
         msgId,
@@ -458,7 +497,8 @@ describe("OpencodeBackend — enrichment", () => {
         makeMsgData({ role: "user" }),
       ],
     );
-    db.run(
+    run(
+      db,
       "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "part-text",
@@ -482,7 +522,8 @@ describe("OpencodeBackend — enrichment", () => {
   test("extracts latestAssistantActivity from most recent assistant parts (tool via 'tool' field)", async () => {
     const sessionId = setupSession();
     const msgId = "msg-asst";
-    db.run(
+    run(
+      db,
       "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
       [
         msgId,
@@ -492,7 +533,8 @@ describe("OpencodeBackend — enrichment", () => {
         makeMsgData({ role: "assistant", modelID: "claude-haiku" }),
       ],
     );
-    db.run(
+    run(
+      db,
       "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "part-text",
@@ -503,7 +545,8 @@ describe("OpencodeBackend — enrichment", () => {
         makePartData({ type: "text", text: "The current weather is sunny." }),
       ],
     );
-    db.run(
+    run(
+      db,
       "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "part-tool",
@@ -545,7 +588,8 @@ describe("OpencodeBackend — enrichment", () => {
 
   test("handles corrupt/unparseable JSON in data column gracefully", async () => {
     const sessionId = setupSession();
-    db.run(
+    run(
+      db,
       "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
       [
         "msg-bad",
@@ -565,7 +609,8 @@ describe("OpencodeBackend — enrichment", () => {
   test("buildProjectState includes enrichment fields", async () => {
     const sessionId = setupSession();
     const msgId = "msg-asst-full";
-    db.run(
+    run(
+      db,
       "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
       [
         msgId,
@@ -592,7 +637,8 @@ describe("OpencodeBackend — enrichment", () => {
   test("extract model and tokens using cache.read + input for cumulative input tokens", async () => {
     const sessionId = setupSession();
     const msgId = "msg-cached";
-    db.run(
+    run(
+      db,
       "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
       [
         msgId,
@@ -617,7 +663,7 @@ describe("OpencodeBackend — enrichment", () => {
 });
 
 describe("OpencodeBackend — sub-agents", () => {
-  let db: Database;
+  let db: DB;
   let backend: OpencodeBackend;
 
   beforeEach(() => {
@@ -629,13 +675,14 @@ describe("OpencodeBackend — sub-agents", () => {
   function setupParent(): string {
     const now = Date.now();
     const projId = "proj-parent";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "parentproj",
       "/home/user/parentproj",
     ]);
     const sessionId = "ses_parent";
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [sessionId, "Parent", "/home/user/parentproj", now - 120000, now, projId],
     );
@@ -647,7 +694,8 @@ describe("OpencodeBackend — sub-agents", () => {
     const parentId = setupParent();
 
     // Active child (time_updated = now → isActive = true)
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
         "ses_child_active",
@@ -660,7 +708,8 @@ describe("OpencodeBackend — sub-agents", () => {
       ],
     );
     // Stale child (time_updated = 20s ago → isActive = false, but within 30s expiry)
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
         "ses_child_stale",
@@ -689,7 +738,8 @@ describe("OpencodeBackend — sub-agents", () => {
     const created = now - 30000;
     const updated = now;
 
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
         "ses_child_ts",
@@ -716,7 +766,8 @@ describe("OpencodeBackend — sub-agents", () => {
     const parentId = setupParent();
 
     // Very old child (>30s, not active → should be excluded)
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
         "ses_child_expired",
@@ -741,7 +792,8 @@ describe("OpencodeBackend — sub-agents", () => {
     const now = Date.now();
     const parentId = setupParent();
 
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
         "ses_child_build",
@@ -766,12 +818,13 @@ describe("OpencodeBackend — sub-agents", () => {
     const now = Date.now();
     const parentId = setupParent();
 
-    db.run("UPDATE session SET time_updated = ? WHERE id = ?", [
+    run(db, "UPDATE session SET time_updated = ? WHERE id = ?", [
       now - 60000,
       parentId,
     ]);
 
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
         "ses_child_active_state",
@@ -793,12 +846,13 @@ describe("OpencodeBackend — sub-agents", () => {
     const now = Date.now();
     const parentId = setupParent();
 
-    db.run("UPDATE session SET time_updated = ? WHERE id = ?", [
+    run(db, "UPDATE session SET time_updated = ? WHERE id = ?", [
       now - 60000,
       parentId,
     ]);
 
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
         "ses_child_stale_state",
@@ -819,12 +873,13 @@ describe("OpencodeBackend — sub-agents", () => {
   test("resolveState returns running via parent activity (regression guard)", async () => {
     const now = Date.now();
     const projId = "proj-regression";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "regressionproj",
       "/home/user/regressionproj",
     ]);
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_regression",
@@ -844,12 +899,13 @@ describe("OpencodeBackend — sub-agents", () => {
   test("resolveState returns stopped for stale parent with no children (regression guard)", async () => {
     const now = Date.now();
     const projId = "proj-nochild";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "nochildproj",
       "/home/user/nochildproj",
     ]);
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_nochild",
@@ -870,13 +926,14 @@ describe("OpencodeBackend — sub-agents", () => {
     const now = Date.now();
     const parentId = setupParent();
 
-    db.run("UPDATE session SET time_updated = ? WHERE id = ?", [
+    run(db, "UPDATE session SET time_updated = ? WHERE id = ?", [
       now - 60000,
       parentId,
     ]);
 
     // Child session without parent_id — simulates missing linkage
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_unlinked_child",
@@ -897,13 +954,14 @@ describe("OpencodeBackend — sub-agents", () => {
     const now = Date.now();
     const parentId = setupParent();
 
-    db.run("UPDATE session SET time_updated = ? WHERE id = ?", [
+    run(db, "UPDATE session SET time_updated = ? WHERE id = ?", [
       now - 120000,
       parentId,
     ]);
 
     // Stale unlinked session in same directory — should be ignored
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_stale_unlinked",
@@ -925,13 +983,14 @@ describe("OpencodeBackend — sub-agents", () => {
     const parentId = setupParent();
 
     const parentUpdated = now - 60000;
-    db.run("UPDATE session SET time_updated = ? WHERE id = ?", [
+    run(db, "UPDATE session SET time_updated = ? WHERE id = ?", [
       parentUpdated,
       parentId,
     ]);
 
     const childUpdated = now - 10000;
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
         "ses_child_lastupdated",
@@ -955,7 +1014,8 @@ describe("OpencodeBackend — sub-agents", () => {
 
     const parentUpdated = now;
 
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
         "ses_child_old_lastupdated",
@@ -975,7 +1035,7 @@ describe("OpencodeBackend — sub-agents", () => {
 });
 
 describe("OpencodeBackend — polling", () => {
-  let db: Database;
+  let db: DB;
   let backend: OpencodeBackend;
 
   beforeEach(() => {
@@ -987,12 +1047,13 @@ describe("OpencodeBackend — polling", () => {
   test("polls MAX(time_updated) and fires onUpdate when changed", async () => {
     const now = Date.now();
     const projId = "proj-poll";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "pollproj",
       "/home/user/pollproj",
     ]);
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_poll",
@@ -1010,11 +1071,12 @@ describe("OpencodeBackend — polling", () => {
     });
 
     // Wait for initial poll cycle
-    await Bun.sleep(150);
+    await new Promise((r) => setTimeout(r, 150));
 
     // Insert with a newer timestamp so MAX changes
     const newer = Date.now();
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_poll2",
@@ -1026,7 +1088,7 @@ describe("OpencodeBackend — polling", () => {
       ],
     );
 
-    await Bun.sleep(150);
+    await new Promise((r) => setTimeout(r, 150));
     stop();
 
     expect(calls.length).toBeGreaterThan(0);
@@ -1035,12 +1097,13 @@ describe("OpencodeBackend — polling", () => {
   test("fires onUpdate on every poll tick, even without data changes", async () => {
     const now = Date.now();
     const projId = "proj-unchanged";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "unchangedproj",
       "/home/user/unchangedproj",
     ]);
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_unchanged",
@@ -1058,7 +1121,7 @@ describe("OpencodeBackend — polling", () => {
     });
 
     // Wait several poll cycles (> 2) without any DB changes
-    await Bun.sleep(200);
+    await new Promise((r) => setTimeout(r, 200));
     stop();
 
     // Should fire multiple times — every poll tick triggers onUpdate
@@ -1068,12 +1131,13 @@ describe("OpencodeBackend — polling", () => {
   test("stop() prevents further callbacks", async () => {
     const now = Date.now();
     const projId = "proj-stop";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "stopproj",
       "/home/user/stopproj",
     ]);
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       ["ses_stop", "Stop Session", "/home/user/stopproj", now, now, projId],
     );
@@ -1083,13 +1147,13 @@ describe("OpencodeBackend — polling", () => {
       calls.push(Date.now());
     });
 
-    await Bun.sleep(100);
+    await new Promise((r) => setTimeout(r, 100));
     stop();
 
     const countAfterStop = calls.length;
 
     // Wait more — no additional calls should fire after stop
-    await Bun.sleep(100);
+    await new Promise((r) => setTimeout(r, 100));
 
     expect(calls.length).toBe(countAfterStop);
   }, 3000);
@@ -1097,12 +1161,13 @@ describe("OpencodeBackend — polling", () => {
   test("polling starts immediately on first call", async () => {
     const now = Date.now();
     const projId = "proj-immediate";
-    db.run("INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       projId,
       "immediateproj",
       "/home/user/immediateproj",
     ]);
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_immediate",
@@ -1120,9 +1185,10 @@ describe("OpencodeBackend — polling", () => {
     });
 
     // Insert with newer timestamp
-    await Bun.sleep(70);
+    await new Promise((r) => setTimeout(r, 70));
     const newer = Date.now();
-    db.run(
+    run(
+      db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
         "ses_immediate2",
@@ -1135,7 +1201,7 @@ describe("OpencodeBackend — polling", () => {
     );
 
     // Should fire quickly (50ms poll interval)
-    await Bun.sleep(100);
+    await new Promise((r) => setTimeout(r, 100));
     stop();
 
     expect(calls.length).toBeGreaterThan(0);

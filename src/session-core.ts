@@ -1,3 +1,4 @@
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 // Staleness window for waiting_for_permission signals.
@@ -115,13 +116,13 @@ export async function readStatusLog(
   let raw: string | null = null;
   let slicedMidFile = false;
   try {
-    const file = Bun.file(logPath);
-    const size = file.size;
+    const s = statSync(logPath);
+    const size = s.size;
     if (size > STATUS_LOG_TAIL_BYTES) {
-      raw = await file.slice(-STATUS_LOG_TAIL_BYTES).text();
+      raw = readFileSync(logPath, "utf-8").slice(-STATUS_LOG_TAIL_BYTES);
       slicedMidFile = true;
     } else {
-      raw = await file.text();
+      raw = readFileSync(logPath, "utf-8");
     }
   } catch {
     // .jsonl absent — try legacy .json fallback
@@ -134,7 +135,7 @@ export async function readStatusLog(
   // Migration fallback: read legacy ccmon-status.json and convert.
   const legacyPath = join(projectDir, STATUS_FILE_LEGACY);
   try {
-    const legacyRaw = await Bun.file(legacyPath).text();
+    const legacyRaw = readFileSync(legacyPath, "utf-8");
     const parsed = JSON.parse(legacyRaw);
     if (isStatusFileLegacy(parsed)) {
       const event: StatusEvent = {
