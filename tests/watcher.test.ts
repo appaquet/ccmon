@@ -100,10 +100,10 @@ describe("watchForChanges", () => {
 
     await new Promise((r) => setTimeout(r, 50)); // Let watcher settle
 
-    // Rapid writes within the debounce window (simulates Claude's frequent JSONL writes)
-    for (let i = 0; i < 5; i++) {
-      await writeFile(statusFile, makeStatusPayload());
-    }
+    // Fire all writes concurrently to hit within the 100ms debounce window
+    await Promise.all(
+      Array.from({ length: 5 }, () => writeFile(statusFile, makeStatusPayload())),
+    );
 
     await new Promise((r) => setTimeout(r, 300)); // Wait for debounce window + propagation
 
