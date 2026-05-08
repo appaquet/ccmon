@@ -55,7 +55,21 @@ export function createBackends(config: CcmonConfig): {
           );
           continue;
         }
-        backends.push(new OpencodeBackend(db, entry.pollIntervalMs ?? 5000));
+        const statusLogPath =
+          entry.statusLogPath ??
+          join(
+            process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"),
+            "ccmon",
+            "opencode-status.jsonl",
+          );
+        backends.push(
+          new OpencodeBackend(
+            db,
+            entry.pollIntervalMs ?? 5000,
+            statusLogPath,
+            entry.statusPollIntervalMs ?? 30000,
+          ),
+        );
         dbs.push(db);
         break;
       }

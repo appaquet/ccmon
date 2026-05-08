@@ -44,6 +44,20 @@ inputs.ccmon.url = "github:appaquet/ccmon";
 inputs.ccmon.packages.${system}.default
 ```
 
+### OpenCode Plugin (optional)
+
+For near-instant OpenCode status detection, install the plugin:
+
+```bash
+# Manual install — copy file to plugins directory
+cp resources/opencode-plugin/ccmon.ts ~/.config/opencode/plugins/ccmon.ts
+
+# Via Nix packages (home-manager example):
+home.file.".config/opencode/plugins/ccmon.ts".source = "${pkgs.ccmon.opencode-plugin}/ccmon.ts";
+```
+
+Without the plugin, OpenCode sessions are detected via SQLite polling (5s interval, `running`/`stopped` only).
+
 ### Hook Configuration
 
 Configure Claude Code hooks in `~/.claude/settings.json` (or project-level `.claude/settings.json`).

@@ -6,6 +6,16 @@ Claude Code Monitor — monitors Claude Code sessions. All timestamps are ISO 86
 
 - `npm install` — install dependencies
 
+### OpenCode plugin (optional)
+
+For near-instant state detection (sub-100ms latency), install the OpenCode plugin:
+
+```bash
+cp resources/opencode-plugin/ccmon.ts ~/.config/opencode/plugins/ccmon.ts
+```
+
+The plugin auto-discovers on next OpenCode start — no additional configuration needed. Without the plugin, ccmon gracefully falls back to timestamp inference from SQLite polling.
+
 ## Commands
 
 ### dump
@@ -99,7 +109,8 @@ ccmon supports monitoring multiple session sources simultaneously through a **Se
       "type": "opencode",
       "enabled": true,
       "databasePath": "/custom/opencode.db",
-      "pollIntervalMs": 10000
+      "pollIntervalMs": 10000,
+      "statusLogPath": "/custom/opencode-status.jsonl"
     }
   ]
 }
@@ -107,11 +118,21 @@ ccmon supports monitoring multiple session sources simultaneously through a **Se
 
 When no `backends` field is present, ccmon defaults to `[{ type: "claude", enabled: true }, { type: "opencode", enabled: true }]`
 
+### OpenCode plugin status log
+
+When the plugin is installed, session lifecycle events are written to `~/.local/state/ccmon/opencode-status.jsonl`:
+
+- NDJSON format, one `StatusEvent` per line
+- Each line: `{ session_id, working_dir, state, timestamp, event }`
+- States: `running`, `stopped`, `waiting_for_permission`, `error`, `closed`
+- Written on OpenCode lifecycle events: `session.idle` → `stopped`, `chat.message` (user role) + `tool.execute.after` → `running`, `permission.ask` → `waiting_for_permission`, `session.error` → `error`, `session.deleted` → `closed`, `session.created` → `running`
+
+`OpencodeBackend` uses the status log as its primary state source, watching it via `fs.watch` for sub-100ms updates. Falls back to SQLite timestamp inference when the log is absent or has no events for a session. The status log path is configurable via `statusLogPath` in the backend config entry.
+
 ### OpenCode limitations
 
-- **No hook support**: OpenCode's plugin system does not support CLI hook scripts. State is inferred from session timestamp recency rather than explicit hook events.
-- **Polling-based**: Changes are detected by polling `MAX(time_updated)` on the session table (default 5s interval). This is adequate for a monitoring dashboard but introduces a latency window not present with Claude Code's `fs.watch` approach.
-- **State inference**: Only `running` (session updated within last 60s) and `stopped` are supported. `waiting_for_permission` and `error` states are not detected.
+- **Polling-based**: Without the plugin, changes are detected by polling `MAX(time_updated)` on the session table (default 5s interval). With the plugin installed, `fs.watch` on the status log provides sub-100ms latency.
+- **State inference**: Without the plugin, only `running` (session updated within last 60s) and `stopped` are inferred from timestamps. The plugin enables all 5 states: `running`, `stopped`, `waiting_for_permission`, `error`, `closed`.
 - **Read-only**: ccmon opens the OpenCode database in read-only mode (`{ readonly: true }`). No data is written to the database.
 - **No enrichment parity**: OpenCode enrichment extracts model, tokens, user/assistant messages, and session name only. Task tracking (TaskCreate/TaskUpdate equivalents) is not yet implemented for OpenCode.
 

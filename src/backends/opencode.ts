@@ -1,11 +1,16 @@
-import { basename } from "node:path";
+import type { FSWatcher } from "node:fs";
+import { existsSync, readFileSync, statSync, watch } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import type Database from "better-sqlite3";
-import type {
-  ProjectInfo,
-  ProjectState,
-  SessionEnrichment,
-  SessionState,
-  SubagentInfo,
+import {
+  isStatusEvent,
+  type ProjectInfo,
+  type ProjectState,
+  type SessionEnrichment,
+  type SessionState,
+  type StatusEvent,
+  type SubagentInfo,
 } from "../sessions";
 import type { SessionBackend } from "./types";
 
@@ -13,13 +18,24 @@ const OPENCODE_ACTIVE_THRESHOLD_MS = 30_000;
 const SUBAGENT_ACTIVE_THRESHOLD_MS = 15_000;
 const SUBAGENT_EXPIRY_MS = 30_000;
 const DEFAULT_POLL_INTERVAL_MS = 5000;
+const DEFAULT_STATUS_POLL_INTERVAL_MS = 30_000;
+
+function resolveDefaultStatusLogPath(): string {
+  const stateHome =
+    process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
+  return join(stateHome, "ccmon", "opencode-status.jsonl");
+}
 
 export class OpencodeBackend implements SessionBackend {
   private pollIntervalMs: number;
+  private lastStatusLogMtime: number | null = null;
+  private statusLogEvents: StatusEvent[] | null = null;
 
   constructor(
     private db: InstanceType<typeof Database>,
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+    private statusLogPath = resolveDefaultStatusLogPath(),
+    private statusPollIntervalMs = DEFAULT_STATUS_POLL_INTERVAL_MS,
   ) {
     this.pollIntervalMs = pollIntervalMs;
   }
@@ -96,6 +112,22 @@ export class OpencodeBackend implements SessionBackend {
   }
 
   async resolveState(projectInfo: ProjectInfo): Promise<SessionState> {
+    const statusEvent = this.resolveStateFromStatusLog(projectInfo.sessionId);
+    if (statusEvent) {
+      switch (statusEvent.state) {
+        case "running":
+          return "running";
+        case "stopped":
+          return "stopped";
+        case "waiting_for_permission":
+          return "waiting_for_permission";
+        case "error":
+          return "error";
+        case "closed":
+          return "stopped";
+      }
+    }
+
     const row = this.db
       .prepare(
         `SELECT time_updated, time_archived, directory FROM session WHERE id = ?`,
@@ -342,6 +374,44 @@ export class OpencodeBackend implements SessionBackend {
     }
   }
 
+  private resolveStateFromStatusLog(sessionId: string): StatusEvent | null {
+    try {
+      const s = statSync(this.statusLogPath);
+      if (
+        this.lastStatusLogMtime === null ||
+        s.mtimeMs !== this.lastStatusLogMtime
+      ) {
+        const raw = readFileSync(this.statusLogPath, "utf-8");
+        const lines = raw.split("\n").filter((l) => l.trim() !== "");
+        const events: StatusEvent[] = [];
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line);
+            if (isStatusEvent(parsed)) {
+              events.push(parsed);
+            }
+          } catch {
+            // skip corrupt lines
+          }
+        }
+        this.statusLogEvents = events;
+        this.lastStatusLogMtime = s.mtimeMs;
+      }
+    } catch {
+      this.lastStatusLogMtime = null;
+      this.statusLogEvents = null;
+      return null;
+    }
+
+    const matching = (this.statusLogEvents ?? []).filter(
+      (e) => e.session_id === sessionId,
+    );
+    if (matching.length === 0) return null;
+
+    matching.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    return matching[matching.length - 1];
+  }
+
   async getSubagents(projectInfo: ProjectInfo): Promise<SubagentInfo[]> {
     const rows = this.db
       .prepare(
@@ -379,16 +449,84 @@ export class OpencodeBackend implements SessionBackend {
     stop: () => void;
   } {
     let stopped = false;
+    let statusWatcher: FSWatcher | null = null;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    const statusLogPath = this.statusLogPath;
+    const pollIntervalMs = this.pollIntervalMs;
+    const statusPollIntervalMs = this.statusPollIntervalMs;
 
-    const timer = setInterval(() => {
+    function startPolling(interval: number): void {
+      pollTimer = setInterval(() => {
+        if (stopped) return;
+        onUpdate();
+      }, interval);
+    }
+
+    function startStatusWatcher(): void {
       if (stopped) return;
-      onUpdate();
-    }, this.pollIntervalMs);
+      const statusDir = dirname(statusLogPath);
+      try {
+        statusWatcher = watch(statusDir, (_event, filename) => {
+          if (stopped || filename !== basename(statusLogPath)) return;
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            if (stopped) return;
+            if (existsSync(statusLogPath)) {
+              onUpdate();
+            } else {
+              if (statusWatcher) {
+                try {
+                  statusWatcher.close();
+                } catch {
+                  // ignore
+                }
+                statusWatcher = null;
+              }
+              if (pollTimer) clearInterval(pollTimer);
+              startPolling(pollIntervalMs);
+            }
+          }, 200);
+        });
+        statusWatcher.on("error", () => {
+          if (statusWatcher) {
+            try {
+              statusWatcher.close();
+            } catch {
+              // ignore
+            }
+            statusWatcher = null;
+          }
+          if (!stopped) {
+            if (pollTimer) clearInterval(pollTimer);
+            startPolling(pollIntervalMs);
+          }
+        });
+      } catch {
+        // directory doesn't exist — polling only
+      }
+    }
+
+    const fileExists = existsSync(statusLogPath);
+    if (fileExists) {
+      startStatusWatcher();
+      startPolling(statusPollIntervalMs);
+    } else {
+      startPolling(pollIntervalMs);
+    }
 
     return {
       stop: () => {
         stopped = true;
-        clearInterval(timer);
+        if (pollTimer) clearInterval(pollTimer);
+        if (debounceTimer) clearTimeout(debounceTimer);
+        if (statusWatcher) {
+          try {
+            statusWatcher.close();
+          } catch {
+            // ignore
+          }
+        }
       },
     };
   }

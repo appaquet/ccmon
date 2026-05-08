@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import Database from "better-sqlite3";
 import { beforeEach, describe, expect, test } from "vitest";
 import { OpencodeBackend } from "../../src/backends/opencode";
@@ -1206,4 +1209,223 @@ describe("OpencodeBackend — polling", () => {
 
     expect(calls.length).toBeGreaterThan(0);
   }, 3000);
+});
+
+describe("OpencodeBackend — status log", () => {
+  let db: DB;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    createSchema(db);
+    tmpDir = mkdtempSync(join(tmpdir(), "ccmon-opencode-status-"));
+  });
+
+  function makeStatusEvent(
+    sessionId: string,
+    state: string,
+    timestamp: string,
+  ): string {
+    return `${JSON.stringify({
+      event: "SessionStart",
+      state,
+      timestamp,
+      session_id: sessionId,
+      working_dir: "/tmp",
+    })}\n`;
+  }
+
+  function setupProject(
+    projId: string,
+    projName: string,
+    cwd: string,
+    sessionId: string,
+    timeUpdated: number,
+  ): void {
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+      projId,
+      projName,
+      cwd,
+    ]);
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        sessionId,
+        "Test Session",
+        cwd,
+        timeUpdated - 60000,
+        timeUpdated,
+        projId,
+      ],
+    );
+  }
+
+  test("status log state takes priority over timestamp inference", async () => {
+    const now = Date.now();
+    setupProject(
+      "proj-s1",
+      "statustest",
+      "/home/user/statustest",
+      "ses_s1",
+      now,
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    const t1 = new Date(now - 5000).toISOString();
+    const t2 = new Date(now - 3000).toISOString();
+    const t3 = new Date(now - 1000).toISOString();
+    writeFileSync(
+      statusPath,
+      makeStatusEvent("ses_s1", "waiting_for_permission", t1) +
+        makeStatusEvent("ses_s1", "running", t2) +
+        makeStatusEvent("ses_s1", "stopped", t3),
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    const state = await backend.resolveState(projects[0]);
+
+    expect(state).toBe("stopped");
+  });
+
+  test("falls back to timestamp when no matching events in status log", async () => {
+    const now = Date.now();
+    const oldTime = now - 120_000;
+    setupProject(
+      "proj-s2",
+      "fallbacktest",
+      "/home/user/fallbacktest",
+      "ses_s2",
+      oldTime,
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      makeStatusEvent("ses_other", "running", new Date(now).toISOString()),
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    const state = await backend.resolveState(projects[0]);
+
+    expect(state).toBe("stopped");
+  });
+
+  test("falls back to timestamp when status file does not exist", async () => {
+    const now = Date.now();
+    setupProject(
+      "proj-s3",
+      "nofiletest",
+      "/home/user/nofiletest",
+      "ses_s3",
+      now,
+    );
+
+    const statusPath = join(tmpDir, "nonexistent", "opencode-status.jsonl");
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    const state = await backend.resolveState(projects[0]);
+
+    expect(state).toBe("running");
+  });
+
+  test("skips corrupt JSON lines, uses valid lines", async () => {
+    const now = Date.now();
+    const oldTime = now - 120_000;
+    setupProject(
+      "proj-s4",
+      "corrupttest",
+      "/home/user/corrupttest",
+      "ses_s4",
+      oldTime,
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    const t = new Date(now - 1000).toISOString();
+    writeFileSync(
+      statusPath,
+      `not valid json at all\n${makeStatusEvent("ses_s4", "running", t)}`,
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    const state = await backend.resolveState(projects[0]);
+
+    expect(state).toBe("running");
+  });
+
+  test("status log state resolves error state from plugin", async () => {
+    const now = Date.now();
+    setupProject("proj-s5", "errortest", "/home/user/errortest", "ses_s5", now);
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    const t = new Date(now - 1000).toISOString();
+    writeFileSync(statusPath, makeStatusEvent("ses_s5", "error", t));
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    const state = await backend.resolveState(projects[0]);
+
+    expect(state).toBe("error");
+  });
+
+  test("status log state maps closed to stopped", async () => {
+    const now = Date.now();
+    setupProject(
+      "proj-s6",
+      "closedtest",
+      "/home/user/closedtest",
+      "ses_s6",
+      now,
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    const t = new Date(now - 1000).toISOString();
+    writeFileSync(statusPath, makeStatusEvent("ses_s6", "closed", t));
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    const state = await backend.resolveState(projects[0]);
+
+    expect(state).toBe("stopped");
+  });
+
+  test("default statusLogPath resolves to XDG_STATE_HOME/ccmon/opencode-status.jsonl", async () => {
+    const now = Date.now();
+    setupProject(
+      "proj-s7",
+      "configtest",
+      "/home/user/configtest",
+      "ses_s7",
+      now,
+    );
+
+    const stateDir = join(tmpDir, "custom-state");
+    mkdirSync(join(stateDir, "ccmon"), { recursive: true });
+
+    const statusPath = join(stateDir, "ccmon", "opencode-status.jsonl");
+    const t = new Date(now - 1000).toISOString();
+    writeFileSync(
+      statusPath,
+      makeStatusEvent("ses_s7", "waiting_for_permission", t),
+    );
+
+    const prevXdgState = process.env.XDG_STATE_HOME;
+    process.env.XDG_STATE_HOME = stateDir;
+    try {
+      const backend = new OpencodeBackend(db);
+      const projects = await backend.scanProjects();
+      const state = await backend.resolveState(projects[0]);
+
+      expect(state).toBe("waiting_for_permission");
+    } finally {
+      if (prevXdgState !== undefined) {
+        process.env.XDG_STATE_HOME = prevXdgState;
+      } else {
+        delete process.env.XDG_STATE_HOME;
+      }
+    }
+  });
 });

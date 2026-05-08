@@ -72,4 +72,6 @@ export type BackendConfigEntry =
       enabled: boolean;
       databasePath?: string;
       pollIntervalMs?: number;
+      statusLogPath?: string;
+      statusPollIntervalMs?: number;
     };
