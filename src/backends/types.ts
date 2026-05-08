@@ -56,6 +56,8 @@ export interface SessionBackend {
   projectKey(project: ProjectInfo): string;
 }
 
+export const BACKEND_TYPES = ["claude", "opencode"] as const;
+
 /** Discriminated union for backend configuration entries. */
 export type BackendConfigEntry =
   | {

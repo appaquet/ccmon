@@ -295,8 +295,10 @@ export function scanTaskCreateUpdate(
               existing.status = input.status;
             if (typeof input.subject === "string")
               existing.subject = input.subject;
-            if (typeof input.activeForm === "string")
-              existing.activeForm = input.activeForm;
+            existing.activeForm =
+              typeof input.activeForm === "string"
+                ? input.activeForm
+                : undefined;
           }
         }
       }

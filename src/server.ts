@@ -53,8 +53,9 @@ export function startServer(options: ServerOptions): {
       [...stateMap.values()],
       maxInactivityHours,
     );
-    disambiguateProjectNames(filtered);
-    return filtered;
+    const cloned = filtered.map((p) => ({ ...p }));
+    disambiguateProjectNames(cloned);
+    return cloned;
   }
 
   function broadcastCurrent(): void {
@@ -85,42 +86,25 @@ export function startServer(options: ServerOptions): {
     backendToKeys.set(backend, new Set(newStates.keys()));
   }
 
-  // REVIEW: architecture-reviewer - rescanAllBackends deletes ALL keys for a backend before
-  // building new state. If buildStateForBackend fails mid-scan (e.g., 3rd project fails),
-  // the first 2 projects' states are lost until the next rescan. This causes transient
-  // flicker in the dashboard. Instead, build new state into a temporary map, then atomically
-  // replace the backend's keys after the full scan succeeds.
-  //
-  // Additionally, CLOSED_PROJECT_TTL_MS filtering is inconsistently applied: filterStaleProjects
-  // handles closed projects, but only at read time. The stateMap accumulates closed projects
-  // indefinitely until the periodic rescan evicts them. Consider active garbage collection
-  // on closed project state entries after TTL expires.
   async function rescanAllBackends(): Promise<void> {
     for (const backend of backends) {
-      const keySet = backendToKeys.get(backend);
-      if (keySet) {
-        for (const key of keySet) {
-          stateMap.delete(key);
-          backendIndex.delete(key);
-        }
-        backendToKeys.delete(backend);
+      try {
+        await buildStateForBackend(backend);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`ccmon: rescan error for backend: ${msg}\n`);
       }
-      await buildStateForBackend(backend);
     }
     disambiguateProjectNames([...stateMap.values()]);
   }
 
   async function rescanBackend(backend: SessionBackend): Promise<void> {
-    const keySet = backendToKeys.get(backend);
-    if (keySet) {
-      for (const key of keySet) {
-        stateMap.delete(key);
-        backendIndex.delete(key);
-      }
-      backendToKeys.delete(backend);
+    try {
+      await buildStateForBackend(backend);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`ccmon: rescan error for backend: ${msg}\n`);
     }
-
-    await buildStateForBackend(backend);
     disambiguateProjectNames([...stateMap.values()]);
   }
 
@@ -200,22 +184,16 @@ export function startServer(options: ServerOptions): {
 
   let resolvedPort = port;
 
-  server.listen(port, hostname, () => {
-    const addr = server.address();
-    if (addr && typeof addr === "object") {
-      resolvedPort = addr.port;
-    }
-  });
+  server.listen(port, hostname);
 
   const ready = new Promise<void>((resolveReady) => {
-    const check = setInterval(() => {
+    server.once("listening", () => {
       const addr = server.address();
-      if (addr && typeof addr === "object" && addr.port > 0) {
+      if (addr && typeof addr === "object") {
         resolvedPort = addr.port;
-        clearInterval(check);
-        resolveReady();
       }
-    }, 1);
+      resolveReady();
+    });
   }).then(() =>
     rescanAllBackends()
       .then(() => broadcastCurrent())

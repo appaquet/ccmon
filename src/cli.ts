@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { createBackends } from "./backends";
 import { collectBackendStates } from "./backends/collect-states";
 import { loadConfig, mergeCliOverrides } from "./config";
 import {
+  DEFAULT_CLAUDE_DIR,
   disambiguateProjectNames,
   filterStaleProjects,
   scanProjects,
@@ -25,8 +25,7 @@ function exit(code: number): never {
   process.exit(code);
 }
 
-const claudeDir =
-  process.env.CLAUDE_PROJECTS_DIR ?? join(homedir(), ".claude", "projects");
+const claudeDir = process.env.CLAUDE_PROJECTS_DIR ?? DEFAULT_CLAUDE_DIR;
 
 const VERSION = "0.1.0";
 
@@ -97,7 +96,7 @@ if (subcommand === "dump") {
     port,
     host: host ?? undefined,
   });
-  const { backends, close } = createBackends(config);
+  const { backends, close } = createBackends(serveConfig);
   const { port: resolvedPort, stop } = startServer({
     port: serveConfig.port,
     hostname: serveConfig.host,

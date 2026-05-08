@@ -1444,7 +1444,7 @@ describe("OpencodeBackend — status log", () => {
     const projects = await backend.scanProjects();
     const state = await backend.resolveState(projects[0]);
 
-    expect(state).toBe("stopped");
+    expect(state).toBe("closed");
   });
 
   test("default statusLogPath resolves to XDG_STATE_HOME/ccmon/opencode-status.jsonl", async () => {

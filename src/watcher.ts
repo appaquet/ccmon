@@ -6,6 +6,7 @@ import { join } from "node:path";
 const DEBOUNCE_MS = 100;
 const BACKOFF_INITIAL_MS = 1000;
 const BACKOFF_MAX_MS = 30_000;
+const MAX_RETRIES = 10;
 
 function backoffDelay(attempts: number): number {
   return Math.min(BACKOFF_INITIAL_MS * 2 ** attempts, BACKOFF_MAX_MS);
@@ -60,6 +61,7 @@ export function watchForChanges(
 
         if (stopped) return;
         const attempt = restartAttempts.get(key) ?? 0;
+        if (attempt >= MAX_RETRIES) return;
         const delay = backoffDelay(attempt);
         console.error(
           `ccmon: watcher error for ${projectDir}, restarting in ${delay}ms (attempt ${attempt + 1})`,
@@ -108,6 +110,7 @@ export function watchForChanges(
 
         if (stopped) return;
         const attempt = restartAttempts.get(key) ?? 0;
+        if (attempt >= MAX_RETRIES) return;
         const delay = backoffDelay(attempt);
         console.error(
           `ccmon: watcher error for claudeDir, restarting in ${delay}ms (attempt ${attempt + 1})`,

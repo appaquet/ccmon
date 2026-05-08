@@ -1,18 +1,8 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { BackendConfigEntry } from "./backends/types";
+import { BACKEND_TYPES, type BackendConfigEntry } from "./backends/types";
 
-// REVIEW: architecture-reviewer - CcmonConfig mixes server config (host, port) with backend
-// discovery config (maxInactivityHours, backends[]). These serve different lifecycle scopes:
-// server config is relevant to `serve`, while backend config is relevant to all subcommands.
-// As more server config grows (TLS, CORS, rate limiting), this mixing will create coupling
-// between unrelated concerns. Consider splitting into ServerConfig and BackendConfig, then
-// composing them: CcmonConfig { server: ServerConfig, backends: BackendConfig }.
-//
-// Additionally, BackendConfigEntry is defined in backends/types.ts alongside the SessionBackend
-// interface. The config shape and the backend interface are distinct concerns — the config
-// entry is a serialization/deserialization concern, not a backend API contract.
 export interface CcmonConfig {
   maxInactivityHours: number;
   host: string;
@@ -82,6 +72,16 @@ function resolveConfigPath(): string {
   return join(base, "ccmon", "config.json");
 }
 
+function isValidBackendEntry(v: unknown): v is BackendConfigEntry {
+  if (typeof v !== "object" || v === null) return false;
+  const entry = v as Record<string, unknown>;
+  return (
+    typeof entry.type === "string" &&
+    (BACKEND_TYPES as readonly string[]).includes(entry.type) &&
+    typeof entry.enabled === "boolean"
+  );
+}
+
 // Accepts any non-null object; mergeWithDefaults does per-field type narrowing.
 function isCcmonConfig(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
@@ -100,7 +100,7 @@ function mergeWithDefaults(partial: Record<string, unknown>): CcmonConfig {
     host: typeof partial.host === "string" ? partial.host : DEFAULT_CONFIG.host,
     port: typeof partial.port === "number" ? partial.port : DEFAULT_CONFIG.port,
     backends: Array.isArray(partial.backends)
-      ? (partial.backends as BackendConfigEntry[])
+      ? partial.backends.filter(isValidBackendEntry)
       : DEFAULT_CONFIG.backends,
   };
 }

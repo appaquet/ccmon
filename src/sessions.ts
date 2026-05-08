@@ -1,5 +1,3 @@
-// Barrel re-exports: import from the source modules directly in new code.
-
 export {
   CLOSED_PROJECT_TTL_MS,
   DEFAULT_CLAUDE_DIR,

@@ -218,14 +218,28 @@ export function resolveState(
   }
 
   // Priority 4: JSONL mtime fallback.
+  // When the latest event is StopFailure and its timestamp is within JSONL_ACTIVE_THRESHOLD_MS,
+  // the fresh JSONL may just be from the failed run, not new activity. Skip to priority 4.5
+  // so the error state is surfaced. If the StopFailure is older than the threshold, fresh JSONL
+  // indicates legitimate activity after the failure → return running.
   if (
     jsonlMtimeMs !== null &&
     jsonlMtimeMs > Date.now() - JSONL_ACTIVE_THRESHOLD_MS
   ) {
-    return "running";
+    const latestEvent =
+      stateful.length > 0 ? stateful[stateful.length - 1] : null;
+    if (
+      latestEvent?.event === "StopFailure" &&
+      Date.now() - new Date(latestEvent.timestamp).getTime() <
+        JSONL_ACTIVE_THRESHOLD_MS
+    ) {
+      // Recent StopFailure — fall through to priority 4.5
+    } else {
+      return "running";
+    }
   }
 
-  // Priority 4.5: StopFailure → error (after JSONL mtime so a resumed session overrides it).
+  // Priority 4.5: StopFailure → error.
   if (
     stateful.length > 0 &&
     stateful[stateful.length - 1].event === "StopFailure"

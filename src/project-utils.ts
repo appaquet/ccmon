@@ -13,6 +13,11 @@ export const DEFAULT_CLAUDE_DIR = join(homedir(), ".claude", "projects");
 
 const JSONL_EXT = ".jsonl";
 
+/**
+ * Mutates projectName on each ProjectState in the array to disambiguate
+ * projects that share the same leaf directory name. Expands with parent
+ * path segments until unique within the array.
+ */
 export function disambiguateProjectNames(projects: ProjectState[]): void {
   const groups = new Map<string, ProjectState[]>();
   for (const p of projects) {

@@ -1,12 +1,3 @@
-// REVIEW: architecture-reviewer - Server tests only use ClaudeBackend (wrapped in NoWatchBackend).
-// There are no tests for multi-backend scenarios (Claude + OpenCode simultaneously) or for
-// the server's backend health isolation (i.e., one failing backend shouldn't drop projects
-// from the healthy backend). The integration.test.ts covers some cross-component scenarios
-// but at 208 lines it's insufficient for verifying the multi-backend server behavior.
-//
-// Add test cases: (1) two backends (Claude + OpenCode mock), verify state from both;
-// (2) one backend throws during scan, verify the other backend's projects survive;
-// (3) new backends appear/disappear via watcher callbacks don't corrupt state map.
 import { utimesSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";

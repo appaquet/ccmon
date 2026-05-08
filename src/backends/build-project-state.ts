@@ -18,18 +18,35 @@ export async function buildProjectState(
 
   const base: ProjectState = { ...projectInfo, state, lastUpdated };
 
-  const enrichment = await backend.enrichProject(projectInfo);
+  let enrichment: import("../session-enrichment").SessionEnrichment | undefined;
+  try {
+    enrichment = await backend.enrichProject(projectInfo);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `ccmon: enrichment failed for ${projectInfo.projectName}: ${msg}`,
+    );
+  }
 
-  const subagents =
-    state === "running" || state === "waiting_for_permission"
-      ? await backend.getSubagents(projectInfo)
-      : [];
-  const subagentCount = subagents.filter((s) => s.isActive).length;
+  let subagents: import("../types").SubagentInfo[] | undefined;
+  try {
+    const agents =
+      state === "running" || state === "waiting_for_permission"
+        ? await backend.getSubagents(projectInfo)
+        : [];
+    subagents = agents;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `ccmon: getSubagents failed for ${projectInfo.projectName}: ${msg}`,
+    );
+  }
+  const subagentCount = subagents?.filter((s) => s.isActive).length ?? 0;
 
   return {
     ...base,
-    ...enrichment,
-    subagents: subagents.length > 0 ? subagents : undefined,
+    ...(enrichment ?? {}),
+    subagents: subagents && subagents.length > 0 ? subagents : undefined,
     subagentCount: subagentCount > 0 ? subagentCount : undefined,
   };
 }

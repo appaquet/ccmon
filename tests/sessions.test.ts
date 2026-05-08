@@ -1,17 +1,3 @@
-// REVIEW: architecture-reviewer - This test file is 3617 lines and tests SessionStore,
-// scanProjects, status event writing, sub-agents, enrichment, filtering, disambiguation,
-// singleton wrappers, and hook event mapping — all from a single file. When the source
-// module splits are executed (see REVIEW in src/sessions.ts), split this file similarly:
-//
-//   tests/session-core.test.ts     — resolveState, readStatusLog, StatusEvent parsing
-//   tests/session-enrichment.test.ts — scanEnrichment, mergeEnrichment, scanTaskCreateUpdate
-//   tests/session-store.test.ts     — SessionStore (scanProjects, readSessionTail, caching)
-//   tests/status-writer.test.ts     — writeStatusEvent, writeStatusTruncate, writeSubagentStatus
-//   tests/project-utils.test.ts     — filterStaleProjects, disambiguateProjectNames
-//   tests/backends/claude.test.ts   — ClaudeBackend unit tests (currently untested)
-//
-// Additionally, the test suite has no ClaudeBackend-specific tests — all Claude testing
-// goes through SessionStore or the singleton wrappers. Add ClaudeBackend unit tests.
 import { utimesSync } from "node:fs";
 import {
   appendFile,
@@ -24,23 +10,28 @@ import {
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ClaudeBackend } from "../src/backends/claude";
-import type { StatusEvent } from "../src/sessions";
 import {
   CLOSED_PROJECT_TTL_MS,
   disambiguateProjectNames,
   filterStaleProjects,
   MAX_STATUS_LOG_BYTES,
-  mapHookEventToState,
+  scanProjects,
+} from "../src/project-utils";
+import type { SessionState, StatusEvent } from "../src/session-core";
+import {
   PERMISSION_RESOLVE_GAP_MS,
   readStatusLog,
   resolveState,
   STATUS_FILE_LEGACY,
   STATUS_LOG_FILE,
-  scanProjects,
+} from "../src/session-core";
+import {
+  mapHookEventToState,
   writeNotificationStatus,
   writeStatusEvent,
   writeStatusTruncate,
-} from "../src/sessions";
+} from "../src/status-writer";
+import type { ProjectState } from "../src/types";
 import { makeTempDir } from "./_helpers";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -571,9 +562,7 @@ describe("getProjectState", () => {
 // ─── filterStaleProjects NaN guard ───────────────────────────────────────────
 
 describe("filterStaleProjects NaN guard (R18)", () => {
-  function makeProject(
-    lastUpdated: string | null,
-  ): import("../src/sessions").ProjectState {
+  function makeProject(lastUpdated: string | null): ProjectState {
     return {
       projectDir: "dir",
       cwd: "/home/user/proj",
@@ -678,10 +667,10 @@ describe("writeStatusEvent", () => {
 
   test("safety cap: file trimmed when exceeding MAX_STATUS_LOG_BYTES", async () => {
     const logPath = join(tmpDir, STATUS_LOG_FILE);
-    // Write enough data to exceed 64KB
+    // Write enough data to exceed trim threshold (MAX_STATUS_LOG_BYTES + STATUS_LOG_TAIL_BYTES)
     const bigLine = JSON.stringify(makeEvent("PostToolUse", "running"));
     const linesNeeded =
-      Math.ceil(MAX_STATUS_LOG_BYTES / (bigLine.length + 1)) + 10;
+      Math.ceil((MAX_STATUS_LOG_BYTES + 8192) / (bigLine.length + 1)) + 10;
     let bulk = "";
     for (let i = 0; i < linesNeeded; i++) {
       bulk += `${bigLine}\n`;
@@ -904,9 +893,7 @@ describe("writeNotificationStatus (R26)", () => {
 // ─── filterStaleProjects ──────────────────────────────────────────────────────
 
 describe("filterStaleProjects", () => {
-  function makeProject(
-    lastUpdated: string | null,
-  ): import("../src/sessions").ProjectState {
+  function makeProject(lastUpdated: string | null): ProjectState {
     return {
       projectDir: "dir",
       cwd: "/home/user/proj",
@@ -3422,9 +3409,9 @@ describe("mapHookEventToState (R35 Bug 3)", () => {
 
 describe("closed state", () => {
   function makeProject(
-    state: import("../src/sessions").SessionState,
+    state: SessionState,
     lastUpdated: string | null,
-  ): import("../src/sessions").ProjectState {
+  ): ProjectState {
     return {
       projectDir: "dir",
       cwd: "/home/user/proj",
@@ -3472,7 +3459,7 @@ describe("closed state", () => {
 
 // ─── disambiguateProjectNames ─────────────────────────────────────────────────
 
-function makeProjectState(cwd: string): import("../src/sessions").ProjectState {
+function makeProjectState(cwd: string): ProjectState {
   return {
     projectDir: cwd.replace(/\//g, "-"),
     cwd,

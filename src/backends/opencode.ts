@@ -18,6 +18,14 @@ const SUBAGENT_EXPIRY_MS = 30_000;
 const DEFAULT_POLL_INTERVAL_MS = 5000;
 const DEFAULT_STATUS_POLL_INTERVAL_MS = 30_000;
 
+function statSyncTerse(p: string): number | null {
+  try {
+    return statSync(p).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 function resolveDefaultStatusLogPath(): string {
   const stateHome =
     process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
@@ -25,18 +33,15 @@ function resolveDefaultStatusLogPath(): string {
 }
 
 export class OpencodeBackend implements SessionBackend {
-  private pollIntervalMs: number;
   private lastStatusLogMtime: number | null = null;
   private statusLogEvents: StatusEvent[] | null = null;
 
   constructor(
     private db: DatabaseSync,
-    pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+    private pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
     private statusLogPath = resolveDefaultStatusLogPath(),
     private statusPollIntervalMs = DEFAULT_STATUS_POLL_INTERVAL_MS,
-  ) {
-    this.pollIntervalMs = pollIntervalMs;
-  }
+  ) {}
 
   async scanProjects(): Promise<ProjectInfo[]> {
     const rows = this.db
@@ -92,6 +97,7 @@ export class OpencodeBackend implements SessionBackend {
 
   async resolveState(projectInfo: ProjectInfo): Promise<SessionState> {
     const statusEvent = this.resolveStateFromStatusLog(projectInfo.sessionId);
+
     if (statusEvent) {
       switch (statusEvent.state) {
         case "running":
@@ -103,7 +109,7 @@ export class OpencodeBackend implements SessionBackend {
         case "error":
           return "error";
         case "closed":
-          return "stopped";
+          return "closed";
       }
     }
 
@@ -267,7 +273,7 @@ export class OpencodeBackend implements SessionBackend {
           enrichment.model = parsed.modelID;
         }
 
-        // Tokens — use most recent assistant's cumulative values
+        // Tokens — use most recent assistant's values.
         if (enrichment.inputTokens === undefined) {
           const tokens = parsed.tokens as Record<string, unknown> | undefined;
           if (tokens) {
@@ -279,7 +285,7 @@ export class OpencodeBackend implements SessionBackend {
             if (cacheRead > 0 || deltaInput > 0) {
               enrichment.inputTokens = cacheRead + deltaInput;
             }
-            if (deltaOutput > 0 || enrichment.outputTokens === undefined) {
+            if (deltaOutput > 0) {
               enrichment.outputTokens = deltaOutput;
             }
           }
@@ -459,9 +465,17 @@ export class OpencodeBackend implements SessionBackend {
     function startStatusWatcher(): void {
       if (stopped) return;
       const statusDir = dirname(statusLogPath);
+      const basenameLog = basename(statusLogPath);
+      let lastMtime = statSyncTerse(statusLogPath);
       try {
         statusWatcher = watch(statusDir, (_event, filename) => {
-          if (stopped || filename !== basename(statusLogPath)) return;
+          if (stopped) return;
+          if (filename !== null && filename !== basenameLog) return;
+          if (filename === null) {
+            const mtime = statSyncTerse(statusLogPath);
+            if (mtime === null || mtime === lastMtime) return;
+            lastMtime = mtime;
+          }
           if (debounceTimer) clearTimeout(debounceTimer);
           debounceTimer = setTimeout(() => {
             if (stopped) return;

@@ -20,8 +20,13 @@ export async function collectBackendStates(
     for (const info of projects) {
       try {
         const state = await buildProjectState(backend, info);
-        map.set(backend.projectKey(state), state);
-      } catch {}
+        map.set(backend.projectKey(info), state);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `ccmon: failed to build state for ${info.projectName}: ${msg}`,
+        );
+      }
     }
   }
   return map;

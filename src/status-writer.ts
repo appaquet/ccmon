@@ -7,6 +7,9 @@ import { readStatusLog, resolveState, STATUS_LOG_FILE } from "./session-core";
 
 const STATUS_LOG_TAIL_BYTES = 8 * 1024;
 
+// Prevents concurrent write+trim races on the same status log.
+const writeLocks = new Set<string>();
+
 /**
  * Maps a Claude hook event name to the corresponding SessionState.
  * Returns null for events that don't write state (Notification, unrecognized).
@@ -86,9 +89,12 @@ export async function writeStatusEvent(
   const logPath = join(projectDirPath, STATUS_LOG_FILE);
   await appendFile(logPath, `${JSON.stringify(event)}\n`);
 
+  if (writeLocks.has(logPath)) return;
+  writeLocks.add(logPath);
+
   try {
     const s = await stat(logPath);
-    if (s.size > MAX_STATUS_LOG_BYTES) {
+    if (s.size > MAX_STATUS_LOG_BYTES + STATUS_LOG_TAIL_BYTES) {
       let raw = readFileSync(logPath, "utf-8");
       if (raw.length > STATUS_LOG_TAIL_BYTES) {
         raw = raw.slice(-STATUS_LOG_TAIL_BYTES);
@@ -99,6 +105,8 @@ export async function writeStatusEvent(
     }
   } catch {
     // stat or trim failed — not critical, the append already succeeded.
+  } finally {
+    writeLocks.delete(logPath);
   }
 }
 
