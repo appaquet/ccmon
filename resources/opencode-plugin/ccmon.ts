@@ -177,13 +177,8 @@ export async function ccmonPlugin(context: PluginContext) {
         const sid = extractSessionId(ctx);
         if (!sid) return;
 
-        const parts = ctx.input?.parts;
-        if (!Array.isArray(parts)) return;
-
-        const isUserMessage = parts.some(
-          (p) => p.type === "text" && p.source?.type === "user",
-        );
-        if (!isUserMessage) return;
+        const msg = ctx.input as Record<string, unknown> | undefined;
+        if (msg?.role !== "user") return;
 
         const cwd = sessionCwdMap.get(sid) ?? directory;
         await writeStatus(sid, "running", "chat.message", cwd);

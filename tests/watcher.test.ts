@@ -102,7 +102,9 @@ describe("watchForChanges", () => {
 
     // Fire all writes concurrently to hit within the 100ms debounce window
     await Promise.all(
-      Array.from({ length: 5 }, () => writeFile(statusFile, makeStatusPayload())),
+      Array.from({ length: 5 }, () =>
+        writeFile(statusFile, makeStatusPayload()),
+      ),
     );
 
     await new Promise((r) => setTimeout(r, 300)); // Wait for debounce window + propagation
