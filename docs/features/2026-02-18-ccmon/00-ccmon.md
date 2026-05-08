@@ -17,14 +17,14 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 56 (OpenCode Plugin) complete. All tasks done, 280 tests pass, requirements accepted.
+Phase 56 (OpenCode Plugin) complete. All tasks done including new dual-mode test coverage. 291 tests pass, requirements accepted.
 
 1. Plugin file (`resources/opencode-plugin/ccmon.ts`): subscribes to `event` + `chat.message` + `tool.execute.after` + `permission.ask` hooks, maps to states, writes NDJSON to `~/.local/state/ccmon/opencode-status.jsonl`
 2. `OpencodeBackend.resolveStateFromStatusLog()`: reads NDJSON log, caches by mtime, returns latest event per session; integrated into `resolveState()` with priority over timestamp inference
 3. `watchForChanges()`: fs.watch on status log directory (200ms debounce), triggers onUpdate; dual polling (30s with watcher, 5s without)
 4. Config: `statusLogPath` + `statusPollIntervalMs` in BackendConfigEntry, defaults via XDG_STATE_HOME
-5. 7 new tests: priority, fallback, missing file, corrupt JSON, error state, closed→stopped, XDG_STATE_HOME default
-6. CLAUDE.md updated with plugin install, status log format, architecture notes
+5. 17 new tests: status log priority, fallback, missing file, corrupt JSON, error/closed state, XDG_STATE_HOME default, empty file, mtime cache invalidation, fs.watch + polling dual-mode (write triggers, debounce, fallback on delete, teardown, custom interval, integration with resolveState, sub-agent inactive override)
+6. CLAUDE.md trimmed from 183 to 57 lines for conciseness
 
 
 
@@ -650,7 +650,7 @@ Implement an OpenCode plugin that writes ccmon status events on session lifecycl
 - **docs/features/2026-02-18-ccmon/**: Project documentation
 - **docs/features/2026-02-18-ccmon/55-migrate-to-node.md**: Phase 55 plan — Bun → Node.js migration (Phase: Migrate to Node.js)
 - **docs/features/2026-02-18-ccmon/56-opencode-plugin.md**: Phase 56 plan — OpenCode plugin for hook-like status updates via event subscription + fs.watch (Phase: OpenCode Plugin)
-- **CLAUDE.md**: Development instructions; Node.js commands; integration check section; lint/typecheck command docs; sub --host flag doc; plugin installation docs (Phase: Session Detection, Packaging, Review Fixes, Linting Setup, StopFailure Hook, Migrate to Node.js, OpenCode Plugin)
+- **CLAUDE.md**: Development instructions; trimmed to 57 lines — commands table, architecture overview, key files (Phase: Session Detection, Packaging, Review Fixes, Linting Setup, StopFailure Hook, Migrate to Node.js, OpenCode Plugin, CLAUDE.md Trim)
 - **README.md**: Install guide, Node.js prerequisite, hook config, commands reference (Phase: Packaging, Migrate to Node.js)
 - **flake.nix**: Nix devShell + packages/apps outputs for ccmon; nodejs_22 wrapper (Phase: Session Detection, Packaging, Migrate to Node.js)
 - **.envrc**: direnv config — `use flake` (Phase: Session Detection)
@@ -686,7 +686,7 @@ Implement an OpenCode plugin that writes ccmon status events on session lifecycl
 - **src/backends/opencode.ts**: `OpencodeBackend` — better-sqlite3 session scanning, enrichment, sub-agents, polling; scanProjects deduplicates by directory; resolveState child activity check + fallback directory scan; status log reading (`resolveStateFromStatusLog`), fs.watch on status log directory, dual-mode polling (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix, OpenCode Sub-Agent Hardening, Migrate to Node.js, OpenCode Plugin)
 - **src/backends/types.ts**: Backend type definitions + `BackendConfigEntry`; added `statusLogPath` + `statusPollIntervalMs` to opencode variant (Phase: OpenCode Support, Migrate to Node.js, OpenCode Plugin)
 - **src/backends/index.ts**: Backend factory — creates ClaudeBackend + OpencodeBackend from config; better-sqlite3 setup; passes statusLogPath + statusPollIntervalMs to OpencodeBackend (Phase: OpenCode Support, Migrate to Node.js, OpenCode Plugin)
-- **tests/backends/opencode.test.ts**: OpenCode backend tests with in-memory better-sqlite3; plugin status log tests (7 new); vitest imports (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix, Migrate to Node.js, OpenCode Plugin)
+- **tests/backends/opencode.test.ts**: OpenCode backend tests with in-memory better-sqlite3; 53 tests total — 39 polling, 7 status log resolution, 7 dual-mode fs.watch+polling (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix, Migrate to Node.js, OpenCode Plugin, OpenCode Plugin Dual-Mode Tests)
 - **tests/integration.test.ts**: 4 integration tests verifying both backends coexist; better-sqlite3 type (Phase: OpenCode Support, Migrate to Node.js)
 - **docs/features/2026-02-18-ccmon/45-review-fixes.md**: Phase 45 plan — 18 REVIEW comment fixes (3 release-blocking, 5 high, 5 medium, 5 low) across 8 files (Phase: Review Fixes)
 - **resources/opencode-plugin/ccmon.ts**: OpenCode plugin — event subscription + status NDJSON writing (Phase: OpenCode Plugin)

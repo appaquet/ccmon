@@ -140,6 +140,7 @@ OpenCode Process          ccmon Process
   - AC: When status file doesn't exist → full polling mode (existing behavior, 5s interval)
   - AC: `stop()` tears down both watcher and polling interval
   - AC: Existing polling tests still pass (polling is now the fallback timer, not the primary watcher)
+  - AC: Dual-mode (fs.watch + polling) tested: status file write triggers onUpdate, 200ms debounce coalesces writes, fallback to polling-only on file delete, stop() tears down both, custom statusPollIntervalMs respected
 
 ### Task 4: Config for status log path
 
@@ -178,8 +179,8 @@ OpenCode Process          ccmon Process
 - **src/backends/opencode.ts**: `OpencodeBackend` — add status log reading (`resolveStateFromStatusLog`), integrate into `resolveState`, add fs.watch to `watchForChanges` (modified)
 - **src/backends/types.ts**: `BackendConfigEntry` — add optional `statusLogPath` to opencode variant (modified)
 - **src/config.ts**: Config types — add `statusLogPath` parsing (modified)
-- **tests/backends/opencode.test.ts**: Tests for status log reading, fallback, watcher integration (modified)
-- **CLAUDE.md**: Plugin installation docs + architecture notes (modified)
+- **tests/backends/opencode.test.ts**: Tests for status log reading, fallback, watcher integration. +10 dual-mode tests (fs.watch + polling interaction) added to cover previously uncovered code paths. (modified)
+- **CLAUDE.md**: Plugin installation docs + architecture notes; trimmed from 183 to 57 lines for conciseness (modified)
 
 ## Testing Strategy
 
@@ -189,6 +190,6 @@ OpenCode Process          ccmon Process
 
 3. **Backend fs.watch**: Mock `fs.watch` via vitest, verify callback fires. Test fallback to polling when status file absent.
 
-4. **Integration**: Test SQLite DB with plugin status file — verify `buildProjectState()` uses plugin state. Test graceful fallback when status file deleted.
+4. **Dual-mode (fs.watch + polling)**: Real `fs.watch` on temp directory with status file. Tests cover: write triggers onUpdate, 200ms debounce coalesces rapid writes, fallback to polling-only on file delete, stop() teardown, custom statusPollIntervalMs, resolveState integration after watchForChanges, sub-agent inactive detection via status log after watchForChanges.
 
-5. **Negative tests**: Corrupt JSON in status file (skip line), empty status file (return null → fallback), status file removed mid-watch (revert to polling).
+5. **Negative tests**: Corrupt JSON in status file (skip line), empty status file (return null → fallback), status file removed mid-watch (revert to polling), mtime cache invalidation on file update.

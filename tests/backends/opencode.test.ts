@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -1476,4 +1482,331 @@ describe("OpencodeBackend — status log", () => {
       }
     }
   });
+
+  test("empty status log file falls back to timestamp inference", async () => {
+    const now = Date.now();
+    setupProject("proj-s8", "emptytest", "/home/user/emptytest", "ses_s8", now);
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(statusPath, "");
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    const state = await backend.resolveState(projects[0]);
+
+    expect(state).toBe("running");
+  });
+
+  test("cache is invalidated when status file mtime changes", async () => {
+    const now = Date.now();
+    const oldTime = now - 120_000;
+    setupProject(
+      "proj-s9",
+      "cachetest",
+      "/home/user/cachetest",
+      "ses_s9",
+      oldTime,
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    const t1 = new Date(now - 5000).toISOString();
+    writeFileSync(statusPath, makeStatusEvent("ses_s9", "running", t1));
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    const state1 = await backend.resolveState(projects[0]);
+    expect(state1).toBe("running");
+
+    // Small delay ensures mtime changes between writes
+    await new Promise((r) => setTimeout(r, 10));
+
+    const t2 = new Date(now - 1000).toISOString();
+    writeFileSync(
+      statusPath,
+      makeStatusEvent("ses_s9", "running", t1) +
+        makeStatusEvent("ses_s9", "stopped", t2),
+    );
+
+    const state2 = await backend.resolveState(projects[0]);
+    expect(state2).toBe("stopped");
+  });
+});
+
+describe("OpencodeBackend — watchForChanges dual-mode (status log exists)", () => {
+  let db: DB;
+  let tmpDir: string;
+  let statusPath: string;
+
+  beforeEach(() => {
+    db = new DatabaseSync(":memory:");
+    createSchema(db);
+    tmpDir = mkdtempSync(join(tmpdir(), "ccmon-dual-mode-"));
+    statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(statusPath, "");
+  });
+
+  function makeStatusEvent(
+    sessionId: string,
+    state: string,
+    timestamp: string,
+  ): string {
+    return `${JSON.stringify({
+      event: "chat.message",
+      state,
+      timestamp,
+      session_id: sessionId,
+      working_dir: "/tmp",
+    })}\n`;
+  }
+
+  test("fs.watch fires onUpdate after status file is modified", async () => {
+    const backend = new OpencodeBackend(db, 5000, statusPath, 50);
+
+    const calls: number[] = [];
+    const { stop } = backend.watchForChanges(() => {
+      calls.push(Date.now());
+    });
+
+    // Let initial setup settle (no calls expected during setup)
+    await new Promise((r) => setTimeout(r, 100));
+    const beforeWrite = calls.length;
+
+    // Write to status file → fs.watch fires → debounce → onUpdate
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        "ses_dual",
+        "running",
+        new Date(Date.now()).toISOString(),
+      ),
+    );
+
+    // Wait for debounce (200ms) + processing
+    await new Promise((r) => setTimeout(r, 350));
+    stop();
+
+    expect(calls.length).toBeGreaterThan(beforeWrite);
+  }, 5000);
+
+  test("200ms debounce coalesces rapid writes into fewer callbacks", async () => {
+    const backend = new OpencodeBackend(db, 5000, statusPath, 2000);
+
+    const callTimes: number[] = [];
+    const { stop } = backend.watchForChanges(() => {
+      callTimes.push(Date.now());
+    });
+
+    // Background polling at 2000ms — unlikely to fire during test
+    await new Promise((r) => setTimeout(r, 100));
+    const afterSetup = callTimes.length;
+
+    // Write multiple times in rapid succession (< 200ms apart)
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        "ses_debounce",
+        "running",
+        new Date(Date.now()).toISOString(),
+      ),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        "ses_debounce2",
+        "stopped",
+        new Date(Date.now()).toISOString(),
+      ),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        "ses_debounce3",
+        "waiting_for_permission",
+        new Date(Date.now()).toISOString(),
+      ),
+    );
+
+    // Wait for debounce window (200ms) to close + callback
+    await new Promise((r) => setTimeout(r, 300));
+    stop();
+
+    // Rapid writes within same debounce window → at most 1 additional
+    // fs.watch callback (debounce coalesces them). Any extra callbacks
+    // would come from polling, which fires at 2000ms (unlikely in this window).
+    const postWrite = callTimes.length - afterSetup;
+    expect(postWrite).toBeLessThanOrEqual(2);
+  }, 5000);
+
+  test("background polling fires alongside fs.watch at statusPollIntervalMs", async () => {
+    const backend = new OpencodeBackend(db, 5000, statusPath, 50);
+
+    const calls: number[] = [];
+    const { stop } = backend.watchForChanges(() => {
+      calls.push(Date.now());
+    });
+
+    // Wait for multiple polling cycles at 50ms
+    await new Promise((r) => setTimeout(r, 250));
+    stop();
+
+    // Background polling fires every ~50ms → should get several callbacks
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+  }, 5000);
+
+  test("falls back to polling-only when status file is deleted", async () => {
+    const backend = new OpencodeBackend(db, 50, statusPath, 2000);
+
+    const calls: number[] = [];
+    const { stop } = backend.watchForChanges(() => {
+      calls.push(Date.now());
+    });
+
+    // Initial settle: background polling at 2000ms → 0 calls in 100ms
+    await new Promise((r) => setTimeout(r, 100));
+    const beforeDelete = calls.length;
+
+    unlinkSync(statusPath);
+    expect(existsSync(statusPath)).toBe(false);
+
+    // fs.watch detects deletion → 200ms debounce → fallback to polling
+    // at pollIntervalMs=50. Wait for several poll cycles.
+    await new Promise((r) => setTimeout(r, 500));
+    const countAfterFallback = calls.length;
+
+    // Polling continues after fallback
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+
+    expect(countAfterFallback).toBeGreaterThan(beforeDelete);
+    expect(calls.length).toBeGreaterThan(countAfterFallback);
+  }, 5000);
+
+  test("custom statusPollIntervalMs used for background polling in dual-mode", async () => {
+    const backend = new OpencodeBackend(db, 5000, statusPath, 200);
+
+    const calls: number[] = [];
+    const { stop } = backend.watchForChanges(() => {
+      calls.push(Date.now());
+    });
+
+    // Wait 150ms — with 200ms interval, should get at most 1 poll callback
+    await new Promise((r) => setTimeout(r, 150));
+    stop();
+
+    expect(calls.length).toBeLessThanOrEqual(1);
+  }, 5000);
+
+  test("stop() tears down both fs.watch and polling", async () => {
+    const backend = new OpencodeBackend(db, 5000, statusPath, 50);
+
+    const calls: number[] = [];
+    const { stop } = backend.watchForChanges(() => {
+      calls.push(Date.now());
+    });
+
+    await new Promise((r) => setTimeout(r, 150));
+    stop();
+    const countAtStop = calls.length;
+
+    // Wait more — no further callbacks after stop
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(calls.length).toBe(countAtStop);
+  }, 5000);
+
+  test("resolveState uses status log events after watchForChanges update", async () => {
+    const now = Date.now();
+    const projId = "proj-dual-integrate";
+    const cwd = "/home/user/dualproj";
+    const sessionId = "ses_dual_integrate";
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+      projId,
+      "dualproj",
+      cwd,
+    ]);
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [sessionId, "Dual Session", cwd, now - 60000, now, projId],
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath, 50);
+
+    // Initial state: status file is empty → falls back to timestamp → running
+    const projects = await backend.scanProjects();
+    const initialState = await backend.resolveState(projects[0]);
+    expect(initialState).toBe("running");
+
+    const calls: string[] = [];
+    const { stop } = backend.watchForChanges(() => {
+      calls.push("changed");
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Write a status event marking the session as stopped
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(sessionId, "stopped", new Date(Date.now()).toISOString()),
+    );
+
+    // Wait for fs.watch → debounce → onUpdate → state rebuild
+    await new Promise((r) => setTimeout(r, 400));
+
+    const finalState = await backend.resolveState(projects[0]);
+    expect(finalState).toBe("stopped");
+    expect(calls.length).toBeGreaterThan(0);
+
+    stop();
+  }, 5000);
+
+  test("sub-agent marked inactive via status log after watchForChanges", async () => {
+    const now = Date.now();
+    const projId = "proj-dual-sub";
+    const cwd = "/home/user/dualsubproj";
+    const parentId = "ses_dual_parent";
+    const childId = "ses_dual_child";
+
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+      projId,
+      "dualsubproj",
+      cwd,
+    ]);
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [parentId, "Parent", cwd, now - 60000, now, projId],
+    );
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [childId, "Child", cwd, now - 5000, now, parentId, projId],
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath, 50);
+    const projects = await backend.scanProjects();
+    const initialSubs = await backend.getSubagents(projects[0]);
+    expect(initialSubs).toHaveLength(1);
+    expect(initialSubs[0].isActive).toBe(true);
+
+    // Delay ensures writeFileSync mtime differs from beforeEach's empty file mtime
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Write idle event for the sub-agent
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(childId, "stopped", new Date(Date.now()).toISOString()),
+    );
+
+    const { stop } = backend.watchForChanges(() => {});
+    await new Promise((r) => setTimeout(r, 400));
+
+    const updatedSubs = await backend.getSubagents(projects[0]);
+    expect(updatedSubs).toHaveLength(1);
+    expect(updatedSubs[0].isActive).toBe(false);
+
+    stop();
+  }, 5000);
 });
