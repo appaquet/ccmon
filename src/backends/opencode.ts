@@ -433,15 +433,29 @@ export class OpencodeBackend implements SessionBackend {
         const isActive = row.time_updated > activeCutoff;
         return isActive || row.time_updated > expiryCutoff;
       })
-      .map((row) => ({
-        agentId: row.id,
-        slug: undefined,
-        description: undefined,
-        jsonlPath: "",
-        isActive: row.time_updated > activeCutoff,
-        lastMessageTime: new Date(row.time_updated).toISOString(),
-        launchTime: new Date(row.time_created).toISOString(),
-      }))
+      .map((row) => {
+        let isActive = row.time_updated > activeCutoff;
+        if (isActive) {
+          const statusEvent = this.resolveStateFromStatusLog(row.id);
+          if (
+            statusEvent &&
+            (statusEvent.state === "stopped" ||
+              statusEvent.state === "closed" ||
+              statusEvent.state === "error")
+          ) {
+            isActive = false;
+          }
+        }
+        return {
+          agentId: row.id,
+          slug: undefined,
+          description: undefined,
+          jsonlPath: "",
+          isActive,
+          lastMessageTime: new Date(row.time_updated).toISOString(),
+          launchTime: new Date(row.time_created).toISOString(),
+        };
+      })
       .sort((a, b) => b.launchTime.localeCompare(a.launchTime));
   }
 

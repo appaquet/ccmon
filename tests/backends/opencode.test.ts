@@ -1039,6 +1039,45 @@ describe("OpencodeBackend — sub-agents", () => {
     const state = await backend.buildProjectState(project);
     expect(state.lastUpdated).toBe(new Date(parentUpdated).toISOString());
   });
+
+  test("getSubagents marks child inactive via status log even when SQLite time_updated is recent", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_child_status_inactive",
+        "Status Inactive Child",
+        "/home/user/parentproj",
+        now - 5000,
+        now,
+        parentId,
+        "proj-parent",
+      ],
+    );
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "ccmon-sub-status-"));
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      `${JSON.stringify({
+        event: "session.idle",
+        state: "stopped",
+        timestamp: new Date(now).toISOString(),
+        session_id: "ses_child_status_inactive",
+        working_dir: "/home/user/parentproj",
+      })}\n`,
+    );
+
+    const backendWithStatus = new OpencodeBackend(db, 5000, statusPath);
+    const project = (await backendWithStatus.scanProjects())[0];
+    const subagents = await backendWithStatus.getSubagents(project);
+
+    expect(subagents).toHaveLength(1);
+    expect(subagents[0].isActive).toBe(false);
+  });
 });
 
 describe("OpencodeBackend — polling", () => {
@@ -1048,7 +1087,12 @@ describe("OpencodeBackend — polling", () => {
   beforeEach(() => {
     db = new DatabaseSync(":memory:");
     createSchema(db);
-    backend = new OpencodeBackend(db, 50); // short poll interval for tests
+    backend = new OpencodeBackend(
+      db,
+      50,
+      join(tmpdir(), "nonexistent-status.jsonl"),
+      50,
+    );
   });
 
   test("polls MAX(time_updated) and fires onUpdate when changed", async () => {
