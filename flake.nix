@@ -17,21 +17,39 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        src = ./.;
+        ccmon = pkgs.buildNpmPackage {
+          name = "ccmon";
+          src = ./.;
+          npmDepsHash = "sha256-HRd4ArTKST3/tvttF/bFwn6rTwRfuFM95+tf7OX63AA=";
+          makeWrapperArgs = [
+            "--set"
+            "NODE_NO_WARNINGS"
+            "1"
+          ];
+        };
 
-        ccmon = pkgs.writeShellScriptBin "ccmon" ''
-          NODE_PATH="${src}/node_modules" exec ${pkgs.nodejs_22}/bin/node --import tsx/esm ${src}/src/cli.ts "$@"
+        opencodePlugin = pkgs.runCommand "ccmon-opencode-plugin" { } ''
+          mkdir -p $out
+          cp ${./resources/opencode-plugin/ccmon.ts} $out/ccmon.ts
         '';
       in
       {
         packages = {
-          ccmon = ccmon;
+          inherit ccmon;
           default = ccmon;
+          opencode-plugin = opencodePlugin;
         };
 
-        apps.default = {
-          type = "app";
-          program = "${ccmon}/bin/ccmon";
+        apps = {
+          default = {
+            type = "app";
+            program = "${ccmon}/bin/ccmon";
+          };
+
+          ccmon = {
+            type = "app";
+            program = "${ccmon}/bin/ccmon";
+          };
         };
 
         devShells.default = pkgs.mkShell {

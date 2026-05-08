@@ -1,14 +1,18 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, test } from "vitest";
 import { OpencodeBackend } from "../../src/backends/opencode";
 import type { BackendSource } from "../../src/sessions";
 
-type DB = InstanceType<typeof Database>;
+type DB = DatabaseSync;
 
-function run(db: DB, sql: string, ...params: unknown[]): void {
+function run(
+  db: DB,
+  sql: string,
+  params: (string | number | null)[] = [],
+): void {
   db.prepare(sql).run(...params);
 }
 
@@ -84,7 +88,7 @@ describe("OpencodeBackend — core", () => {
   let backend: OpencodeBackend;
 
   beforeEach(() => {
-    db = new Database(":memory:");
+    db = new DatabaseSync(":memory:");
     createSchema(db);
     backend = new OpencodeBackend(db);
   });
@@ -422,7 +426,7 @@ describe("OpencodeBackend — enrichment", () => {
   let backend: OpencodeBackend;
 
   beforeEach(() => {
-    db = new Database(":memory:");
+    db = new DatabaseSync(":memory:");
     createSchema(db);
     backend = new OpencodeBackend(db);
   });
@@ -670,7 +674,7 @@ describe("OpencodeBackend — sub-agents", () => {
   let backend: OpencodeBackend;
 
   beforeEach(() => {
-    db = new Database(":memory:");
+    db = new DatabaseSync(":memory:");
     createSchema(db);
     backend = new OpencodeBackend(db);
   });
@@ -1042,7 +1046,7 @@ describe("OpencodeBackend — polling", () => {
   let backend: OpencodeBackend;
 
   beforeEach(() => {
-    db = new Database(":memory:");
+    db = new DatabaseSync(":memory:");
     createSchema(db);
     backend = new OpencodeBackend(db, 50); // short poll interval for tests
   });
@@ -1216,7 +1220,7 @@ describe("OpencodeBackend — status log", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    db = new Database(":memory:");
+    db = new DatabaseSync(":memory:");
     createSchema(db);
     tmpDir = mkdtempSync(join(tmpdir(), "ccmon-opencode-status-"));
   });

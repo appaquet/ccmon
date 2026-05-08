@@ -1,7 +1,9 @@
 {
   "name": "ccmon",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --outfile=dist/cli.js --external:ws",
     "dump": "tsx src/cli.ts dump",
     "serve": "tsx src/cli.ts serve",
     "sub": "tsx src/cli.ts sub",
@@ -10,14 +12,20 @@
     "lint:fix": "npx biome check --write --unsafe src/ tests/",
     "typecheck": "tsc --noEmit"
   },
+  "bin": {
+    "ccmon": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "public"
+  ],
   "dependencies": {
-    "better-sqlite3": "^12.9.0",
     "ws": "^8.20.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.4",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/ws": "^8.18.1",
+    "esbuild": "^0.27.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.5"

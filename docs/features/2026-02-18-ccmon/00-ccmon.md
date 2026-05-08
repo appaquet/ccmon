@@ -17,7 +17,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 56 (OpenCode Plugin) implemented. All 6 tasks complete, 280 tests pass.
+Phase 56 (OpenCode Plugin) complete. All tasks done, 280 tests pass, requirements accepted.
 
 1. Plugin file (`resources/opencode-plugin/ccmon.ts`): subscribes to `event` + `chat.message` + `tool.execute.after` + `permission.ask` hooks, maps to states, writes NDJSON to `~/.local/state/ccmon/opencode-status.jsonl`
 2. `OpencodeBackend.resolveStateFromStatusLog()`: reads NDJSON log, caches by mtime, returns latest event per session; integrated into `resolveState()` with priority over timestamp inference
@@ -26,7 +26,7 @@ Phase 56 (OpenCode Plugin) implemented. All 6 tasks complete, 280 tests pass.
 5. 7 new tests: priority, fallback, missing file, corrupt JSON, error state, closed→stopped, XDG_STATE_HOME default
 6. CLAUDE.md updated with plugin install, status log format, architecture notes
 
-Next: manual integration test against real OpenCode. Mark R83-R86 complete after verification.
+
 
 ## Requirements
 
@@ -278,12 +278,12 @@ Next: manual integration test against real OpenCode. Mark R83-R86 complete after
 
 ### OpenCode Plugin for Status Updates
 
-- R83: 🔄 OpenCode plugin writes status events to a shared NDJSON log on session lifecycle changes (Phase: OpenCode Plugin)
+- R83: ✅ OpenCode plugin writes status events to a shared NDJSON log on session lifecycle changes (Phase: OpenCode Plugin)
   - R83.1: Plugin subscribes to session.idle→stopped, session.error→error, permission.ask→waiting, chat.message/tool.execute.after→running
   - R83.2: Zero npm dependencies (Bun built-in APIs only); installs at `~/.config/opencode/plugins/ccmon.ts`
-- R84: 🔄 OpencodeBackend reads plugin-written status log as primary state source, falling back to timestamp inference (Phase: OpenCode Plugin)
-- R85: 🔄 OpencodeBackend watches status log file via fs.watch for sub-100ms update latency; polling retained as 30s safety net (Phase: OpenCode Plugin)
-- R86: 🔄 Plugin auto-discovers session directory from OpenCode context; ccmon gracefully degrades without plugin installed (Phase: OpenCode Plugin)
+- R84: ✅ OpencodeBackend reads plugin-written status log as primary state source, falling back to timestamp inference (Phase: OpenCode Plugin)
+- R85: ✅ OpencodeBackend watches status log file via fs.watch for sub-100ms update latency; polling retained as 30s safety net (Phase: OpenCode Plugin)
+- R86: ✅ Plugin auto-discovers session directory from OpenCode context; ccmon gracefully degrades without plugin installed (Phase: OpenCode Plugin)
 
 ### Runtime Migration (Bun → Node.js)
 
@@ -639,7 +639,7 @@ Address 2 deferred REVIEW comments: (1) Extract `sessionTailCache` and `projectS
 
 Replace Bun runtime with Node.js 22 LTS (native TS via Amaro). Replace Bun.file/write → node:fs, Bun.serve → http+ws, bun:sqlite → better-sqlite3, bun:test → vitest. Delete env.ts sandbox workaround. Update flake.nix, CI, dependabot, lockfile. 13 tasks.
 
-### 🔄 56 Phase: OpenCode Plugin for Hook-Like Status Updates
+### ✅ 56 Phase: OpenCode Plugin for Hook-Like Status Updates
 
 [56-opencode-plugin](56-opencode-plugin.md)
 

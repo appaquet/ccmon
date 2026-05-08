@@ -2,7 +2,7 @@ import type { FSWatcher } from "node:fs";
 import { existsSync, readFileSync, statSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 import {
   isStatusEvent,
   type ProjectInfo,
@@ -32,7 +32,7 @@ export class OpencodeBackend implements SessionBackend {
   private statusLogEvents: StatusEvent[] | null = null;
 
   constructor(
-    private db: InstanceType<typeof Database>,
+    private db: DatabaseSync,
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
     private statusLogPath = resolveDefaultStatusLogPath(),
     private statusPollIntervalMs = DEFAULT_STATUS_POLL_INTERVAL_MS,

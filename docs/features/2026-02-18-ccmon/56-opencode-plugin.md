@@ -38,7 +38,7 @@ OpenCode Process          ccmon Process
 
 ## Requirements
 
-- R83: ⬜ OpenCode plugin writes status events to a shared NDJSON status log (Phase: Plugin)
+- R83: ✅ OpenCode plugin writes status events to a shared NDJSON status log (Phase: Plugin)
   - R83.1: Status log location: `~/.local/state/ccmon/opencode-status.jsonl` (single file, append-only)
   - R83.2: Each line is a JSON object: `{ session_id, cwd, state, timestamp, event }`
   - R83.3: Plugin handles these OpenCode events:
@@ -52,18 +52,18 @@ OpenCode Process          ccmon Process
   - R83.4: Plugin is a single TypeScript file at `~/.config/opencode/plugins/ccmon.ts` (global plugin)
   - R83.5: Plugin has zero npm dependencies (uses only Bun built-in APIs: `write`, `appendFile`, `mkdir`)
 
-- R84: ⬜ OpencodeBackend reads plugin-written status as primary state source (Phase: Backend)
+- R84: ✅ OpencodeBackend reads plugin-written status as primary state source (Phase: Backend)
   - R84.1: `resolveState()` checks status log for the session; if found, uses latest event state (same logic as Claude's `resolveState`)
   - R84.2: Falls back to timestamp inference when no plugin status exists for a session
   - R84.3: Status log path configurable via `BackendConfigEntry` (`statusLogPath`); defaults to `~/.local/state/ccmon/opencode-status.jsonl`
 
-- R85: ⬜ OpencodeBackend watches status file for changes (Phase: Backend)
+- R85: ✅ OpencodeBackend watches status file for changes (Phase: Backend)
   - R85.1: `watchForChanges()` adds `fs.watch` on the status log file/directory
   - R85.2: Status file change triggers immediate `onUpdate()` callback (sub-100ms latency vs 5s polling)
   - R85.3: SQLite polling retained as safety net (lower frequency, e.g., 30s)
   - R85.4: Falls back to polling-only when status file doesn't exist (plugin not installed)
 
-- R86: ⬜ Plugin install/uninstall documented, no configuration required (Phase: Docs)
+- R86: ✅ Plugin install/uninstall documented, no configuration required (Phase: Docs)
   - R86.1: Plugin auto-discovers session directory from OpenCode context (no user config needed)
   - R86.2: ccmon detects plugin presence by existence of status file (graceful degradation)
 

@@ -1,6 +1,6 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ClaudeBackend } from "../src/backends/claude";
 import { OpencodeBackend } from "../src/backends/opencode";
@@ -8,9 +8,13 @@ import { startServer } from "../src/server";
 import { replaceDefaultStore, SessionStore } from "../src/sessions";
 import { makeTempDir } from "./_helpers";
 
-type DB = InstanceType<typeof Database>;
+type DB = DatabaseSync;
 
-function run(db: DB, sql: string, ...params: unknown[]): void {
+function run(
+  db: DB,
+  sql: string,
+  params: (string | number | null)[] = [],
+): void {
   db.prepare(sql).run(...params);
 }
 
@@ -39,7 +43,7 @@ describe("integration — both backends", () => {
     await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
 
     // Set up OpenCode in-memory DB
-    opencodeDB = new Database(":memory:");
+    opencodeDB = new DatabaseSync(":memory:");
     run(
       opencodeDB,
       `
