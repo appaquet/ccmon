@@ -22,7 +22,7 @@ Claude Code + OpenCode session monitor. All timestamps ISO 8601. Watch outputs a
 
 ## Integration check
 
-After changes to `src/sessions.ts` or `src/backends/opencode.ts`:
+After changes to `src/backends/claude.ts` or `src/backends/opencode.ts`:
 ```bash
 npm run dump --no-filter   # must return ≥ 1 project
 npm run dump               # stale filter applied
@@ -30,7 +30,7 @@ npm run dump               # stale filter applied
 
 ## Architecture
 
-**SessionBackend** interface (`src/backends/types.ts`) — seven methods: scan, resolve, enrich, watch sub-agent tracking.
+**SessionBackend** interface (`src/backends/types.ts`) — seven methods: scan, resolve, enrich, computeLastUpdated, getSubagents, watchForChanges, projectKey. The standalone `buildProjectState(backend, info)` in `src/backends/build-project-state.ts` assembles full `ProjectState` from these focused methods.
 
 | Backend | Source | Change detection | State source |
 |---------|--------|-----------------|--------------|
@@ -45,8 +45,18 @@ States: `running`, `stopped`, `waiting_for_permission`, `error`, `closed`. Plugi
 
 ## Key files
 
-- `src/sessions.ts` — core logic, shared types (`ProjectInfo`, `ProjectState`, `StatusEvent`)
-- `src/backends/claude.ts`, `src/backends/opencode.ts` — backend implementations
+- `src/sessions.ts` — barrel re-exports from all session modules
+- `src/types.ts` — shared types (`ProjectInfo`, `ProjectState`, `SubagentInfo`, `BackendSource`)
+- `src/session-core.ts` — status log reading and state resolution (`SessionState`, `StatusEvent`, `resolveState`, `readStatusLog`)
+- `src/session-enrichment.ts` — JSONL tail parsing for model/messages/tokens/tasks (`SessionEnrichment`, `scanEnrichment`, `mergeEnrichment`)
+- `src/project-utils.ts` — project scanning and filtering (`scanProjects`, `filterStaleProjects`, `disambiguateProjectNames`)
+- `src/status-writer.ts` — hook status file writing (`writeStatusEvent`, `writeNotificationStatus`, `mapHookEventToState`)
+- `src/backends/claude.ts` — Claude Code backend (filesystem/JSONL, absorbed SessionStore)
+- `src/backends/opencode.ts` — OpenCode backend (SQLite read-only)
+- `src/backends/types.ts` — `SessionBackend` interface + `BackendConfigEntry` type
+- `src/backends/build-project-state.ts` — Shared `buildProjectState(backend, info)` utility
+- `src/backends/collect-states.ts` — Shared `collectBackendStates(backends)` for server/CLI
+- `src/backends/index.ts` — `createBackends(config)` factory
 - `src/server.ts` — HTTP + WebSocket server
 - `src/cli.ts` — CLI entry point, all subcommands
 - `src/config.ts` — config loading

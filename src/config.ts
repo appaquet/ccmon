@@ -3,6 +3,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { BackendConfigEntry } from "./backends/types";
 
+// REVIEW: architecture-reviewer - CcmonConfig mixes server config (host, port) with backend
+// discovery config (maxInactivityHours, backends[]). These serve different lifecycle scopes:
+// server config is relevant to `serve`, while backend config is relevant to all subcommands.
+// As more server config grows (TLS, CORS, rate limiting), this mixing will create coupling
+// between unrelated concerns. Consider splitting into ServerConfig and BackendConfig, then
+// composing them: CcmonConfig { server: ServerConfig, backends: BackendConfig }.
+//
+// Additionally, BackendConfigEntry is defined in backends/types.ts alongside the SessionBackend
+// interface. The config shape and the backend interface are distinct concerns — the config
+// entry is a serialization/deserialization concern, not a backend API contract.
 export interface CcmonConfig {
   maxInactivityHours: number;
   host: string;

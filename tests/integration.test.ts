@@ -2,10 +2,10 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { buildProjectState } from "../src/backends/build-project-state";
 import { ClaudeBackend } from "../src/backends/claude";
 import { OpencodeBackend } from "../src/backends/opencode";
 import { startServer } from "../src/server";
-import { replaceDefaultStore, SessionStore } from "../src/sessions";
 import { makeTempDir } from "./_helpers";
 
 type DB = DatabaseSync;
@@ -30,8 +30,6 @@ describe("integration — both backends", () => {
     // Set up Claude Code directory
     claudeDir = join(tmpDir, "claude-projects");
     await mkdir(claudeDir, { recursive: true });
-
-    replaceDefaultStore(new SessionStore(tmpDir));
 
     const projDir = join(claudeDir, "-home-user-claude-proj");
     await mkdir(projDir, { recursive: true });
@@ -119,13 +117,15 @@ describe("integration — both backends", () => {
     const opencodeBackend = new OpencodeBackend(opencodeDB);
 
     const claudeProjects = await claudeBackend.scanProjects();
-    const claudeState = await claudeBackend.buildProjectState(
+    const claudeState = await buildProjectState(
+      claudeBackend,
       claudeProjects[0],
     );
     expect(claudeState.source).toBe("claude");
 
     const opencodeProjects = await opencodeBackend.scanProjects();
-    const opencodeState = await opencodeBackend.buildProjectState(
+    const opencodeState = await buildProjectState(
+      opencodeBackend,
       opencodeProjects[0],
     );
     expect(opencodeState.source).toBe("opencode");

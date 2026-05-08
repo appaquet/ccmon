@@ -1,3 +1,17 @@
+// REVIEW: architecture-reviewer - This test file is 3617 lines and tests SessionStore,
+// scanProjects, status event writing, sub-agents, enrichment, filtering, disambiguation,
+// singleton wrappers, and hook event mapping — all from a single file. When the source
+// module splits are executed (see REVIEW in src/sessions.ts), split this file similarly:
+//
+//   tests/session-core.test.ts     — resolveState, readStatusLog, StatusEvent parsing
+//   tests/session-enrichment.test.ts — scanEnrichment, mergeEnrichment, scanTaskCreateUpdate
+//   tests/session-store.test.ts     — SessionStore (scanProjects, readSessionTail, caching)
+//   tests/status-writer.test.ts     — writeStatusEvent, writeStatusTruncate, writeSubagentStatus
+//   tests/project-utils.test.ts     — filterStaleProjects, disambiguateProjectNames
+//   tests/backends/claude.test.ts   — ClaudeBackend unit tests (currently untested)
+//
+// Additionally, the test suite has no ClaudeBackend-specific tests — all Claude testing
+// goes through SessionStore or the singleton wrappers. Add ClaudeBackend unit tests.
 import { utimesSync } from "node:fs";
 import {
   appendFile,
@@ -9,21 +23,17 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { ClaudeBackend } from "../src/backends/claude";
 import type { StatusEvent } from "../src/sessions";
 import {
   CLOSED_PROJECT_TTL_MS,
   disambiguateProjectNames,
   filterStaleProjects,
-  getProjectState,
-  getSubagentInfos,
   MAX_STATUS_LOG_BYTES,
   mapHookEventToState,
   PERMISSION_RESOLVE_GAP_MS,
-  readSessionTail,
   readStatusLog,
-  replaceDefaultStore,
   resolveState,
-  SessionStore,
   STATUS_FILE_LEGACY,
   STATUS_LOG_FILE,
   scanProjects,
@@ -361,7 +371,7 @@ describe("getProjectState", () => {
     await makeProject("-home-user-fresh", "/home/user/fresh", "sid1");
     // No status file; fresh JSONL mtime drives state.
     const before = Date.now();
-    const results = await getProjectState(tmpDir);
+    const results = await new ClaudeBackend(tmpDir).getProjectState();
 
     expect(results).toHaveLength(1);
     expect(results[0].state).toBe("running");
@@ -386,7 +396,7 @@ describe("getProjectState", () => {
     const staleMtime = new Date(Date.now() - 2 * 60 * 1000); // 2 min ago
     utimesSync(jsonlPath, staleMtime, staleMtime);
 
-    const results = await getProjectState(tmpDir);
+    const results = await new ClaudeBackend(tmpDir).getProjectState();
 
     expect(results).toHaveLength(1);
     expect(results[0].state).toBe("stopped");
@@ -420,7 +430,7 @@ describe("getProjectState", () => {
     const olderMtime = new Date(staleMtime.getTime() - 1000);
     utimesSync(statusLogPath, olderMtime, olderMtime);
 
-    const results = await getProjectState(tmpDir);
+    const results = await new ClaudeBackend(tmpDir).getProjectState();
 
     expect(results).toHaveLength(1);
     expect(results[0].state).toBe("stopped");
@@ -450,7 +460,7 @@ describe("getProjectState", () => {
     const olderMtime = new Date(staleMtime.getTime() - 1000);
     utimesSync(statusLogPath, olderMtime, olderMtime);
 
-    const results = await getProjectState(tmpDir);
+    const results = await new ClaudeBackend(tmpDir).getProjectState();
 
     expect(results).toHaveLength(1);
     expect(results[0].state).toBe("stopped");
@@ -460,7 +470,7 @@ describe("getProjectState", () => {
     await makeProject("-home-user-a", "/home/user/a", "sida");
     await makeProject("-home-user-b", "/home/user/b", "sidb");
 
-    const results = await getProjectState(tmpDir);
+    const results = await new ClaudeBackend(tmpDir).getProjectState();
     expect(results).toHaveLength(2);
   });
 
@@ -495,7 +505,7 @@ describe("getProjectState", () => {
     const past = new Date(Date.now() - 5000);
     utimesSync(statusLogPath, past, past);
 
-    const results = await getProjectState(tmpDir);
+    const results = await new ClaudeBackend(tmpDir).getProjectState();
     expect(results).toHaveLength(1);
     expect(results[0].notificationMessage).toBe("You have a notification");
     expect(results[0].notificationTimestamp).toBe("2026-02-22T10:00:00.000Z");
@@ -520,7 +530,7 @@ describe("getProjectState", () => {
     const past = new Date(Date.now() - 5000);
     utimesSync(statusLogPath, past, past);
 
-    const results = await getProjectState(tmpDir);
+    const results = await new ClaudeBackend(tmpDir).getProjectState();
     expect(results).toHaveLength(1);
     expect(results[0].notificationMessage).toBeUndefined();
     expect(results[0].notificationTimestamp).toBeUndefined();
@@ -551,7 +561,7 @@ describe("getProjectState", () => {
     const olderMtime = new Date(staleMtime.getTime() - 1000);
     utimesSync(statusLogPath, olderMtime, olderMtime);
 
-    const results = await getProjectState(tmpDir);
+    const results = await new ClaudeBackend(tmpDir).getProjectState();
     expect(results).toHaveLength(1);
     // NaN age on permission signal treated as stale → falls through to priority 4 → stopped
     expect(results[0].state).toBe("stopped");
@@ -996,7 +1006,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestUserActivity?.text).toBe("what is X");
     expect(result.latestUserActivity?.isCommand).toBe(false);
     expect(result.model).toBe("claude-sonnet-4-6");
@@ -1011,7 +1021,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestUserActivity).toBeUndefined();
   });
 
@@ -1020,13 +1030,15 @@ describe("session enrichment", () => {
     const longMessage = "A".repeat(300);
     await writeFile(jsonlPath, `${makeUserEntry(longMessage)}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestUserActivity?.text).toBe("A".repeat(200));
     expect(result.latestUserActivity?.isCommand).toBe(false);
   });
 
   test("readSessionTail: missing file returns empty object", async () => {
-    const result = await readSessionTail(join(tmpDir, "nonexistent.jsonl"));
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(
+      join(tmpDir, "nonexistent.jsonl"),
+    );
     expect(result.latestUserActivity).toBeUndefined();
     expect(result.model).toBeUndefined();
     expect(result.latestAssistantActivity).toBeUndefined();
@@ -1041,7 +1053,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestUserActivity?.text).toBe("valid message");
     expect(result.latestUserActivity?.isCommand).toBe(false);
   });
@@ -1058,7 +1070,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Reversed scan picks Edit (last in file = first found from end)
     expect(result.latestAssistantActivity?.tool).toBe("Edit");
     expect(result.latestAssistantActivity?.text).toBeUndefined();
@@ -1079,7 +1091,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.tasksTotal).toBe(4);
     expect(result.tasksDone).toBe(2);
   });
@@ -1094,7 +1106,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.tasksDone).toBeUndefined();
     expect(result.tasksTotal).toBeUndefined();
   });
@@ -1113,7 +1125,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.tasksTotal).toBe(3);
     expect(result.tasksDone).toBe(3);
     expect(result.tasksDone).toBe(result.tasksTotal);
@@ -1140,7 +1152,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Backward scan finds the newer (last in file) entry first
     expect(result.tasksTotal).toBe(3);
     expect(result.tasksDone).toBe(2);
@@ -1161,7 +1173,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.tasksTotal).toBe(3);
     expect(result.tasksDone).toBe(1);
   });
@@ -1187,7 +1199,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Backward scan finds the progress entry (last in file) first
     expect(result.tasksTotal).toBe(3);
     expect(result.tasksDone).toBe(1);
@@ -1215,14 +1227,13 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Backward scan finds the later TodoWrite first (3 tasks, 2 done)
     expect(result.tasksTotal).toBe(3);
     expect(result.tasksDone).toBe(2);
   });
 
   test("readSessionTail (R27): delta read merges new content, preserves old", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r27-delta.jsonl");
 
     // Initial file with a user message and TodoWrite
@@ -1235,7 +1246,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${initialLines.join("\n")}\n`);
 
-    const first = await readSessionTail(jsonlPath);
+    const first = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(first.latestUserActivity?.text).toBe("initial prompt");
     expect(first.latestUserActivity?.isCommand).toBe(false);
     expect(first.model).toBe("claude-opus-4-6");
@@ -1265,7 +1276,7 @@ describe("session enrichment", () => {
       `${existingContent + appendedLines.join("\n")}\n`,
     );
 
-    const second = await readSessionTail(jsonlPath);
+    const second = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Delta read: newer latestUserActivity overrides
     expect(second.latestUserActivity?.text).toBe("follow-up prompt");
     // Tasks updated from new delta
@@ -1276,7 +1287,6 @@ describe("session enrichment", () => {
   });
 
   test("readSessionTail (R27): file shrink triggers full re-read", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r27-shrink.jsonl");
 
     // First: write a large-ish file
@@ -1289,7 +1299,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${firstLines.join("\n")}\n`);
 
-    const first = await readSessionTail(jsonlPath);
+    const first = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(first.latestUserActivity?.text).toBe("old session message");
     expect(first.tasksTotal).toBe(1);
 
@@ -1308,7 +1318,7 @@ describe("session enrichment", () => {
     // Write shorter content (file shrinks)
     await writeFile(jsonlPath, `${newLines[0]}\n`);
 
-    const second = await readSessionTail(jsonlPath);
+    const second = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Full re-read: should see only new content
     expect(second.latestUserActivity?.text).toBe("new session start");
     expect(second.model).toBeUndefined();
@@ -1327,7 +1337,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestAssistantActivity?.text).toBe("A".repeat(200));
     expect(result.latestAssistantActivity?.tool).toBe("Bash");
   });
@@ -1342,7 +1352,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestUserActivity?.text).toBe("user input here");
     expect(result.latestUserActivity?.isCommand).toBe(false);
     expect(result.latestAssistantActivity?.text).toBe("assistant reply here");
@@ -1358,7 +1368,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestAssistantActivity?.text).toBeUndefined();
     expect(result.latestAssistantActivity?.tool).toBe("Bash");
   });
@@ -1374,7 +1384,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestAssistantActivity?.text).toBe("thinking out loud");
     expect(result.latestAssistantActivity?.tool).toBeUndefined();
   });
@@ -1388,7 +1398,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestAssistantActivity?.text).toBeUndefined();
     expect(result.latestAssistantActivity?.tool).toBe("Bash");
   });
@@ -1403,7 +1413,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestAssistantActivity?.text).toBe("here is my plan");
     expect(result.latestAssistantActivity?.tool).toBe("Bash");
   });
@@ -1422,14 +1432,13 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Reversed scan finds newer (last in file) first — tool-only entry wins
     expect(result.latestAssistantActivity?.tool).toBe("Read");
     expect(result.latestAssistantActivity?.text).toBeUndefined();
   });
 
   test("readSessionTail (R50): delta-read merge preserves latestAssistantActivity from base when scan has none", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r50-delta-merge.jsonl");
 
     // First read: assistant entry sets latestAssistantActivity
@@ -1440,7 +1449,7 @@ describe("session enrichment", () => {
       ]),
     ];
     await writeFile(jsonlPath, `${firstLines.join("\n")}\n`);
-    const first = await readSessionTail(jsonlPath);
+    const first = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(first.latestAssistantActivity?.text).toBe("initial response");
     expect(first.latestAssistantActivity?.tool).toBe("Bash");
 
@@ -1448,7 +1457,7 @@ describe("session enrichment", () => {
     const userLine = makeUserEntry("follow-up question");
     await writeFile(jsonlPath, `${firstLines.join("\n")}\n${userLine}\n`);
 
-    const second = await readSessionTail(jsonlPath);
+    const second = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // latestAssistantActivity must be preserved from base (delta merge)
     expect(second.latestAssistantActivity?.text).toBe("initial response");
     expect(second.latestAssistantActivity?.tool).toBe("Bash");
@@ -1468,7 +1477,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.sessionName).toBe("tableoutput");
   });
 
@@ -1482,7 +1491,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.sessionName).toBeUndefined();
   });
 
@@ -1503,7 +1512,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Reverse scan hits the last line first — most recent title wins
     expect(result.sessionName).toBe("new-name");
   });
@@ -1511,7 +1520,6 @@ describe("session enrichment", () => {
   // ── getSubagentInfos (R29) ──
 
   test("getSubagentInfos (R29): returns SubagentInfo array with enrichment", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
     const sessionId = "r29-enrichment-session";
     const sessionDir = join(tmpDir, sessionId);
     const subagentsDir = join(sessionDir, "subagents");
@@ -1529,7 +1537,7 @@ describe("session enrichment", () => {
     await writeFile(agentPath, `${agentLines.join("\n")}\n`);
 
     const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
-    const infos = await getSubagentInfos(jsonlPath);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(jsonlPath);
 
     expect(infos).toHaveLength(1);
     expect(infos[0].agentId).toBe("abc123");
@@ -1543,7 +1551,6 @@ describe("session enrichment", () => {
   });
 
   test("getSubagentInfos (R29): isActive respects 15s threshold", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
     const sessionId = "r29-active-threshold";
     const sessionDir = join(tmpDir, sessionId);
     const subagentsDir = join(sessionDir, "subagents");
@@ -1559,7 +1566,7 @@ describe("session enrichment", () => {
     utimesSync(staleAgent, twentySecAgo, twentySecAgo);
 
     const jsonlPath = join(tmpDir, `${sessionId}.jsonl`);
-    const infos = await getSubagentInfos(jsonlPath);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(jsonlPath);
 
     expect(infos).toHaveLength(2);
     const live = infos.find((i) => i.agentId === "live");
@@ -1570,7 +1577,7 @@ describe("session enrichment", () => {
 
   test("getSubagentInfos (R29): returns empty array when no subagents dir", async () => {
     const jsonlPath = join(tmpDir, "r29-no-dir-session.jsonl");
-    const infos = await getSubagentInfos(jsonlPath);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(jsonlPath);
     expect(infos).toHaveLength(0);
   });
 
@@ -1593,7 +1600,6 @@ describe("session enrichment", () => {
   }
 
   test("readSessionTail (R36): agentDescriptions populated from queue-operation enqueue entries", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r36-queue-op.jsonl");
     const lines = [
       makeUserEntry("do the thing"),
@@ -1602,13 +1608,12 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.agentDescriptions.get("ae89d86")).toBe("Implement feature X");
     expect(result.agentDescriptions.get("bf12c45")).toBe("Write tests for Y");
   });
 
   test("readSessionTail (R36): delta read merges new queue-operation entries without losing previous ones", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r36-queue-op-delta.jsonl");
 
     const initialLines = [
@@ -1617,7 +1622,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${initialLines.join("\n")}\n`);
 
-    const first = await readSessionTail(jsonlPath);
+    const first = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(first.agentDescriptions.get("agent-1")).toBe("First agent task");
 
     await new Promise((r) => setTimeout(r, 10));
@@ -1629,13 +1634,12 @@ describe("session enrichment", () => {
         "\n",
     );
 
-    const second = await readSessionTail(jsonlPath);
+    const second = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(second.agentDescriptions.get("agent-1")).toBe("First agent task");
     expect(second.agentDescriptions.get("agent-2")).toBe("Second agent task");
   });
 
   test("getSubagentInfos (R36): attaches description from parent session agentDescriptions", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
     const sessionId = "r36-desc-session";
     const sessionDir = join(tmpDir, sessionId);
     const subagentsDir = join(sessionDir, "subagents");
@@ -1655,7 +1659,7 @@ describe("session enrichment", () => {
       ].join("\n")}\n`,
     );
 
-    const infos = await getSubagentInfos(jsonlPath);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(jsonlPath);
     expect(infos).toHaveLength(1);
     expect(infos[0].agentId).toBe("abc123");
     expect(infos[0].description).toBe("Review the architecture");
@@ -1688,7 +1692,6 @@ describe("session enrichment", () => {
   }
 
   test("readSessionTail (R36): agentDescriptions populated from Task tool_use/toolUseResult correlation", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r36-task-tool.jsonl");
     const lines = [
       makeUserEntry("start task"),
@@ -1697,14 +1700,13 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.agentDescriptions.get("a4220fe77a021871d")).toBe(
       "Research waiting state bug",
     );
   });
 
   test("readSessionTail (R36): mixed queue-operation and Task tool_use entries both populate agentDescriptions", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r36-mixed-agents.jsonl");
     const lines = [
       makeUserEntry("start"),
@@ -1714,7 +1716,7 @@ describe("session enrichment", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.agentDescriptions.get("legacy-agent-1")).toBe(
       "Legacy queue task",
     );
@@ -1724,8 +1726,6 @@ describe("session enrichment", () => {
   });
 
   test("getProjectState includes subagents array (R29)", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
-
     // Build a project dir with a sessions-index, JSONL, and sub-agents
     const projDir = join(tmpDir, "-home-user-r29-proj");
     await mkdir(projDir, { recursive: true });
@@ -1773,7 +1773,7 @@ describe("session enrichment", () => {
     const past = new Date(Date.now() - 5000);
     utimesSync(statusLogPath, past, past);
 
-    const results = await getProjectState(tmpDir);
+    const results = await new ClaudeBackend(tmpDir).getProjectState();
     const proj = results.find((p) => p.projectName === "r29-proj");
     expect(proj).toBeDefined();
 
@@ -1789,8 +1789,6 @@ describe("session enrichment", () => {
   });
 
   test("R41: stopped session still exposes enrichment fields (messages, model, tokens)", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
-
     const projDir = join(tmpDir, "-home-user-r41-stopped");
     await mkdir(projDir, { recursive: true });
 
@@ -1846,7 +1844,7 @@ describe("session enrichment", () => {
     const past = new Date(Date.now() - 5000);
     utimesSync(statusLogPath, past, past);
 
-    const results = await getProjectState(tmpDir);
+    const results = await new ClaudeBackend(tmpDir).getProjectState();
     const proj = results.find((p) => p.projectName === "r41-stopped");
     expect(proj).toBeDefined();
     expect(proj?.state).toBe("stopped");
@@ -1865,10 +1863,11 @@ describe("session enrichment", () => {
 
 describe("sessionTailCache (R20.4)", () => {
   let tmpDir: string;
+  let backend: ClaudeBackend;
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-tail-cache");
-    replaceDefaultStore(new SessionStore(tmpDir));
+    backend = new ClaudeBackend(tmpDir);
   });
 
   afterEach(async () => {
@@ -1889,7 +1888,7 @@ describe("sessionTailCache (R20.4)", () => {
     const pinnedMtime = new Date("2020-01-01T00:00:00.000Z");
     await utimes(jsonlPath, pinnedMtime, pinnedMtime);
 
-    const first = await readSessionTail(jsonlPath);
+    const first = await backend.readSessionTail(jsonlPath);
     expect(first.latestUserActivity?.text).toBe("original message");
 
     // Overwrite content with same-size content, restore the pinned mtime so cache key is unchanged.
@@ -1897,7 +1896,7 @@ describe("sessionTailCache (R20.4)", () => {
     await writeFile(jsonlPath, `${makeUserLine("replaced message")}\n`);
     await utimes(jsonlPath, pinnedMtime, pinnedMtime);
 
-    const second = await readSessionTail(jsonlPath);
+    const second = await backend.readSessionTail(jsonlPath);
     expect(second).toBe(first); // same object reference proves cache hit
     expect(second.latestUserActivity?.text).toBe("original message");
   });
@@ -1910,7 +1909,7 @@ describe("sessionTailCache (R20.4)", () => {
       `${makeUserLine("this is the first and longer message")}\n`,
     );
 
-    const first = await readSessionTail(jsonlPath);
+    const first = await backend.readSessionTail(jsonlPath);
     expect(first.latestUserActivity?.text).toBe(
       "this is the first and longer message",
     );
@@ -1919,7 +1918,7 @@ describe("sessionTailCache (R20.4)", () => {
     // Replace with shorter content (file shrinks → full re-read)
     await writeFile(jsonlPath, `${makeUserLine("new")}\n`);
 
-    const second = await readSessionTail(jsonlPath);
+    const second = await backend.readSessionTail(jsonlPath);
     expect(second.latestUserActivity?.text).toBe("new");
   });
 });
@@ -1931,7 +1930,6 @@ describe("getProjectState targeted refresh (R20.5)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-targeted");
-    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -1957,7 +1955,7 @@ describe("getProjectState targeted refresh (R20.5)", () => {
     const dirB = await makeProject("-home-user-b", "/home/user/b", "sid-b");
 
     // Full scan to warm the cache
-    const first = await getProjectState(tmpDir);
+    const first = await new ClaudeBackend(tmpDir).getProjectState();
     expect(first).toHaveLength(2);
 
     // Write a status event for project B to see state change — simplest observable diff
@@ -1975,7 +1973,7 @@ describe("getProjectState targeted refresh (R20.5)", () => {
     utimesSync(statusLogPath, past, past);
 
     // Targeted rescan of only project B
-    const second = await getProjectState(tmpDir, dirB);
+    const second = await new ClaudeBackend(tmpDir).getProjectState(dirB);
     expect(second).toHaveLength(2);
 
     // Project A should still be present
@@ -1989,7 +1987,9 @@ describe("getProjectState targeted refresh (R20.5)", () => {
     await makeProject("-home-user-x", "/home/user/x", "sid-x");
 
     // Cache is cold (reset in beforeEach) — changedProjectDir provided but ignored
-    const results = await getProjectState(tmpDir, join(tmpDir, "-home-user-x"));
+    const results = await new ClaudeBackend(tmpDir).getProjectState(
+      join(tmpDir, "-home-user-x"),
+    );
     expect(results).toHaveLength(1);
     expect(results[0].projectName).toBe("x");
   });
@@ -2007,14 +2007,14 @@ describe("getProjectState targeted refresh (R20.5)", () => {
     );
 
     // Warm the cache
-    const first = await getProjectState(tmpDir);
+    const first = await new ClaudeBackend(tmpDir).getProjectState();
     expect(first).toHaveLength(2);
 
     // Remove project A's JSONL so readProjectInfo returns null
     await rm(dirA, { recursive: true, force: true });
 
     // Targeted rescan of the now-gone project
-    const second = await getProjectState(tmpDir, dirA);
+    const second = await new ClaudeBackend(tmpDir).getProjectState(dirA);
     expect(second).toHaveLength(1);
     expect(second[0].projectName).toBe("stay");
   });
@@ -2027,7 +2027,6 @@ describe("readSessionTail token usage (R32)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-tokens");
-    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2062,7 +2061,7 @@ describe("readSessionTail token usage (R32)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.inputTokens).toBe(1000);
     expect(result.outputTokens).toBe(250);
   });
@@ -2077,7 +2076,7 @@ describe("readSessionTail token usage (R32)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // inputTokens: last-seen value (cache_read grows monotonically, summing inflates it)
     expect(result.inputTokens).toBe(700);
     // outputTokens: sum of per-call deltas
@@ -2100,13 +2099,12 @@ describe("readSessionTail token usage (R32)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.inputTokens).toBeUndefined();
     expect(result.outputTokens).toBeUndefined();
   });
 
   test("R32: delta reads — inputTokens last-wins, outputTokens accumulates", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r32-delta.jsonl");
 
     // Initial content
@@ -2116,7 +2114,7 @@ describe("readSessionTail token usage (R32)", () => {
     ];
     await writeFile(jsonlPath, `${initialLines.join("\n")}\n`);
 
-    const first = await readSessionTail(jsonlPath);
+    const first = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(first.inputTokens).toBe(300);
     expect(first.outputTokens).toBe(80);
 
@@ -2129,7 +2127,7 @@ describe("readSessionTail token usage (R32)", () => {
     const existing = await readFile(jsonlPath, "utf8");
     await writeFile(jsonlPath, `${existing + appendedLines.join("\n")}\n`);
 
-    const second = await readSessionTail(jsonlPath);
+    const second = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // inputTokens: new scan value replaces base (last-wins, not additive)
     expect(second.inputTokens).toBe(500);
     // outputTokens: additive across delta reads
@@ -2137,7 +2135,6 @@ describe("readSessionTail token usage (R32)", () => {
   });
 
   test("R32: file shrink resets token counts to new content only", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r32-shrink.jsonl");
 
     await writeFile(
@@ -2148,7 +2145,7 @@ describe("readSessionTail token usage (R32)", () => {
       ].join("\n")}\n`,
     );
 
-    const first = await readSessionTail(jsonlPath);
+    const first = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(first.inputTokens).toBe(1000);
 
     // Replace with shorter file (new session)
@@ -2158,7 +2155,7 @@ describe("readSessionTail token usage (R32)", () => {
       `${makeAssistantWithUsage("claude-sonnet-4-6", 50, 20)}\n`,
     );
 
-    const second = await readSessionTail(jsonlPath);
+    const second = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Full re-read: only sees the new content
     expect(second.inputTokens).toBe(50);
     expect(second.outputTokens).toBe(20);
@@ -2172,7 +2169,6 @@ describe("readSessionTail latestUserActivity (R37, R49)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r37");
-    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2192,7 +2188,7 @@ describe("readSessionTail latestUserActivity (R37, R49)", () => {
     const jsonlPath = join(tmpDir, "r37-basic.jsonl");
     await writeFile(jsonlPath, `${makeCommandEntry("/ctx-load")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestUserActivity?.text).toBe("/ctx-load");
     expect(result.latestUserActivity?.isCommand).toBe(true);
   });
@@ -2204,7 +2200,7 @@ describe("readSessionTail latestUserActivity (R37, R49)", () => {
       `${makeCommandEntry("/ctx-load", "some args")}\n`,
     );
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestUserActivity?.text).toBe("/ctx-load some args");
     expect(result.latestUserActivity?.isCommand).toBe(true);
   });
@@ -2213,7 +2209,7 @@ describe("readSessionTail latestUserActivity (R37, R49)", () => {
     const jsonlPath = join(tmpDir, "r37-no-args.jsonl");
     await writeFile(jsonlPath, `${makeCommandEntry("/implement")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestUserActivity?.text).toBe("/implement");
     expect(result.latestUserActivity?.isCommand).toBe(true);
   });
@@ -2226,7 +2222,7 @@ describe("readSessionTail latestUserActivity (R37, R49)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Reversed scan finds the command first (most recent entry) → single winner
     expect(result.latestUserActivity?.text).toBe("/ctx-save");
     expect(result.latestUserActivity?.isCommand).toBe(true);
@@ -2240,7 +2236,7 @@ describe("readSessionTail latestUserActivity (R37, R49)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Reversed scan finds the plain message first (most recent entry) → single winner
     expect(result.latestUserActivity?.text).toBe("a follow-up user message");
     expect(result.latestUserActivity?.isCommand).toBe(false);
@@ -2254,7 +2250,7 @@ describe("readSessionTail latestUserActivity (R37, R49)", () => {
       `${makeUserEntry("<some-other-tag>value</some-other-tag>")}\n`,
     );
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.latestUserActivity).toBeUndefined();
   });
 
@@ -2267,7 +2263,7 @@ describe("readSessionTail latestUserActivity (R37, R49)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Reversed scan: "most recent message" is found first and wins; older entries ignored
     expect(result.latestUserActivity?.text).toBe("most recent message");
     expect(result.latestUserActivity?.isCommand).toBe(false);
@@ -2281,7 +2277,6 @@ describe("readSessionTail accurate token totals (R39)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r39");
-    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2325,7 +2320,7 @@ describe("readSessionTail accurate token totals (R39)", () => {
       })}\n`,
     );
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.inputTokens).toBe(100 + 5000 + 200000);
     expect(result.outputTokens).toBe(500);
   });
@@ -2340,7 +2335,7 @@ describe("readSessionTail accurate token totals (R39)", () => {
       })}\n`,
     );
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.inputTokens).toBe(300);
     expect(result.outputTokens).toBe(100);
   });
@@ -2356,7 +2351,7 @@ describe("readSessionTail accurate token totals (R39)", () => {
       })}\n`,
     );
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.inputTokens).toBe(51000);
     expect(result.outputTokens).toBe(200);
   });
@@ -2379,7 +2374,7 @@ describe("readSessionTail accurate token totals (R39)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // inputTokens: last-seen value (second entry = 200 + 2000 + 20000)
     expect(result.inputTokens).toBe(200 + 2000 + 20000);
     // outputTokens: sum of per-call deltas
@@ -2394,7 +2389,6 @@ describe("readSessionTail input token last-value semantics (R47)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r47");
-    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2431,7 +2425,7 @@ describe("readSessionTail input token last-value semantics (R47)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // inputTokens: last-seen value (5000), not sum (1000+2000+5000=8000)
     expect(result.inputTokens).toBe(5000);
     // outputTokens: sum of per-call deltas (10+20+30=60)
@@ -2439,13 +2433,12 @@ describe("readSessionTail input token last-value semantics (R47)", () => {
   });
 
   test("R47: delta merge — new scan value replaces base input, output accumulates", async () => {
-    replaceDefaultStore(new SessionStore(tmpDir));
     const jsonlPath = join(tmpDir, "r47-delta-merge.jsonl");
 
     const initialLines = [makeAssistantWithUsage(5000, 100)];
     await writeFile(jsonlPath, `${initialLines.join("\n")}\n`);
 
-    const first = await readSessionTail(jsonlPath);
+    const first = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(first.inputTokens).toBe(5000);
     expect(first.outputTokens).toBe(100);
 
@@ -2457,7 +2450,7 @@ describe("readSessionTail input token last-value semantics (R47)", () => {
       `${existing + makeAssistantWithUsage(6000, 50)}\n`,
     );
 
-    const second = await readSessionTail(jsonlPath);
+    const second = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // inputTokens: new value 6000 replaces base 5000 (not 11000)
     expect(second.inputTokens).toBe(6000);
     // outputTokens: 100 (base) + 50 (new) = 150
@@ -2472,7 +2465,6 @@ describe("getSubagentInfos lifecycle (R40)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r40");
-    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2494,7 +2486,7 @@ describe("getSubagentInfos lifecycle (R40)", () => {
     const agentPath = join(subagentsDir, "agent-abc.jsonl");
     await writeFile(agentPath, "{}");
 
-    const infos = await getSubagentInfos(jsonlPath);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(jsonlPath);
     expect(infos).toHaveLength(1);
     expect(infos[0].lastMessageTime).toBeDefined();
     // Should be a valid ISO 8601 string
@@ -2512,7 +2504,7 @@ describe("getSubagentInfos lifecycle (R40)", () => {
     const agentPath = join(subagentsDir, "agent-xyz.jsonl");
     await writeFile(agentPath, "{}");
 
-    const infos = await getSubagentInfos(jsonlPath);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(jsonlPath);
     expect(infos).toHaveLength(1);
     expect(infos[0].launchTime).toBeDefined();
     expect(new Date(infos[0].launchTime).toISOString()).toBe(
@@ -2529,7 +2521,7 @@ describe("getSubagentInfos lifecycle (R40)", () => {
     const sixtySecAgo = new Date(Date.now() - 60_000);
     utimesSync(oldAgent, sixtySecAgo, sixtySecAgo);
 
-    const infos = await getSubagentInfos(jsonlPath);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(jsonlPath);
     // Old inactive agent should be filtered out
     expect(infos.find((i) => i.agentId === "old")).toBeUndefined();
   });
@@ -2544,7 +2536,7 @@ describe("getSubagentInfos lifecycle (R40)", () => {
     const twentySecAgo = new Date(Date.now() - 20_000);
     utimesSync(recentAgent, twentySecAgo, twentySecAgo);
 
-    const infos = await getSubagentInfos(jsonlPath);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(jsonlPath);
     const agent = infos.find((i) => i.agentId === "recent");
     expect(agent).toBeDefined();
     expect(agent?.isActive).toBe(false);
@@ -2556,7 +2548,7 @@ describe("getSubagentInfos lifecycle (R40)", () => {
     await writeFile(activeAgent, "{}");
     // mtime is now = active
 
-    const infos = await getSubagentInfos(jsonlPath);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(jsonlPath);
     const agent = infos.find((i) => i.agentId === "live");
     expect(agent).toBeDefined();
     expect(agent?.isActive).toBe(true);
@@ -2573,7 +2565,10 @@ describe("getSubagentInfos lifecycle (R40)", () => {
     utimesSync(agentPath, twentySecAgo, twentySecAgo);
 
     const stoppedAtMs = now - 10_000;
-    const infos = await getSubagentInfos(jsonlPath, stoppedAtMs);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(
+      jsonlPath,
+      stoppedAtMs,
+    );
     const agent = infos.find((i) => i.agentId === "pre");
     expect(agent).toBeDefined();
     expect(agent?.isActive).toBe(false);
@@ -2590,7 +2585,10 @@ describe("getSubagentInfos lifecycle (R40)", () => {
     utimesSync(agentPath, fiveSecAgo, fiveSecAgo);
 
     const stoppedAtMs = now - 20_000;
-    const infos = await getSubagentInfos(jsonlPath, stoppedAtMs);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(
+      jsonlPath,
+      stoppedAtMs,
+    );
     const agent = infos.find((i) => i.agentId === "post");
     expect(agent).toBeDefined();
     expect(agent?.isActive).toBe(true);
@@ -2607,7 +2605,10 @@ describe("getSubagentInfos lifecycle (R40)", () => {
     const twentySecAgo = new Date(Date.now() - 20_000);
     utimesSync(staleAgent, twentySecAgo, twentySecAgo);
 
-    const infos = await getSubagentInfos(jsonlPath, null);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(
+      jsonlPath,
+      null,
+    );
     const active = infos.find((i) => i.agentId === "now");
     const stale = infos.find((i) => i.agentId === "old");
     expect(active?.isActive).toBe(true);
@@ -2622,7 +2623,6 @@ describe("getSubagentInfos status file detection", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-subagent-status");
-    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2651,7 +2651,7 @@ describe("getSubagentInfos status file detection", () => {
       JSON.stringify({ state: "stopped", timestamp: new Date().toISOString() }),
     );
 
-    const infos = await getSubagentInfos(jsonlPath);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(jsonlPath);
     const agent = infos.find((i) => i.agentId === "abc123");
     expect(agent).toBeDefined();
     expect(agent?.isActive).toBe(false);
@@ -2663,7 +2663,7 @@ describe("getSubagentInfos status file detection", () => {
     await writeFile(agentPath, "{}");
     // mtime is now, no status file
 
-    const infos = await getSubagentInfos(jsonlPath);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(jsonlPath);
     const agent = infos.find((i) => i.agentId === "def456");
     expect(agent).toBeDefined();
     expect(agent?.isActive).toBe(true);
@@ -2681,7 +2681,7 @@ describe("getSubagentInfos status file detection", () => {
       JSON.stringify({ state: "running", timestamp: new Date().toISOString() }),
     );
 
-    const infos = await getSubagentInfos(jsonlPath);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(jsonlPath);
     const agent = infos.find((i) => i.agentId === "ghi789");
     expect(agent).toBeDefined();
     // Non-stopped status file → falls back to mtime, which is fresh → active
@@ -2696,7 +2696,6 @@ describe("getSubagentInfos ordering (R43)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r43");
-    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2724,7 +2723,7 @@ describe("getSubagentInfos ordering (R43)", () => {
     utimesSync(agentB, new Date(now - 2000), new Date(now - 2000));
     utimesSync(agentC, new Date(now - 1000), new Date(now - 1000));
 
-    const infos = await getSubagentInfos(jsonlPath);
+    const infos = await new ClaudeBackend(tmpDir).getSubagentInfos(jsonlPath);
     expect(infos).toHaveLength(3);
     // Descending by launchTime: C, B, A
     expect(infos[0].agentId).toBe("ccc");
@@ -2740,7 +2739,6 @@ describe("readSessionTail TaskCreate/TaskUpdate task parsing (R46)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r46");
-    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -2813,7 +2811,7 @@ describe("readSessionTail TaskCreate/TaskUpdate task parsing (R46)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.tasks).toHaveLength(2);
     expect(result.tasks?.[0].id).toBe("1");
     expect(result.tasks?.[0].subject).toBe("Implement feature X");
@@ -2835,7 +2833,7 @@ describe("readSessionTail TaskCreate/TaskUpdate task parsing (R46)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.tasks).toHaveLength(2);
     expect(result.tasks?.find((t) => t.id === "1")?.status).toBe("in_progress");
     expect(result.tasks?.find((t) => t.id === "2")?.status).toBe("completed");
@@ -2859,7 +2857,7 @@ describe("readSessionTail TaskCreate/TaskUpdate task parsing (R46)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.tasksTotal).toBe(4);
     expect(result.tasksDone).toBe(2);
   });
@@ -2878,7 +2876,7 @@ describe("readSessionTail TaskCreate/TaskUpdate task parsing (R46)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Task 2 is deleted → excluded from total
     expect(result.tasksTotal).toBe(2);
     expect(result.tasksDone).toBe(1);
@@ -2896,7 +2894,7 @@ describe("readSessionTail TaskCreate/TaskUpdate task parsing (R46)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.tasks?.map((t) => t.id)).toEqual(["1", "2", "10"]);
   });
 
@@ -2918,7 +2916,7 @@ describe("readSessionTail TaskCreate/TaskUpdate task parsing (R46)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(result.tasks).toBeUndefined();
     expect(result.tasksTotal).toBe(2);
     expect(result.tasksDone).toBe(1);
@@ -2945,7 +2943,7 @@ describe("readSessionTail TaskCreate/TaskUpdate task parsing (R46)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // TaskCreate wins: 1 task, not 3 from TodoWrite
     expect(result.tasks).toHaveLength(1);
     expect(result.tasksTotal).toBe(1);
@@ -2988,7 +2986,7 @@ describe("readSessionTail TaskCreate/TaskUpdate task parsing (R46)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // TaskUpdate for unknown ID must not block TodoWrite; fallback should produce 2 tasks
     expect(result.tasksTotal).toBe(2);
     expect(result.tasksDone).toBe(1);
@@ -3020,7 +3018,7 @@ describe("readSessionTail TaskCreate/TaskUpdate task parsing (R46)", () => {
     ];
     await writeFile(jsonlPath, `${lines.join("\n")}\n`);
 
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // No tool_result confirms the task ID → tasks/counts must remain undefined
     expect(result.tasks).toBeUndefined();
     expect(result.tasksTotal).toBeUndefined();
@@ -3035,7 +3033,6 @@ describe("readSessionTail line boundary edge case (R27)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r27-boundary");
-    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -3075,7 +3072,7 @@ describe("readSessionTail line boundary edge case (R27)", () => {
     // Force a cap-based offset by making the file appear > MAX_FIRST_READ. We can't
     // easily do that in a unit test, so instead verify the basic read path works correctly
     // when text starts with '\n' (empty first element after split).
-    const result = await readSessionTail(jsonlPath);
+    const result = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Both lines must be reachable; reversed scan finds line2 first (most recent)
     expect(result.latestAssistantActivity?.text).toBe("line two");
   });
@@ -3300,7 +3297,6 @@ describe("readSessionTail delta task completion (R46 Bug 1)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-r46-delta");
-    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -3371,7 +3367,7 @@ describe("readSessionTail delta task completion (R46 Bug 1)", () => {
     const pastTime = new Date(Date.now() - 5_000);
     utimesSync(jsonlPath, pastTime, pastTime);
 
-    const first = await readSessionTail(jsonlPath);
+    const first = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(first.tasksDone).toBe(0);
     expect(first.tasksTotal).toBe(2);
 
@@ -3380,7 +3376,7 @@ describe("readSessionTail delta task completion (R46 Bug 1)", () => {
     const existing = await readFile(jsonlPath, "utf8");
     await writeFile(jsonlPath, existing + secondBatch);
 
-    const second = await readSessionTail(jsonlPath);
+    const second = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(second.tasksDone).toBe(1);
     expect(second.tasksTotal).toBe(2);
   });
@@ -3398,7 +3394,7 @@ describe("readSessionTail delta task completion (R46 Bug 1)", () => {
     const pastTime = new Date(Date.now() - 5_000);
     utimesSync(jsonlPath, pastTime, pastTime);
 
-    const first = await readSessionTail(jsonlPath);
+    const first = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     expect(first.tasksTotal).toBe(1);
 
     // Second read: TaskUpdate for task ID 99 which was never created
@@ -3406,7 +3402,7 @@ describe("readSessionTail delta task completion (R46 Bug 1)", () => {
     const existing = await readFile(jsonlPath, "utf8");
     await writeFile(jsonlPath, existing + secondBatch);
 
-    const second = await readSessionTail(jsonlPath);
+    const second = await new ClaudeBackend(tmpDir).readSessionTail(jsonlPath);
     // Task 99 must not appear; only original task remains
     expect(second.tasksTotal).toBe(1);
     expect(second.tasksDone).toBe(0);
@@ -3562,56 +3558,52 @@ describe("disambiguateProjectNames", () => {
   });
 });
 
-// ── SessionStore cache isolation ─────────────────────────────────────────
+// ── ClaudeBackend cache isolation ─────────────────────────────────────────
 
-describe("SessionStore", () => {
-  test("constructing a fresh SessionStore gives clean caches", async () => {
+describe("ClaudeBackend", () => {
+  test("constructing a fresh ClaudeBackend gives clean caches", async () => {
     const tmpDir = await makeTempDir("ccmon-store-isolation");
-    const store = new SessionStore(tmpDir);
+    const backend = new ClaudeBackend(tmpDir);
 
-    // Store should have empty caches
-    await store.resetCaches();
-    expect(store.sessionTailCache.size).toBe(0);
-    expect(store.projectStateCache.size).toBe(0);
+    backend.resetCaches();
+    expect(backend.sessionTailCache.size).toBe(0);
+    expect(backend.projectStateCache.size).toBe(0);
 
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test("two SessionStore instances have independent caches", async () => {
+  test("two ClaudeBackend instances have independent caches", async () => {
     const tmpDirA = await makeTempDir("ccmon-store-a");
     const tmpDirB = await makeTempDir("ccmon-store-b");
 
-    const storeA = new SessionStore(tmpDirA);
-    const storeB = new SessionStore(tmpDirB);
+    const backendA = new ClaudeBackend(tmpDirA);
+    const backendB = new ClaudeBackend(tmpDirB);
 
-    // Populate storeA's caches indirectly via readSessionTail on a temp file
-    storeA.sessionTailCache.set("/fake/path", {
+    backendA.sessionTailCache.set("/fake/path", {
       mtime: Date.now(),
       fileSize: 100,
       data: { agentDescriptions: new Map() },
     });
 
-    expect(storeA.sessionTailCache.size).toBe(1);
-    expect(storeB.sessionTailCache.size).toBe(0);
+    expect(backendA.sessionTailCache.size).toBe(1);
+    expect(backendB.sessionTailCache.size).toBe(0);
 
     await rm(tmpDirA, { recursive: true, force: true });
     await rm(tmpDirB, { recursive: true, force: true });
   });
 
-  test("replaceDefaultStore swaps the singleton", async () => {
+  test("each new ClaudeBackend has independent caches", async () => {
     const tmpDir = await makeTempDir("ccmon-replace");
-    const newStore = new SessionStore(tmpDir);
-    newStore.sessionTailCache.set("/test", {
+    const backendA = new ClaudeBackend(tmpDir);
+    backendA.sessionTailCache.set("/test", {
       mtime: Date.now(),
       fileSize: 100,
       data: { agentDescriptions: new Map() },
     });
 
-    replaceDefaultStore(newStore);
-    expect(newStore.sessionTailCache.size).toBe(1);
+    const backendB = new ClaudeBackend(tmpDir);
+    expect(backendB.sessionTailCache.size).toBe(0);
 
-    // Replace back with a fresh store (cleanup for other tests)
-    replaceDefaultStore(new SessionStore(tmpDir));
     await rm(tmpDir, { recursive: true, force: true });
   });
 });

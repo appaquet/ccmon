@@ -9,8 +9,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, test } from "vitest";
+import { buildProjectState } from "../../src/backends/build-project-state";
 import { OpencodeBackend } from "../../src/backends/opencode";
-import type { BackendSource } from "../../src/sessions";
+import type { BackendSource } from "../../src/types";
 
 type DB = DatabaseSync;
 
@@ -388,7 +389,7 @@ describe("OpencodeBackend — core", () => {
     );
 
     const project = (await backend.scanProjects())[0];
-    const state = await backend.buildProjectState(project);
+    const state = await buildProjectState(backend, project);
 
     expect(state.source).toBe("opencode");
     expect(state.state).toBe("running");
@@ -422,7 +423,7 @@ describe("OpencodeBackend — core", () => {
     );
 
     const project = (await backend.scanProjects())[0];
-    const state = await backend.buildProjectState(project);
+    const state = await buildProjectState(backend, project);
     expect(state.state).toBe("stopped");
   });
 });
@@ -639,7 +640,7 @@ describe("OpencodeBackend — enrichment", () => {
     );
 
     const project = (await backend.scanProjects())[0];
-    const state = await backend.buildProjectState(project);
+    const state = await buildProjectState(backend, project);
 
     expect(state.model).toBe("claude-opus");
     expect(state.inputTokens).toBe(100);
@@ -820,7 +821,7 @@ describe("OpencodeBackend — sub-agents", () => {
     );
 
     const project = (await backend.scanProjects())[0];
-    const state = await backend.buildProjectState(project);
+    const state = await buildProjectState(backend, project);
 
     expect(state.subagents).toBeDefined();
     expect(state.subagents?.length).toBe(1);
@@ -1017,7 +1018,7 @@ describe("OpencodeBackend — sub-agents", () => {
     );
 
     const project = (await backend.scanProjects())[0];
-    const state = await backend.buildProjectState(project);
+    const state = await buildProjectState(backend, project);
     expect(state.lastUpdated).toBe(new Date(childUpdated).toISOString());
   });
 
@@ -1042,7 +1043,7 @@ describe("OpencodeBackend — sub-agents", () => {
     );
 
     const project = (await backend.scanProjects())[0];
-    const state = await backend.buildProjectState(project);
+    const state = await buildProjectState(backend, project);
     expect(state.lastUpdated).toBe(new Date(parentUpdated).toISOString());
   });
 

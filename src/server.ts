@@ -4,10 +4,11 @@ import { hostname as osHostname } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type WebSocket, WebSocketServer } from "ws";
+import { collectBackendStates } from "./backends/collect-states";
 import type { SessionBackend } from "./backends/types";
 import { DEFAULT_CONFIG } from "./config";
-import type { ProjectState } from "./sessions";
-import { disambiguateProjectNames, filterStaleProjects } from "./sessions";
+import { disambiguateProjectNames, filterStaleProjects } from "./project-utils";
+import type { ProjectState } from "./types";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const htmlPath = join(__dirname, "..", "public", "index.html");
@@ -68,32 +69,32 @@ export function startServer(options: ServerOptions): {
   }
 
   async function buildStateForBackend(backend: SessionBackend): Promise<void> {
-    let projects: Awaited<ReturnType<SessionBackend["scanProjects"]>>;
-    try {
-      projects = await backend.scanProjects();
-    } catch {
-      return;
-    }
-
-    for (const info of projects) {
-      let state: ProjectState;
-      try {
-        state = await backend.buildProjectState(info);
-      } catch {
-        continue;
+    const newStates = await collectBackendStates([backend]);
+    const keySet = backendToKeys.get(backend);
+    if (keySet) {
+      for (const key of keySet) {
+        stateMap.delete(key);
+        backendIndex.delete(key);
       }
-      const key = backend.projectKey(state);
+      keySet.clear();
+    }
+    for (const [key, state] of newStates) {
       stateMap.set(key, state);
       backendIndex.set(key, backend);
-      let keySet = backendToKeys.get(backend);
-      if (!keySet) {
-        keySet = new Set();
-        backendToKeys.set(backend, keySet);
-      }
-      keySet.add(key);
     }
+    backendToKeys.set(backend, new Set(newStates.keys()));
   }
 
+  // REVIEW: architecture-reviewer - rescanAllBackends deletes ALL keys for a backend before
+  // building new state. If buildStateForBackend fails mid-scan (e.g., 3rd project fails),
+  // the first 2 projects' states are lost until the next rescan. This causes transient
+  // flicker in the dashboard. Instead, build new state into a temporary map, then atomically
+  // replace the backend's keys after the full scan succeeds.
+  //
+  // Additionally, CLOSED_PROJECT_TTL_MS filtering is inconsistently applied: filterStaleProjects
+  // handles closed projects, but only at read time. The stateMap accumulates closed projects
+  // indefinitely until the periodic rescan evicts them. Consider active garbage collection
+  // on closed project state entries after TTL expires.
   async function rescanAllBackends(): Promise<void> {
     for (const backend of backends) {
       const keySet = backendToKeys.get(backend);

@@ -5,13 +5,11 @@ import { basename, dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import {
   isStatusEvent,
-  type ProjectInfo,
-  type ProjectState,
-  type SessionEnrichment,
   type SessionState,
   type StatusEvent,
-  type SubagentInfo,
-} from "../sessions";
+} from "../session-core";
+import type { SessionEnrichment } from "../session-enrichment";
+import type { ProjectInfo, SubagentInfo } from "../types";
 import type { SessionBackend } from "./types";
 
 const OPENCODE_ACTIVE_THRESHOLD_MS = 30_000;
@@ -78,11 +76,7 @@ export class OpencodeBackend implements SessionBackend {
     }));
   }
 
-  async buildProjectState(projectInfo: ProjectInfo): Promise<ProjectState> {
-    const state = await this.resolveState(projectInfo);
-
-    // Use MAX of parent and child session time_updated so sub-agent
-    // activity is reflected in the lastUpdated timestamp.
+  async computeLastUpdated(projectInfo: ProjectInfo): Promise<string | null> {
     const maxRow = this.db
       .prepare(
         "SELECT MAX(time_updated) AS max_updated FROM session WHERE id = ? OR parent_id = ?",
@@ -91,24 +85,9 @@ export class OpencodeBackend implements SessionBackend {
       | { max_updated: number | null }
       | undefined;
 
-    const lastUpdated =
-      maxRow?.max_updated != null
-        ? new Date(maxRow.max_updated).toISOString()
-        : null;
-
-    const base: ProjectState = { ...projectInfo, state, lastUpdated };
-
-    const enrichment = await this.enrichProject(projectInfo);
-    const subagents = await this.getSubagents(projectInfo);
-
-    const activeCount = subagents.filter((s) => s.isActive).length;
-
-    return {
-      ...base,
-      ...enrichment,
-      subagents: subagents.length > 0 ? subagents : undefined,
-      subagentCount: activeCount > 0 ? activeCount : undefined,
-    };
+    return maxRow?.max_updated != null
+      ? new Date(maxRow.max_updated).toISOString()
+      : null;
   }
 
   async resolveState(projectInfo: ProjectInfo): Promise<SessionState> {

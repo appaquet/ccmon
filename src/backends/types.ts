@@ -1,10 +1,6 @@
-import type {
-  ProjectInfo,
-  ProjectState,
-  SessionEnrichment,
-  SessionState,
-  SubagentInfo,
-} from "../sessions";
+import type { SessionState } from "../session-core";
+import type { SessionEnrichment } from "../session-enrichment";
+import type { ProjectInfo, SubagentInfo } from "../types";
 
 /**
  * Abstraction over a data source that provides Claude Code / OpenCode
@@ -18,12 +14,6 @@ export interface SessionBackend {
    * Returns basic ProjectInfo (directory, cwd, name, sessionId, etc.).
    */
   scanProjects(): Promise<ProjectInfo[]>;
-
-  /**
-   * Full project state: discovery + state resolution + enrichment + sub-agents.
-   * This is the primary entry point for the server and CLI.
-   */
-  buildProjectState(projectInfo: ProjectInfo): Promise<ProjectState>;
 
   /**
    * Starts backend-specific change detection.
@@ -41,6 +31,12 @@ export interface SessionBackend {
    * For Claude: reads status event log. For OpenCode: infers from timestamp recency.
    */
   resolveState(projectInfo: ProjectInfo): Promise<SessionState>;
+
+  /**
+   * Computes the lastUpdated timestamp for a project.
+   * Claude: JSONL mtime. OpenCode: SQL MAX(time_updated).
+   */
+  computeLastUpdated(projectInfo: ProjectInfo): Promise<string | null>;
 
   /**
    * Enriches a project with model name, latest messages, token counts,

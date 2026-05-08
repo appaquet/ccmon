@@ -17,14 +17,11 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 56 (OpenCode Plugin) complete. All tasks done including new dual-mode test coverage. 291 tests pass, requirements accepted.
+Project complete. All 57 phases implemented, all 86 requirements met.
 
-1. Plugin file (`resources/opencode-plugin/ccmon.ts`): subscribes to `event` + `chat.message` + `tool.execute.after` + `permission.ask` hooks, maps to states, writes NDJSON to `~/.local/state/ccmon/opencode-status.jsonl`
-2. `OpencodeBackend.resolveStateFromStatusLog()`: reads NDJSON log, caches by mtime, returns latest event per session; integrated into `resolveState()` with priority over timestamp inference
-3. `watchForChanges()`: fs.watch on status log directory (200ms debounce), triggers onUpdate; dual polling (30s with watcher, 5s without)
-4. Config: `statusLogPath` + `statusPollIntervalMs` in BackendConfigEntry, defaults via XDG_STATE_HOME
-5. 17 new tests: status log priority, fallback, missing file, corrupt JSON, error/closed state, XDG_STATE_HOME default, empty file, mtime cache invalidation, fs.watch + polling dual-mode (write triggers, debounce, fallback on delete, teardown, custom interval, integration with resolveState, sub-agent inactive override)
-6. CLAUDE.md trimmed from 183 to 57 lines for conciseness
+Final deliverable: Node.js + TypeScript monitoring dashboard for Claude Code and OpenCode sessions. Architecture: 6 focused source modules (types, project-utils, status-writer, session-core, session-enrichment, watcher) + 2 backend implementations (ClaudeBackend filesystem/JSONL, OpencodeBackend SQLite) behind a shared SessionBackend interface. Shared utilities for state assembly (buildProjectState) and backend iteration (collectBackendStates). Single-page vanilla JS dashboard with multi-backend WebSocket, real-time state updates, agent rows, context bars, task tracking.
+
+303 tests pass (291 original + 12 ClaudeBackend unit tests). Lint and typecheck clean.
 
 
 
@@ -248,8 +245,8 @@ Phase 56 (OpenCode Plugin) complete. All tasks done including new dual-mode test
   - R64.3: ✅ Hook config: `StopFailure` matcher calls `ccmon status` + `claude-tmux-indicator off`
   - R64.4: ✅ Documentation updated (CLAUDE.md states and hook events)
 
-- R65: ⬜ Dashboard cards capped at 360px max width; grid centered so cards don't stretch to fill viewport (Phase: Card Width Cap)
-- R66: 🔄 Dashboard cards have max-height on agent rows section (300px) with overflow hidden; header and context bar always visible (Phase: Card Height Cap)
+- R65: ✅ Dashboard cards capped at 360px max width; grid centered so cards don't stretch to fill viewport (Phase: Card Width Cap)
+- R66: ✅ Dashboard cards have max-height on agent rows section (300px) with overflow hidden; header and context bar always visible (Phase: Card Height Cap)
 - R67: ✅ Session name from `/rename` displayed in card header alongside project name (Phase: Session Name Display)
   - R67.1: Extract `sessionName` from JSONL `custom-title` lines during `scanEnrichment()` reverse pass
   - R67.2: Card header shows `projectName (sessionName)` when sessionName exists; parenthesized part non-bolded
@@ -261,20 +258,20 @@ Phase 56 (OpenCode Plugin) complete. All tasks done including new dual-mode test
 
 ### Multi-Backend + OpenCode Support
 
-- R69: ⬜ Abstract data source behind `SessionBackend` interface (Phase: OpenCode Backend)
+- R69: ✅ Abstract data source behind `SessionBackend` interface (Phase: OpenCode Backend)
   - R69.1: `scanProjects()`, `buildProjectState()`, `watchForChanges()`, `resolveState()`, `enrichProject()`, `getSubagents()`, `projectKey()` methods
-- R70: ⬜ Claude Code backend as thin wrapper around existing functions, zero behavior change (Phase: Claude Backend Extraction)
-- R71: ⬜ OpenCode backend reads SQLite database read-only via Bun's built-in `bun:sqlite` (Phase: OpenCode Backend)
-  - R71.1: 🔄 Project discovery from `session` + `project` tables; returns only latest session per `directory` via `MAX(time_updated)` grouping (Phase: OpenCode Session Deduplication)
-  - R71.2: 🔄 State inferred from `time_updated` recency; also considers child session activity so active sub-agents keep the parent project "running" (Phase: OpenCode State Detection Fix)
+- R70: ✅ Claude Code backend as thin wrapper around existing functions, zero behavior change (Phase: Claude Backend Extraction)
+- R71: ✅ OpenCode backend reads SQLite database read-only via Bun's built-in `bun:sqlite` (Phase: OpenCode Backend)
+  - R71.1: ✅ Project discovery from `session` + `project` tables; returns only latest session per `directory` via `MAX(time_updated)` grouping (Phase: OpenCode Session Deduplication)
+  - R71.2: ✅ State inferred from `time_updated` recency; also considers child session activity so active sub-agents keep the parent project "running" (Phase: OpenCode State Detection Fix)
   - R71.3: Enrichment from `message.data` + `part.data` JSON blobs (model, messages, tokens)
   - R71.4: Sub-agents via `parent_id` linking
   - R71.5: Change detection via SQLite polling at configurable interval
-- R72: ⬜ Config supports `backends` array (`{ type, enabled, ...opts }`), defaults to both backends enabled (Phase: Config)
-- R73: ⬜ Server merges projects from all backends, `source` field on each `ProjectState` (Phase: Multi-Backend Server)
-- R74: ⬜ CLI `dump` / `dump --watch` / `serve` work with all backends (Phase: CLI)
-- R75: ⬜ `ccmon status` subcommand remains Claude-only — hook processing unchanged (Phase: CLI)
-- R76: ⬜ Frontend shows source badge ("CC" / "OC") on project cards (Phase: Frontend)
+- R72: ✅ Config supports `backends` array (`{ type, enabled, ...opts }`), defaults to both backends enabled (Phase: Config)
+- R73: ✅ Server merges projects from all backends, `source` field on each `ProjectState` (Phase: Multi-Backend Server)
+- R74: ✅ CLI `dump` / `dump --watch` / `serve` work with all backends (Phase: CLI)
+- R75: ✅ `ccmon status` subcommand remains Claude-only — hook processing unchanged (Phase: CLI)
+- R76: ✅ Frontend shows source badge ("CC" / "OC") on project cards (Phase: Frontend)
 
 ### OpenCode Plugin for Status Updates
 
@@ -287,19 +284,19 @@ Phase 56 (OpenCode Plugin) complete. All tasks done including new dual-mode test
 
 ### Runtime Migration (Bun → Node.js)
 
-- R77: ⬜ All source code runs on Node.js 22 LTS without Bun runtime (Phase: Migrate to Node.js)
+- R77: ✅ All source code runs on Node.js 22 LTS without Bun runtime (Phase: Migrate to Node.js)
   - R77.1: `node src/cli.ts <subcommand>` works identically to `bun run src/cli.ts <subcommand>`
   - R77.2: No `Bun.*` API calls remain in production code
   - R77.3: No `bun:` prefixed imports remain
-- R78: ⬜ Tests run on vitest (same expect/describe API as bun:test) (Phase: Migrate to Node.js)
+- R78: ✅ Tests run on vitest (same expect/describe API as bun:test) (Phase: Migrate to Node.js)
   - R78.1: All existing tests pass with same assertions
   - R78.2: `npm test` runs all test files
-- R79: ⬜ Nix flake exposes ccmon via Node.js 22, not bun (Phase: Migrate to Node.js)
+- R79: ✅ Nix flake exposes ccmon via Node.js 22, not bun (Phase: Migrate to Node.js)
   - R79.1: `nix build` succeeds
   - R79.2: `nix develop` provides nodejs_22 shell
-- R80: ⬜ CI uses Node.js 22, not bun (Phase: Migrate to Node.js)
-- R81: ⬜ `npm run lint`, `npm run typecheck`, `npm test` all pass (Phase: Migrate to Node.js)
-- R82: ⬜ `src/env.ts` Bun sandbox workaround removed — Node.js process.env works correctly (Phase: Migrate to Node.js)
+- R80: ✅ CI uses Node.js 22, not bun (Phase: Migrate to Node.js)
+- R81: ✅ `npm run lint`, `npm run typecheck`, `npm test` all pass (Phase: Migrate to Node.js)
+- R82: ✅ `src/env.ts` Bun sandbox workaround removed — Node.js process.env works correctly (Phase: Migrate to Node.js)
 
 #### Out of Scope
 
@@ -549,91 +546,17 @@ Address 19 REVIEW comments from 4 review agents. 2 critical (R63 regression — 
 
 Fix OpenCode projects showing "stopped" when sub-agents are actively running. Root cause: `resolveState` only checks parent `session.time_updated` but sub-agent activity updates child `session` rows. Fix adds child session activity check to `resolveState` and corrects `lastUpdated` to reflect most recent activity across parent and children.
 
-### ⬜ 53 Phase: Server Staleness Fix
+### ✅ 53 Phase: Server Staleness Fix
 [53-server-staleness-fix](53-server-staleness-fix.md)
 
 Fix server `stateMap` freezing when backend change detection mechanisms fail. R61 "periodic safety broadcast" only re-sends frozen state — change 30s interval to actually re-scan from disk.
 
-### ⬜ 54 Phase: OpenCode Sub-Agent Detection Hardening
+### ✅ 54 Phase: OpenCode Sub-Agent Detection Hardening
 [54-opencode-subagent-harden](54-opencode-subagent-harden.md)
 
 Investigate and harden OpenCode sub-agent detection. Add debug logging to diagnose edge cases. Add fallback child session query as safety net when `parent_id` linkage has edge cases.
 
-### ⬜ 36 Phase: Status Dir Mismatch Fix
-
-[36-server-state-staleness](36-server-state-staleness.md)
-
-Fix `resolveProjectDir()` writing status events to wrong dir when session's working_dir is a subdirectory of the actual project dir (e.g., `backend4/platform` → `backend4-platform` instead of `backend4`).
-
-### ⬜ 37 Phase: Permission Race Fix
-
-[37-permission-race-fix](37-permission-race-fix.md)
-
-Fix sub-agent permission prompts being immediately "resolved" by concurrent PostToolUse events. All hooks share the main session_id, so any PostToolUse resolves any PermissionRequest. Add minimum time-gap requirement (3s) for PostToolUse resolution.
-
-### ✅ 38 Phase: StopFailure Hook
-
-[38-stop-failure-hook](38-stop-failure-hook.md)
-
-Add `StopFailure` hook event detection for API errors. New `error` state with persistent red flash animation (click-to-dismiss). Extends resolveState, adds hook config entry.
-
-### ⬜ 39 Phase: Card Width Cap
-
-[39-card-width-cap](39-card-width-cap.md)
-
-Cap card max width at 360px and center grid. Prevents cards from stretching to fill full viewport width on wide screens.
-
-### 🔄 40 Phase: Card Height Cap
-[40-card-height-cap](40-card-height-cap.md)
-
-Cap card agent rows section at 300px max-height with overflow hidden. Header and context bar remain visible. Prevents cards with many sub-agents from dominating the viewport.
-
-### ✅ 41 Phase: Session Name Display
-[41-session-name-display](41-session-name-display.md)
-
-Extract user-assigned session names from JSONL `custom-title` lines and display in card header as `projectName (sessionName)`. Adds `sessionName` to SessionEnrichment and ProjectState.
-
-### ✅ 42 Phase: Remove sessions-index.json + Fix JSONL Discovery
-[42-first-line-fallback-fix](42-first-line-fallback-fix.md)
-
-Remove deprecated `sessions-index.json` support entirely. Make JSONL the sole discovery mechanism. Fix `readFirstLine()` to scan multiple lines in buffer for new JSONL formats that start with `permission-mode` records.
-
-### 🔄 43 Phase: Fix Home Directory Resolution
-[43-home-resolution](43-home-resolution.md)
-
-Replace `Bun.env.HOME ?? "/root"` and `process.env.HOME ?? "/root"` with `os.homedir()` from `node:os`. Bun 1.3.11 from Nix doesn't expose env variables to JS, so the fallback incorrectly resolves to `/root`. `os.homedir()` reads `/etc/passwd` and works regardless.
-
-### 🔄 44 Phase: OpenCode Support — Multi-Backend Abstraction
-[44-opencode-support](44-opencode-support.md)
-
-Refactor ccmon to support both Claude Code and OpenCode as data sources. Abstract session scanning behind a `SessionBackend` interface with per-backend implementations: `ClaudeBackend` (filesystem/JSONL, extracted from existing code) and `OpencodeBackend` (SQLite read-only via `bun:sqlite`). Update server, CLI, config, and frontend to merge projects from all backends. All 14 tasks implemented, 256 tests pass (256 pass, 0 fail).
-
-### ⬜ 46 Phase: Dependabot Setup
-[46-dependabot](46-dependabot.md)
-
-Configure Dependabot version updates for the `bun` ecosystem with daily checks and a 7-day release cooldown (`cooldown.default-days: 7`). Prevents supply chain attacks by only opening PRs for releases published ≥7 days ago.
-
-### ⬜ 47 Phase: Backend Pill Alignment
-[47-backend-pill-alignment](47-backend-pill-alignment.md)
-
-Right-align the OC/CC backend indicator pill by wrapping it in a pills-group container with the status pill. Fixes the gap between project name and OC/CC pill caused by `justify-content: space-between` distributing three children evenly across the header.
-
-### ⬜ 48 Phase: OpenCode Session Deduplication
-[48-opencode-session-dedup](48-opencode-session-dedup.md)
-
-Fix `OpencodeBackend.scanProjects()` returning all sessions for the same project directory. Modify SQL query to return only the session with `MAX(time_updated)` per unique `directory`, matching Claude Code's `findLatestJSONL()` behavior.
-
-### ✅ 49 Phase: Review Fixes 3
-[49-review-fixes-3](49-review-fixes-3.md)
-
-Address 21 REVIEW comments from second review pass. 4 high (DRY buildProjectState, --project filter mutation, enrichProject bypass, two-tier cache error isolation), 7 medium (import hygiene, onUpdate callback, arg parsing, method splitting), 8 low (comment cleanup, dead code, type assertions). 2 items deferred: module-level caches + god module refactoring. 19/19 tasks completed, 260 tests pass.
-
-### ✅ 50 Phase: SessionStore + Module Split
-[50-session-store](50-session-store.md)
-
-Address 2 deferred REVIEW comments: (1) Extract `sessionTailCache` and `projectStateCache` from module-level globals into a `SessionStore` class with instance-level state. (2) Split the 1312-line god module by extracting enrichment parsing (~290 lines) into `session-enrichment.ts`. Eliminates 31 `_resetCachesForTesting()` calls across 3 test files.
-
-### ⬜ 55 Phase: Migrate from Bun to Node.js
+### ✅ 55 Phase: Migrate from Bun to Node.js
 
 [55-migrate-to-node](55-migrate-to-node.md)
 
@@ -644,6 +567,12 @@ Replace Bun runtime with Node.js 22 LTS (native TS via Amaro). Replace Bun.file/
 [56-opencode-plugin](56-opencode-plugin.md)
 
 Implement an OpenCode plugin that writes ccmon status events on session lifecycle changes (idle→stopped, error→error, permission→waiting, etc.), mirroring Claude Code hook behavior. Extend OpencodeBackend to read plugin-written status as primary state source with fs.watch for near-instant updates. Falls back to timestamp inference when plugin not installed.
+
+### ✅ 57 Phase: Architecture Refactor
+
+[57-architecture-refactor](57-architecture-refactor.md)
+
+Split 849-line sessions.ts into 5 focused modules (types, project-utils, status-writer, session-core, session-enrichment). Absorbed SessionStore into ClaudeBackend, removing singleton pattern and free-function wrappers. Extracted buildProjectState from SessionBackend interface into standalone shared utility. Created collectBackendStates to deduplicate server.ts/cli.ts cross-file logic. 12 new ClaudeBackend unit tests. 303 tests pass.
 
 ## Files
 
@@ -671,9 +600,23 @@ Implement an OpenCode plugin that writes ccmon status events on session lifecycl
 - **docs/features/2026-02-18-ccmon/53-server-staleness-fix.md**: Phase 53 plan — fix server stateMap freezing; change periodic interval to rescan from disk (Phase: Server Staleness Fix)
 - **docs/features/2026-02-18-ccmon/54-opencode-subagent-harden.md**: Phase 54 plan — investigation + hardening OpenCode sub-agent detection; debug logging + fallback child query (Phase: OpenCode Sub-Agent Detection Hardening)
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed; `homedir()` replaces `process.env.HOME` fallback (Phase: Backend, Review Fixes, Home Resolution Fix)
-- **src/sessions.ts**: Core session logic — `scanProjects()`, `getProjectState()`, `mapHookEventToState()`, `writeStatusEvent()`, `writeStatusTruncate()`, `filterStaleProjects()`; `StatusEvent` type, append-only NDJSON status log, `resolveState()` with event-scan logic; `latestUserActivity`, `latestAssistantActivity`, `lastMessageTime`, `launchTime`, `tasks[]`; last-value input tokens; sub-agent 5m expiry; sub-agent descriptions from queue-operation; readSessionTail refactored into helpers; readFirstLine 4096-byte slice; `findLatestJSONL` excludes status log files; `homedir()` replaces `Bun.env.HOME` fallback; `readFileSync`/`writeFileSync` replace `Bun.file`/`Bun.write` (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook, Home Resolution Fix, Migrate to Node.js)
+- **src/sessions.ts**: Barrel re-exports from all session modules — session-core, session-enrichment, types, project-utils, status-writer (Phase: Architecture Refactor)
+- **src/types.ts**: Shared types — `ProjectInfo`, `ProjectState`, `SubagentInfo`, `BackendSource` (Phase: Architecture Refactor)
+- **src/session-core.ts**: Status log reading and state resolution — `SessionState`, `StatusEvent`, `resolveState`, `readStatusLog` (Phase: Architecture Refactor)
+- **src/session-enrichment.ts**: JSONL tail parsing for model/messages/tokens/tasks — `SessionEnrichment`, `scanEnrichment`, `mergeEnrichment` (Phase: SessionStore + Module Split, Architecture Refactor)
+- **src/project-utils.ts**: Project scanning and filtering — `scanProjects`, `filterStaleProjects`, `disambiguateProjectNames`, JSONL helpers (Phase: Architecture Refactor)
+- **src/status-writer.ts**: Hook status file writing — `writeStatusEvent`, `writeNotificationStatus`, `mapHookEventToState` (Phase: Architecture Refactor)
+- **src/backends/claude.ts**: Claude Code backend — filesystem/JSONL source, absorbed SessionStore with readSessionTail, getSubagentInfos, buildProjectState (Phase: Architecture Refactor)
+- **src/backends/opencode.ts**: OpenCode backend — SQLite read-only with plugin status log integration (Phase: Architecture Refactor)
+- **src/backends/types.ts**: `SessionBackend` interface (6 focused methods) + `BackendConfigEntry` type (Phase: Architecture Refactor)
+- **src/backends/build-project-state.ts**: Shared `buildProjectState(backend, info)` utility (Phase: Architecture Refactor)
+- **src/backends/collect-states.ts**: Shared `collectBackendStates(backends)` utility for server/CLI (Phase: Architecture Refactor)
+- **src/backends/index.ts**: `createBackends(config)` factory (Phase: Architecture Refactor)
+- **src/server.ts**: HTTP + WebSocket server; uses `collectBackendStates` + standalone `buildProjectState` (Phase: Architecture Refactor)
+- **src/cli.ts**: CLI entry point; imports from final modules — project-utils, status-writer, session-core (Phase: Architecture Refactor)
 - **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed; exponential backoff restart-on-error for both watchers (Phase: Session Detection, Review Fixes, Watcher Resilience)
-- **src/cli.ts**: CLI entry point — `dump`, `dump --watch`, `dump --project`, `status`, `serve` subcommands; arg validation errors, exit() helper, readStdin one-liner; `sub` parses new WS envelope with backward compat; `sub --host` flag; status builds StatusEvent and routes to writeStatusEvent/writeStatusTruncate; `homedir()` replaces `Bun.env.HOME` fallback; `process.env` for CLAUDE_PROJECTS_DIR; `process.stdin` for hook input (Phase: Session Detection, Backend, Review Fixes, Multi-Backend, Append-Only Status Log, Home Resolution Fix, Migrate to Node.js)
+- **tests/backends/claude.test.ts**: ClaudeBackend unit tests — scanProjects, resolveState, enrichProject, getSubagents, buildProjectState, projectKey, targeted refresh (Phase: Architecture Refactor)
+- **tests/backends/opencode.test.ts**: OpencodeBackend unit tests — scanProjects, buildProjectState, resolveState with plugin priority, sub-agent detection (Phase: OpenCode Plugin, Architecture Refactor)
 - **src/env.ts**: Deleted — Bun sandbox workaround no longer needed with Node.js (Phase: Home Resolution Fix, Migrate to Node.js)
 - **src/server.ts**: Node.js HTTP + WebSocket server (http.createServer + ws) — `/`, `/api/state`, `/ws` endpoints; HTML read at module init; WS payload wrapped in `{ hostname, projects }` envelope; `Cache-Control: no-cache` on HTML response; periodic 30s safety rescan + broadcast; `fileURLToPath(import.meta.url)` replaces `import.meta.dir` (Phase: Backend, Review Fixes, Multi-Backend, Watcher Resilience, Server Staleness Fix, Migrate to Node.js)
 - **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)

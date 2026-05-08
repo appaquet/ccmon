@@ -1,3 +1,12 @@
+// REVIEW: architecture-reviewer - Server tests only use ClaudeBackend (wrapped in NoWatchBackend).
+// There are no tests for multi-backend scenarios (Claude + OpenCode simultaneously) or for
+// the server's backend health isolation (i.e., one failing backend shouldn't drop projects
+// from the healthy backend). The integration.test.ts covers some cross-component scenarios
+// but at 208 lines it's insufficient for verifying the multi-backend server behavior.
+//
+// Add test cases: (1) two backends (Claude + OpenCode mock), verify state from both;
+// (2) one backend throws during scan, verify the other backend's projects survive;
+// (3) new backends appear/disappear via watcher callbacks don't corrupt state map.
 import { utimesSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -5,14 +14,9 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ClaudeBackend } from "../src/backends/claude";
 import type { SessionBackend } from "../src/backends/types";
 import { startServer } from "../src/server";
-import type {
-  ProjectInfo,
-  ProjectState,
-  SessionEnrichment,
-  SessionState,
-  SubagentInfo,
-} from "../src/sessions";
-import { replaceDefaultStore, SessionStore } from "../src/sessions";
+import type { SessionState } from "../src/session-core";
+import type { SessionEnrichment } from "../src/session-enrichment";
+import type { ProjectInfo, SubagentInfo } from "../src/types";
 import { makeTempDir } from "./_helpers";
 
 /**
@@ -25,14 +29,14 @@ class NoWatchBackend implements SessionBackend {
   scanProjects() {
     return this.inner.scanProjects();
   }
-  buildProjectState(info: ProjectInfo): Promise<ProjectState> {
-    return this.inner.buildProjectState(info);
-  }
   watchForChanges(_onUpdate: () => void): { stop: () => void } {
     return { stop() {} };
   }
   resolveState(info: ProjectInfo): Promise<SessionState> {
     return this.inner.resolveState(info);
+  }
+  computeLastUpdated(info: ProjectInfo): Promise<string | null> {
+    return this.inner.computeLastUpdated(info);
   }
   enrichProject(info: ProjectInfo): Promise<SessionEnrichment> {
     return this.inner.enrichProject(info);
@@ -373,7 +377,6 @@ describe("server-side state map (R31)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-server-r31");
-    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {
@@ -596,7 +599,6 @@ describe("state propagation (R34)", () => {
 
   beforeEach(async () => {
     tmpDir = await makeTempDir("ccmon-server-r34");
-    replaceDefaultStore(new SessionStore(tmpDir));
   });
 
   afterEach(async () => {

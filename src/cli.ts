@@ -3,20 +3,23 @@ import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { createBackends } from "./backends";
-import type { SessionBackend } from "./backends/types";
+import { collectBackendStates } from "./backends/collect-states";
 import { loadConfig, mergeCliOverrides } from "./config";
-import { startServer } from "./server";
 import {
   disambiguateProjectNames,
   filterStaleProjects,
-  mapHookEventToState,
-  type StatusEvent,
   scanProjects,
+} from "./project-utils";
+import { startServer } from "./server";
+import type { StatusEvent } from "./session-core";
+import {
+  mapHookEventToState,
   writeNotificationStatus,
   writeStatusEvent,
   writeStatusTruncate,
   writeSubagentStatus,
-} from "./sessions";
+} from "./status-writer";
+import type { ProjectState } from "./types";
 
 function exit(code: number): never {
   process.exit(code);
@@ -139,36 +142,10 @@ Supports Claude Code and OpenCode monitoring. Configure backends in
   process.exit(1);
 }
 
-async function buildProjectMap(
-  backends: SessionBackend[],
-): Promise<
-  Map<string, Awaited<ReturnType<SessionBackend["buildProjectState"]>>>
-> {
-  const map = new Map<
-    string,
-    Awaited<ReturnType<SessionBackend["buildProjectState"]>>
-  >();
-  for (const backend of backends) {
-    let projects: Awaited<ReturnType<SessionBackend["scanProjects"]>>;
-    try {
-      projects = await backend.scanProjects();
-    } catch {
-      continue;
-    }
-    for (const info of projects) {
-      try {
-        const state = await backend.buildProjectState(info);
-        map.set(backend.projectKey(state), state);
-      } catch {}
-    }
-  }
-  return map;
-}
-
 async function runDump(): Promise<void> {
   try {
     const { backends, close } = createBackends(config);
-    const projectMap = await buildProjectMap(backends);
+    const projectMap = await collectBackendStates(backends);
 
     const allProjects = [...projectMap.values()];
     disambiguateProjectNames(allProjects);
@@ -198,10 +175,7 @@ async function runDump(): Promise<void> {
 
 async function runDumpWatch(): Promise<void> {
   const { backends, close } = createBackends(config);
-  const projectMap = new Map<
-    string,
-    Awaited<ReturnType<SessionBackend["buildProjectState"]>>
-  >();
+  const projectMap = new Map<string, ProjectState>();
 
   function formatWatchOutput(): string {
     const allProjects = [...projectMap.values()];
@@ -220,7 +194,7 @@ async function runDumpWatch(): Promise<void> {
   }
 
   try {
-    const initial = await buildProjectMap(backends);
+    const initial = await collectBackendStates(backends);
     for (const [k, v] of initial) projectMap.set(k, v);
     const output = formatWatchOutput();
     if (output) console.log(output);
@@ -234,18 +208,8 @@ async function runDumpWatch(): Promise<void> {
   for (const backend of backends) {
     const watcher = backend.watchForChanges(async () => {
       try {
-        let projects: Awaited<ReturnType<SessionBackend["scanProjects"]>>;
-        try {
-          projects = await backend.scanProjects();
-        } catch {
-          return;
-        }
-        for (const info of projects) {
-          try {
-            const state = await backend.buildProjectState(info);
-            projectMap.set(backend.projectKey(state), state);
-          } catch {}
-        }
+        const backendStates = await collectBackendStates([backend]);
+        for (const [k, v] of backendStates) projectMap.set(k, v);
         const output = formatWatchOutput();
         if (output) console.log(output);
       } catch (err) {
