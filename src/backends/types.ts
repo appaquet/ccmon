@@ -1,6 +1,10 @@
 import type { SessionState } from "../session-core";
-import type { SessionEnrichment } from "../session-enrichment";
-import type { ProjectInfo, SubagentInfo } from "../types";
+import type {
+  NotificationMeta,
+  ProjectInfo,
+  SessionEnrichment,
+  SubagentInfo,
+} from "../types";
 
 /**
  * Abstraction over a data source that provides Claude Code / OpenCode
@@ -48,6 +52,12 @@ export interface SessionBackend {
    * Returns active and recently-completed sub-agents for a session.
    */
   getSubagents(projectInfo: ProjectInfo): Promise<SubagentInfo[]>;
+
+  /**
+   * Returns notification metadata for the project, or null if none.
+   * Optional — backends without notification support skip this method.
+   */
+  getNotification?(projectInfo: ProjectInfo): Promise<NotificationMeta | null>;
 
   /**
    * Stable unique key for a project, suitable for use as a Map key.

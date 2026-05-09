@@ -11,7 +11,6 @@ import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, test } from "vitest";
 import { buildProjectState } from "../../src/backends/build-project-state";
 import { OpencodeBackend } from "../../src/backends/opencode";
-import type { BackendSource } from "../../src/types";
 
 type DB = DatabaseSync;
 
@@ -106,8 +105,7 @@ describe("OpencodeBackend — core", () => {
       cwd: "/home/user/myproject",
       projectName: "myproject",
       sessionId: "ses_abc123",
-      latestJSONL: "",
-      source: "opencode" as BackendSource,
+      source: "opencode" as const,
     };
     const key = backend.projectKey(project);
     expect(typeof key).toBe("string");

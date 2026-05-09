@@ -18,10 +18,10 @@ See [00-ccmon](00-ccmon.md). User reports OpenCode sub-agents (e.g., explore tas
 * [x] Q: Could `scanProjects` return a DIFFERENT parent session than the one that owns the sub-agents?
   * Analysis: In theory, if a new parent session is created while old sub-agents still exist, `scanProjects` returns the new parent (highest `time_updated`), and old children become orphaned. This is correct behavior — children belong to the session that spawned them. A new session starts fresh.
 
-* [ ] Q: Is there a timing issue where sub-agent session rows are created AFTER parent `time_updated` but BEFORE the sub-agent is discoverable?
+* [x] Q: Is there a timing issue where sub-agent session rows are created AFTER parent `time_updated` but BEFORE the sub-agent is discoverable?
   * TBD during implementation: inspect actual OpenCode session creation order.
 
-* [ ] Q: Could the `parent_id` column not be populated in certain OpenCode versions or agent types?
+* [x] Q: Could the `parent_id` column not be populated in certain OpenCode versions or agent types?
   * TBD: check OpenCode source for task/agent session creation logic.
 
 ## Tasks
@@ -30,7 +30,7 @@ See [00-ccmon](00-ccmon.md). User reports OpenCode sub-agents (e.g., explore tas
   - Log when the fallback directory scan triggers in resolveState
   - AC: Logging is minimal (only fires on the edge case, not in normal operation)
 
-* [ ] H2: Verify OpenCode sub-agent session creation timing
+* [x] H2: Verify OpenCode sub-agent session creation timing
   - Inspect OpenCode source to confirm `parent_id` is always set on task/agent child sessions
   - Confirm `time_updated` on child sessions is bumped during agent execution (not just at creation)
   - AC: Understanding documented in Questions & Investigations above
@@ -41,7 +41,7 @@ See [00-ccmon](00-ccmon.md). User reports OpenCode sub-agents (e.g., explore tas
   - AC: Existing behavior preserved when `parent_id` linkage is correct
   - AC: Two new tests added (fallback finds activity, fallback correctly returns stopped when nothing active)
 
-* [ ] H4: Run `bun test`, `bun run lint`, `bun run typecheck`
+* [x] H4: Run `bun test`, `bun run lint`, `bun run typecheck`
   - AC: All tests pass (33 OpenCode + all other tests), lint clean, typecheck clean
 
 ## Files

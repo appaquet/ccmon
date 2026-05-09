@@ -67,7 +67,7 @@ Phase 01 (Session Detection) is complete: `scanProjects()`, `readStatus()`, `che
   * Call `mapHookEventToState()`, `writeStatus()`
   * Output hook response JSON to stdout
 * [x] Verify: `bun test` passes
-* [ ] Manual test: pipe sample JSON and verify `status.local.json` written
+* [x] Manual test: pipe sample JSON and verify `status.local.json` written
 
 ### Step 5: `dump --watch` — TDD
 
@@ -81,7 +81,7 @@ Phase 01 (Session Detection) is complete: `scanProjects()`, `readStatus()`, `che
   * Start `watchForChanges()`, on update: print separator with timestamp + new JSON
   * Handle SIGINT: call `watcher.stop()`, exit 0
 * [x] Verify: `bun test` passes
-* [ ] Manual test: run `bun run dump --watch`, trigger status change, observe update
+* [x] Manual test: run `bun run dump --watch`, trigger status change, observe update
 
 ### Step 6: HTTP + WebSocket server
 
@@ -117,7 +117,7 @@ Phase 01 (Session Detection) is complete: `scanProjects()`, `readStatus()`, `che
   * `dump`: filter `getProjectState()` by `projectName`, output single object if `--project` set
   * `dump --watch`: remove `--- <timestamp>` separator line; output one JSON line per update. If `--project` set, filter and output single object
 * [x] Verify: `bun test` passes (57 pass, 0 fail)
-* [ ] Update README.md with `--project` flag documentation
+* [x] Update README.md with `--project` flag documentation
 
 ### Bug fix: `Stop` → `stopped`, remove `waiting_for_answer`
 

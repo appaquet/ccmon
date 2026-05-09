@@ -7,7 +7,9 @@ import { type WebSocket, WebSocketServer } from "ws";
 import { collectBackendStates } from "./backends/collect-states";
 import type { SessionBackend } from "./backends/types";
 import { DEFAULT_CONFIG } from "./config";
+import { log } from "./log";
 import { disambiguateProjectNames, filterStaleProjects } from "./project-utils";
+import { BROADCAST_INTERVAL_MS } from "./timing.js";
 import type { ProjectState } from "./types";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -41,18 +43,18 @@ export function startServer(options: ServerOptions): {
 
   const clients = new Set<WebSocket>();
 
-  // Per-backend state map: backend.projectKey(project) → ProjectState.
-  // Each backend's keys are tracked independently via backendToKeys so a
-  // temporary failure in one backend preserves state from healthy backends.
-  const stateMap = new Map<string, ProjectState>();
-  const backendIndex = new Map<string, SessionBackend>();
-  const backendToKeys = new Map<SessionBackend, Set<string>>();
+  const backendStates = new Map<SessionBackend, Map<string, ProjectState>>();
+
+  function allStates(): ProjectState[] {
+    const states: ProjectState[] = [];
+    for (const subMap of backendStates.values()) {
+      for (const state of subMap.values()) states.push(state);
+    }
+    return states;
+  }
 
   function currentFilteredState(): ProjectState[] {
-    const filtered = filterStaleProjects(
-      [...stateMap.values()],
-      maxInactivityHours,
-    );
+    const filtered = filterStaleProjects(allStates(), maxInactivityHours);
     const cloned = filtered.map((p) => ({ ...p }));
     disambiguateProjectNames(cloned);
     return cloned;
@@ -71,19 +73,7 @@ export function startServer(options: ServerOptions): {
 
   async function buildStateForBackend(backend: SessionBackend): Promise<void> {
     const newStates = await collectBackendStates([backend]);
-    const keySet = backendToKeys.get(backend);
-    if (keySet) {
-      for (const key of keySet) {
-        stateMap.delete(key);
-        backendIndex.delete(key);
-      }
-      keySet.clear();
-    }
-    for (const [key, state] of newStates) {
-      stateMap.set(key, state);
-      backendIndex.set(key, backend);
-    }
-    backendToKeys.set(backend, new Set(newStates.keys()));
+    backendStates.set(backend, newStates);
   }
 
   async function rescanAllBackends(): Promise<void> {
@@ -92,10 +82,10 @@ export function startServer(options: ServerOptions): {
         await buildStateForBackend(backend);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`ccmon: rescan error for backend: ${msg}\n`);
+        log.error("rescan error for backend", new Error(msg));
       }
     }
-    disambiguateProjectNames([...stateMap.values()]);
+    disambiguateProjectNames(allStates());
   }
 
   async function rescanBackend(backend: SessionBackend): Promise<void> {
@@ -103,22 +93,22 @@ export function startServer(options: ServerOptions): {
       await buildStateForBackend(backend);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`ccmon: rescan error for backend: ${msg}\n`);
+      log.error("rescan error for backend", new Error(msg));
     }
-    disambiguateProjectNames([...stateMap.values()]);
+    disambiguateProjectNames(allStates());
   }
 
   // Periodic safety rescan + broadcast: re-scans from disk and pushes current
   // state every 30 s so clients recover from watcher failures or missed events.
-  const BROADCAST_INTERVAL_MS = options.broadcastIntervalMs ?? 30_000;
+  const broadcastMs = options.broadcastIntervalMs ?? BROADCAST_INTERVAL_MS;
   const broadcastInterval = setInterval(() => {
     rescanAllBackends()
       .then(() => broadcastCurrent())
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`ccmon: periodic rescan error: ${msg}\n`);
+        log.error("periodic rescan error", new Error(msg));
       });
-  }, BROADCAST_INTERVAL_MS);
+  }, broadcastMs);
 
   // Start watchers for each backend
   const watcherStops: Array<{ stop: () => void }> = [];
@@ -128,7 +118,7 @@ export function startServer(options: ServerOptions): {
         .then(() => broadcastCurrent())
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
-          process.stderr.write(`ccmon: broadcast error: ${msg}\n`);
+          log.error("broadcast error", new Error(msg));
         });
     });
     watcherStops.push(watcher);
@@ -167,6 +157,22 @@ export function startServer(options: ServerOptions): {
       return;
     }
 
+    if (url.pathname.startsWith("/js/")) {
+      const filePath = join(__dirname, "..", "public", url.pathname);
+      try {
+        const content = readFileSync(filePath, "utf8");
+        res.writeHead(200, {
+          "Content-Type": "application/javascript",
+          "Cache-Control": "no-cache",
+        });
+        res.end(content);
+      } catch {
+        res.writeHead(404);
+        res.end("Not Found");
+      }
+      return;
+    }
+
     res.writeHead(404);
     res.end("Not Found");
   });
@@ -199,7 +205,7 @@ export function startServer(options: ServerOptions): {
       .then(() => broadcastCurrent())
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`ccmon: initial scan error: ${msg}\n`);
+        log.error("initial scan error", new Error(msg));
       }),
   );
 

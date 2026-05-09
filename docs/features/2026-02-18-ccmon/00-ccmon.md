@@ -10,18 +10,11 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Inbox
 
-- [x] Seems like whne losing connection to backend, frontend doesn't come back with right state
-  sometimes? → Fixed in Phase 30: clear projects on disconnect/reconnect
-- [x] We used to show sub-agent names using their description, but it seems to show agent id now
-  → Fixed in Phase 30: parse Task tool_use/toolUseResult for description correlation
+(empty)
 
 ## Checkpoint
 
-Project complete. All 57 phases implemented, all 86 requirements met.
-
-Final deliverable: Node.js + TypeScript monitoring dashboard for Claude Code and OpenCode sessions. Architecture: 6 focused source modules (types, project-utils, status-writer, session-core, session-enrichment, watcher) + 2 backend implementations (ClaudeBackend filesystem/JSONL, OpencodeBackend SQLite) behind a shared SessionBackend interface. Shared utilities for state assembly (buildProjectState) and backend iteration (collectBackendStates). Single-page vanilla JS dashboard with multi-backend WebSocket, real-time state updates, agent rows, context bars, task tracking.
-
-303 tests pass (291 original + 12 ClaudeBackend unit tests). Lint and typecheck clean.
+All 3 sprints of Phase 58 (Architecture Review) implemented May 2026. 12 refactor tasks, 36 files created/modified. Key deliverables: `src/timing.ts` (19 centralized constants), `src/log.ts` (NDJSON structured logger), `src/parsers/` (typed JSONL/SQLite shapes), `src/cli/` (5 command modules + helpers), composable `resolveState` rules, discriminated `ProjectInfo` union with `source` tag, `SessionBackend.getNotification()` interface method, nested server `backendStates` Map, and split frontend JS (4 ES modules, `index.html` 1112→533 lines). `tests/sessions.test.ts` (3596 lines) deleted; 304 tests pass across 10 test files. Lint and typecheck clean.
 
 
 
@@ -298,11 +291,26 @@ Final deliverable: Node.js + TypeScript monitoring dashboard for Claude Code and
 - R81: ✅ `npm run lint`, `npm run typecheck`, `npm test` all pass (Phase: Migrate to Node.js)
 - R82: ✅ `src/env.ts` Bun sandbox workaround removed — Node.js process.env works correctly (Phase: Migrate to Node.js)
 
-#### Out of Scope
+### Architecture Review
 
-- Authentication / multi-user support
-- Historical session data / logs
-- Multiple sessions per project (show latest only)
+- R87: ✅ Enrichment types decoupled from Claude JSONL internals (Phase: Architecture Review)
+  - R87.1: `SessionEnrichment` and `TaskInfo` moved to `src/types.ts` or standalone contract module — cross-backend interface, not Claude implementation detail
+  - R87.2: Claude-specific parse helpers (`SessionTailInfo`, `scanEnrichment`, etc.) stay in `session-enrichment.ts`
+- R88: ✅ `ProjectInfo` / `SubagentInfo` use discriminated union on `source` instead of empty-string sentinels (Phase: Architecture Review)
+- R89: ✅ `SessionBackend.getNotification(projectInfo)` method eliminates asymmetrical `buildProjectState` wrapping (Phase: Architecture Review)
+- R90: ✅ CLI split into command modules for direct testability (Phase: Architecture Review)
+  - R90.1: `src/cli/main.ts` entry + `src/cli/commands/{dump,status,sub,serve}.ts`
+- R91: ✅ Structured logger replaces 36 ad-hoc logging sites across 8 source files (Phase: Architecture Review)
+- R92: ✅ `resolveState` priority chain replaced with composable rule list (Phase: Architecture Review)
+  - R92.1: Each rule independently testable; "Priority 4.5" StopFailure logic becomes natural ordering
+- R93: ✅ JSONL/SQLite payload parsers centralized in `src/parsers/` (Phase: Architecture Review)
+  - R93.1: 37 `as Record<string, unknown>` casts eliminated; all parsers return `Result<T, string>`
+- R94: ✅ Frontend HTML split into ES modules (Phase: Architecture Review)
+- R95: ✅ Time constants centralized in `src/timing.ts` with rationale comments (Phase: Architecture Review)
+- R96: ✅ `tests/sessions.test.ts` (3596 lines) split into per-module test files (Phase: Architecture Review)
+- R97: ✅ Server stateMap triple-Map (`stateMap` + `backendIndex` + `backendToKeys`) simplified to nested Map (Phase: Architecture Review)
+  - R97.1: Remove unused `backendIndex`
+- R98: ✅ Backend factory separated from I/O (`backends/index.ts` pure orchestration, per-backend factories do I/O) (Phase: Architecture Review)
 
 ## Questions
 
@@ -574,6 +582,12 @@ Implement an OpenCode plugin that writes ccmon status events on session lifecycl
 
 Split 849-line sessions.ts into 5 focused modules (types, project-utils, status-writer, session-core, session-enrichment). Absorbed SessionStore into ClaudeBackend, removing singleton pattern and free-function wrappers. Extracted buildProjectState from SessionBackend interface into standalone shared utility. Created collectBackendStates to deduplicate server.ts/cli.ts cross-file logic. 12 new ClaudeBackend unit tests. 303 tests pass.
 
+### ✅ 58 Phase: Architecture Review
+
+[58-architecture-review](58-architecture-review.md)
+
+Systematic architecture review of all 15 source files, 8 test files, HTML frontend, and OpenCode plugin. All 12 tasks completed in 3 sprints: extraction of enrichment contract, centralized timing constants, server Map simplification, discriminated ProjectInfo union, structured logger, getNotification interface method, factory-vs-IO separation, composable resolveState rules, CLI command-module split, test file split, typed JSONL/SQLite parsers, and frontend ES module split. 304 tests pass across 10 test files.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
@@ -602,36 +616,30 @@ Split 849-line sessions.ts into 5 focused modules (types, project-utils, status-
 - **src/config.ts**: Config loading, validation, defaults, CLI override merge — host, port, maxInactivityHours; isCcmonConfig type predicate fixed; `homedir()` replaces `process.env.HOME` fallback (Phase: Backend, Review Fixes, Home Resolution Fix)
 - **src/sessions.ts**: Barrel re-exports from all session modules — session-core, session-enrichment, types, project-utils, status-writer (Phase: Architecture Refactor)
 - **src/types.ts**: Shared types — `ProjectInfo`, `ProjectState`, `SubagentInfo`, `BackendSource` (Phase: Architecture Refactor)
-- **src/session-core.ts**: Status log reading and state resolution — `SessionState`, `StatusEvent`, `resolveState`, `readStatusLog` (Phase: Architecture Refactor)
+- **src/session-core.ts**: Status log reading, composable resolveState (5 rules + RESOLUTION_RULES array), shared types; `PERMISSION_RESOLVE_GAP_MS` export; readStatusLog, resolveState, readStatusLog legacy fallback; readFileSync replaces Bun.file (Phase: Review Fixes, Migrate to Node.js, Architecture Refactor, Architecture Review)
 - **src/session-enrichment.ts**: JSONL tail parsing for model/messages/tokens/tasks — `SessionEnrichment`, `scanEnrichment`, `mergeEnrichment` (Phase: SessionStore + Module Split, Architecture Refactor)
 - **src/project-utils.ts**: Project scanning and filtering — `scanProjects`, `filterStaleProjects`, `disambiguateProjectNames`, JSONL helpers (Phase: Architecture Refactor)
 - **src/status-writer.ts**: Hook status file writing — `writeStatusEvent`, `writeNotificationStatus`, `mapHookEventToState` (Phase: Architecture Refactor)
 - **src/backends/claude.ts**: Claude Code backend — filesystem/JSONL source, absorbed SessionStore with readSessionTail, getSubagentInfos, buildProjectState (Phase: Architecture Refactor)
-- **src/backends/opencode.ts**: OpenCode backend — SQLite read-only with plugin status log integration (Phase: Architecture Refactor)
-- **src/backends/types.ts**: `SessionBackend` interface (6 focused methods) + `BackendConfigEntry` type (Phase: Architecture Refactor)
-- **src/backends/build-project-state.ts**: Shared `buildProjectState(backend, info)` utility (Phase: Architecture Refactor)
+- **src/backends/types.ts**: `SessionBackend` interface (7 methods including getNotification) + `BackendConfigEntry` type; added statusLogPath, statusPollIntervalMs to opencode variant (Phase: OpenCode Support, Migrate to Node.js, OpenCode Plugin, Architecture Refactor, Architecture Review)
+- **src/backends/build-project-state.ts**: Shared `buildProjectState(backend, info)` utility with getNotification integration + `log` import (Phase: Architecture Refactor, Architecture Review)
 - **src/backends/collect-states.ts**: Shared `collectBackendStates(backends)` utility for server/CLI (Phase: Architecture Refactor)
-- **src/backends/index.ts**: `createBackends(config)` factory (Phase: Architecture Refactor)
-- **src/server.ts**: HTTP + WebSocket server; uses `collectBackendStates` + standalone `buildProjectState` (Phase: Architecture Refactor)
-- **src/cli.ts**: CLI entry point; imports from final modules — project-utils, status-writer, session-core (Phase: Architecture Refactor)
-- **src/watcher.ts**: File watcher — `watchForChanges()` with debounce and new-project detection; section banner removed; exponential backoff restart-on-error for both watchers (Phase: Session Detection, Review Fixes, Watcher Resilience)
-- **tests/backends/claude.test.ts**: ClaudeBackend unit tests — scanProjects, resolveState, enrichProject, getSubagents, buildProjectState, projectKey, targeted refresh (Phase: Architecture Refactor)
-- **tests/backends/opencode.test.ts**: OpencodeBackend unit tests — scanProjects, buildProjectState, resolveState with plugin priority, sub-agent detection (Phase: OpenCode Plugin, Architecture Refactor)
-- **src/env.ts**: Deleted — Bun sandbox workaround no longer needed with Node.js (Phase: Home Resolution Fix, Migrate to Node.js)
-- **src/server.ts**: Node.js HTTP + WebSocket server (http.createServer + ws) — `/`, `/api/state`, `/ws` endpoints; HTML read at module init; WS payload wrapped in `{ hostname, projects }` envelope; `Cache-Control: no-cache` on HTML response; periodic 30s safety rescan + broadcast; `fileURLToPath(import.meta.url)` replaces `import.meta.dir` (Phase: Backend, Review Fixes, Multi-Backend, Watcher Resilience, Server Staleness Fix, Migrate to Node.js)
-- **docs/features/2026-02-18-ccmon/07-qa-pass.md**: Phase 07 plan — last activity refresh, state persistence, token usage (Phase: QA Pass)
-- **tests/sessions.test.ts**: 202 unit tests for sessions.ts; vitest imports; readFileSync/writeFileSync test I/O (Phase: Session Detection, Backend, UI Enhancements, Sub-Agent Names, UI Polish, Dashboard Refinements, Review Fixes, Review Fixes 2, Stop Detection Fix, Inbox Bug Fixes, Append-Only Status Log, StopFailure Hook, Migrate to Node.js)
-- **tests/watcher.test.ts**: Unit tests for watcher.ts; backoff formula + restart-on-error tests; vitest vi.fn() replaces bun mock (Phase: Session Detection, Watcher Resilience, Migrate to Node.js)
-- **tests/cli.test.ts**: CLI tests — arg-validation, status NDJSON format, dump --watch, --project filter; spawnSync replaces Bun.spawn; fileURLToPath replaces import.meta.dir; vitest imports (Phase: Review Fixes, Append-Only Status Log, Migrate to Node.js)
-- **tests/server.test.ts**: Tests for server.ts — HTTP endpoints, WebSocket, WS envelope + hostname field, periodic broadcast; vitest imports (Phase: Backend, Multi-Backend, Watcher Resilience, Migrate to Node.js)
-- **~/dotfiles/home-manager/modules/claude/settings.json**: Hook config with ccmon commands (Phase: Backend)
-- **docs/features/2026-02-18-ccmon/44-opencode-support.md**: Phase 44 plan — multi-backend abstraction, OpenCode SQLite backend; R72.2 updated to "both backends enabled" (Phase: OpenCode Support)
-- **src/backends/opencode.ts**: `OpencodeBackend` — better-sqlite3 session scanning, enrichment, sub-agents, polling; scanProjects deduplicates by directory; resolveState child activity check + fallback directory scan; status log reading (`resolveStateFromStatusLog`), fs.watch on status log directory, dual-mode polling (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix, OpenCode Sub-Agent Hardening, Migrate to Node.js, OpenCode Plugin)
-- **src/backends/types.ts**: Backend type definitions + `BackendConfigEntry`; added `statusLogPath` + `statusPollIntervalMs` to opencode variant (Phase: OpenCode Support, Migrate to Node.js, OpenCode Plugin)
-- **src/backends/index.ts**: Backend factory — creates ClaudeBackend + OpencodeBackend from config; better-sqlite3 setup; passes statusLogPath + statusPollIntervalMs to OpencodeBackend (Phase: OpenCode Support, Migrate to Node.js, OpenCode Plugin)
-- **tests/backends/opencode.test.ts**: OpenCode backend tests with in-memory better-sqlite3; 53 tests total — 39 polling, 7 status log resolution, 7 dual-mode fs.watch+polling (Phase: OpenCode Support, OpenCode Session Deduplication, OpenCode State Detection Fix, Migrate to Node.js, OpenCode Plugin, OpenCode Plugin Dual-Mode Tests)
-- **tests/integration.test.ts**: 4 integration tests verifying both backends coexist; better-sqlite3 type (Phase: OpenCode Support, Migrate to Node.js)
-- **docs/features/2026-02-18-ccmon/45-review-fixes.md**: Phase 45 plan — 18 REVIEW comment fixes (3 release-blocking, 5 high, 5 medium, 5 low) across 8 files (Phase: Review Fixes)
+- **src/backends/index.ts**: Backend factory — `createBackends(config)` with per-backend factory functions (createClaudeBackend, createOpencodeBackend); better-sqlite3 setup; structured logging (Phase: OpenCode Support, Migrate to Node.js, OpenCode Plugin, Architecture Refactor, Architecture Review)
+- **src/server.ts**: HTTP + WebSocket server; Node.js createServer + ws library; `/`, `/api/state`, `/ws` endpoints + `/js/` static handler; WS payload `{ hostname, projects }` envelope; `Cache-Control: no-cache`; periodic 30s safety rescan + broadcast; nested `backendStates` Map; structured logging (Phase: Backend, Review Fixes, Multi-Backend, Watcher Resilience, Server Staleness Fix, Migrate to Node.js, Architecture Refactor, Architecture Review)
+- **src/cli/main.ts**: CLI entry point — arg parsing, dispatch, usage text; replaces src/cli.ts (Phase: Architecture Review)
+- **src/cli/helpers.ts**: CLI utilities — exit(), parseStringFlag(), parseNumberFlag() (Phase: Architecture Review)
+- **src/cli/commands/dump.ts**: runDump, runDumpWatch command modules (Phase: Architecture Review)
+- **src/cli/commands/status.ts**: runStatus command module with input? param for testability (Phase: Architecture Review)
+- **src/cli/commands/serve.ts**: serve command module (Phase: Architecture Review)
+- **src/cli/commands/sub.ts**: sub command module (Phase: Architecture Review)
+- **public/js/utils.js**: Frontend utilities — state lookups, formatting, escaping (Phase: Architecture Review)
+- **public/js/render.js**: DOM rendering — context bars, agent rows, card creation, flash state (Phase: Architecture Review)
+- **public/js/backend-manager.js**: WebSocket connection pool — BackendManager, menu management (Phase: Architecture Review)
+- **public/js/main.js**: Frontend entry — event wiring, zombie detection, visibility reconnect (Phase: Architecture Review)
+- **tests/session-core.test.ts**: readStatusLog (6 tests) + resolveState (23 tests) — 29 tests from sessions.test.ts split (Phase: Architecture Review)
+- **tests/status-writer.test.ts**: mapHookEventToState (3) + writeStatusEvent (4) + writeStatusTruncate (1) + writeNotificationStatus (7) — 15 tests from sessions.test.ts split (Phase: Architecture Review)
+- **tests/project-utils.test.ts**: scanProjects (8) + filterStaleProjects (6) + closed state (4) + disambiguateProjectNames (6) — 24 tests from sessions.test.ts split (Phase: Architecture Review)
+- **src/cli.ts**: Deleted — replaced by src/cli/ directory (Phase: Architecture Review)
+- **tests/sessions.test.ts**: Deleted — split into 4 per-module test files (Phase: Architecture Review)
 - **resources/opencode-plugin/ccmon.ts**: OpenCode plugin — event subscription + status NDJSON writing (Phase: OpenCode Plugin)
-- **src/session-core.ts**: Extracted resolveState, readStatusLog, shared types from sessions.ts; readFileSync replaces Bun.file (Phase: Review Fixes, Migrate to Node.js)
 - **tests/_helpers.ts**: Shared makeTempDir utility; process.env replaces Bun.env (Phase: Review Fixes, Migrate to Node.js)

@@ -3,20 +3,31 @@ import { existsSync, readFileSync, statSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { log } from "../log";
+import type {
+  OpencodeMessageData,
+  OpencodePartData,
+} from "../parsers/opencode-db";
 import {
   isStatusEvent,
   type SessionState,
   type StatusEvent,
 } from "../session-core";
-import type { SessionEnrichment } from "../session-enrichment";
-import type { ProjectInfo, SubagentInfo } from "../types";
+import {
+  DEBOUNCE_MS,
+  DEFAULT_POLL_INTERVAL_MS,
+  DEFAULT_STATUS_POLL_INTERVAL_MS,
+  OPENCODE_ACTIVE_THRESHOLD_MS,
+  SUBAGENT_ACTIVE_THRESHOLD_MS,
+  SUBAGENT_EXPIRY_MS,
+} from "../timing.js";
+import type {
+  NotificationMeta,
+  ProjectInfo,
+  SessionEnrichment,
+  SubagentInfo,
+} from "../types";
 import type { SessionBackend } from "./types";
-
-const OPENCODE_ACTIVE_THRESHOLD_MS = 30_000;
-const SUBAGENT_ACTIVE_THRESHOLD_MS = 15_000;
-const SUBAGENT_EXPIRY_MS = 30_000;
-const DEFAULT_POLL_INTERVAL_MS = 5000;
-const DEFAULT_STATUS_POLL_INTERVAL_MS = 30_000;
 
 function statSyncTerse(p: string): number | null {
   try {
@@ -76,7 +87,6 @@ export class OpencodeBackend implements SessionBackend {
       cwd: row.cwd,
       projectName: row.projectName ?? basename(row.cwd),
       sessionId: row.sessionId,
-      latestJSONL: "",
       source: "opencode",
     }));
   }
@@ -157,9 +167,9 @@ export class OpencodeBackend implements SessionBackend {
       .get(row.directory, projectInfo.sessionId, cutoff);
 
     if (siblingActive != null) {
-      process.stderr.write(
-        `ccmon: opencode resolveState fallback triggered for ${projectInfo.projectName} (parent_id check found no active children, but directory scan found activity)\n`,
-      );
+      log.info("resolveState fallback triggered", {
+        project: projectInfo.projectName,
+      });
       return "running";
     }
 
@@ -188,7 +198,7 @@ export class OpencodeBackend implements SessionBackend {
         enrichment.sessionName = sessionRow.title;
       }
     } catch {
-      console.warn("Enrich: failed to read session title");
+      log.warn("failed to read session title");
     }
   }
 
@@ -260,9 +270,9 @@ export class OpencodeBackend implements SessionBackend {
 
       // Most recent assistant message for model + tokens
       for (const msg of msgs) {
-        let parsed: Record<string, unknown>;
+        let parsed: OpencodeMessageData;
         try {
-          parsed = JSON.parse(msg.data) as Record<string, unknown>;
+          parsed = JSON.parse(msg.data) as OpencodeMessageData;
         } catch {
           continue;
         }
@@ -275,13 +285,11 @@ export class OpencodeBackend implements SessionBackend {
 
         // Tokens — use most recent assistant's values.
         if (enrichment.inputTokens === undefined) {
-          const tokens = parsed.tokens as Record<string, unknown> | undefined;
+          const tokens = parsed.tokens;
           if (tokens) {
-            const cacheRead =
-              ((tokens.cache as Record<string, unknown> | undefined)
-                ?.read as number) ?? 0;
-            const deltaInput = (tokens.input as number) ?? 0;
-            const deltaOutput = (tokens.output as number) ?? 0;
+            const cacheRead = tokens.cache?.read ?? 0;
+            const deltaInput = tokens.input ?? 0;
+            const deltaOutput = tokens.output ?? 0;
             if (cacheRead > 0 || deltaInput > 0) {
               enrichment.inputTokens = cacheRead + deltaInput;
             }
@@ -297,9 +305,9 @@ export class OpencodeBackend implements SessionBackend {
           let text: string | undefined;
           let tool: string | undefined;
           for (const part of parts) {
-            let p: Record<string, unknown>;
+            let p: OpencodePartData;
             try {
-              p = JSON.parse(part.data) as Record<string, unknown>;
+              p = JSON.parse(part.data) as OpencodePartData;
             } catch {
               continue;
             }
@@ -328,9 +336,9 @@ export class OpencodeBackend implements SessionBackend {
 
       // Most recent user message parts
       for (const msg of msgs) {
-        let parsed: Record<string, unknown>;
+        let parsed: OpencodeMessageData;
         try {
-          parsed = JSON.parse(msg.data) as Record<string, unknown>;
+          parsed = JSON.parse(msg.data) as OpencodeMessageData;
         } catch {
           continue;
         }
@@ -338,15 +346,15 @@ export class OpencodeBackend implements SessionBackend {
 
         const parts = partsByMsg.get(msg.id) ?? [];
         for (const part of parts) {
-          let p: Record<string, unknown>;
+          let p: OpencodePartData;
           try {
-            p = JSON.parse(part.data) as Record<string, unknown>;
+            p = JSON.parse(part.data) as OpencodePartData;
           } catch {
             continue;
           }
           if (p.type === "text" && typeof p.text === "string") {
             enrichment.latestUserActivity = {
-              text: (p.text as string).slice(0, 200),
+              text: p.text.slice(0, 200),
               isCommand: false,
             };
             break;
@@ -435,13 +443,18 @@ export class OpencodeBackend implements SessionBackend {
           agentId: row.id,
           slug: undefined,
           description: undefined,
-          jsonlPath: "",
           isActive,
           lastMessageTime: new Date(row.time_updated).toISOString(),
           launchTime: new Date(row.time_created).toISOString(),
         };
       })
       .sort((a, b) => b.launchTime.localeCompare(a.launchTime));
+  }
+
+  async getNotification(
+    _projectInfo: ProjectInfo,
+  ): Promise<NotificationMeta | null> {
+    return null;
   }
 
   watchForChanges(onUpdate: () => void): {
@@ -493,7 +506,7 @@ export class OpencodeBackend implements SessionBackend {
               if (pollTimer) clearInterval(pollTimer);
               startPolling(pollIntervalMs);
             }
-          }, 200);
+          }, DEBOUNCE_MS * 2);
         });
         statusWatcher.on("error", () => {
           if (statusWatcher) {

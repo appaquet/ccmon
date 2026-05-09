@@ -1,3 +1,4 @@
+import { log } from "../log";
 import type { ProjectState } from "../types";
 import { buildProjectState } from "./build-project-state";
 import type { SessionBackend } from "./types";
@@ -22,10 +23,7 @@ export async function collectBackendStates(
         const state = await buildProjectState(backend, info);
         map.set(backend.projectKey(info), state);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(
-          `ccmon: failed to build state for ${info.projectName}: ${msg}`,
-        );
+        log.warn("failed to build state", err, { project: info.projectName });
       }
     }
   }

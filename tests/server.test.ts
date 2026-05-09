@@ -6,8 +6,11 @@ import { ClaudeBackend } from "../src/backends/claude";
 import type { SessionBackend } from "../src/backends/types";
 import { startServer } from "../src/server";
 import type { SessionState } from "../src/session-core";
-import type { SessionEnrichment } from "../src/session-enrichment";
-import type { ProjectInfo, SubagentInfo } from "../src/types";
+import type {
+  ProjectInfo,
+  SessionEnrichment,
+  SubagentInfo,
+} from "../src/types";
 import { makeTempDir } from "./_helpers";
 
 /**

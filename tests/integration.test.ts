@@ -188,7 +188,7 @@ describe("integration — both backends", () => {
       cwd: "/home/user/a",
       projectName: "a",
       sessionId: "sid-a",
-      latestJSONL: "",
+      latestJSONL: "/some/path.jsonl",
       source: "claude",
     });
 
@@ -197,7 +197,6 @@ describe("integration — both backends", () => {
       cwd: "/home/user/b",
       projectName: "b",
       sessionId: "ses_b",
-      latestJSONL: "",
       source: "opencode",
     });
 

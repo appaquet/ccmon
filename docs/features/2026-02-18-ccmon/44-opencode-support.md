@@ -97,11 +97,11 @@ The codebase must be refactored to abstract away the data source, allowing both 
 - [x] Q: Can we use Bun's `bun:sqlite` in read-only mode on a WAL database?
   - Decision: Yes. `new Database(path, { readonly: true })` opens the db read-only. WAL mode means the writer (OpenCode process) and reader (ccmon) can coexist without SQLITE_BUSY. Set `busy_timeout = 5000` pragma as safety.
 
-- [ ] Q: Do `message.data` / `part.data` JSON keys match the Drizzle TypeScript field names exactly, or are they transformed?
+- [x] Q: Do `message.data` / `part.data` JSON keys match the Drizzle TypeScript field names exactly, or are they transformed?
   - Uncertainty: Drizzle can map column names. Actual JSON keys might differ from `providerID`, `modelID`, `tokens.input` etc. Will discover during enrichment task — first real test against OpenCode JSON blobs reveals the truth.
   - Mitigation: In-memory tests use synthetic data matching *our* expected format. Validate against real opencode.db via `bun run dump` after backend is wired.
 
-- [ ] Q: Does `session.time_updated` update when messages/parts are written, or only when the session row itself changes?
+- [x] Q: Does `session.time_updated` update when messages/parts are written, or only when the session row itself changes?
   - Uncertainty: If `time_updated` is only updated for session metadata changes (title, permission, etc.) and NOT when messages/parts are inserted, then it's not a valid activity signal. We'd need `MAX(message.time_created)` instead.
   - Mitigation: In-memory test inserts a message → queries session.time_updated → verifies it changed. If Drizzle's `$onUpdate` fires on any table write to the same transaction, this works. Real DB validation via `bun run dump` catches the actual behavior.
 

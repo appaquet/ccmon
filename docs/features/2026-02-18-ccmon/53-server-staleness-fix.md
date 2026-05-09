@@ -31,7 +31,7 @@ Running `bun run dump` works because it reads fresh from disk. Server restart wo
 * [x] R61.3: Update CLAUDE.md description of R61
   - AC: R61 not documented in CLAUDE.md — no update needed. Code fix is sufficient.
 
-* [ ] Run `bun test`, `bun run lint`, `bun run typecheck`
+* [x] Run `bun test`, `bun run lint`, `bun run typecheck`
   - AC: All tests pass, lint clean, typecheck clean
   - AC: Integration check: `bun run dump --no-filter` returns ≥1 project
 

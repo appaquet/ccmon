@@ -1,4 +1,5 @@
-import type { ProjectInfo, ProjectState } from "../types";
+import { log } from "../log";
+import type { NotificationMeta, ProjectInfo, ProjectState } from "../types";
 import type { SessionBackend } from "./types";
 
 /**
@@ -18,14 +19,11 @@ export async function buildProjectState(
 
   const base: ProjectState = { ...projectInfo, state, lastUpdated };
 
-  let enrichment: import("../session-enrichment").SessionEnrichment | undefined;
+  let enrichment: import("../types").SessionEnrichment | undefined;
   try {
     enrichment = await backend.enrichProject(projectInfo);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(
-      `ccmon: enrichment failed for ${projectInfo.projectName}: ${msg}`,
-    );
+    log.warn("enrichment failed", err, { project: projectInfo.projectName });
   }
 
   let subagents: import("../types").SubagentInfo[] | undefined;
@@ -36,17 +34,26 @@ export async function buildProjectState(
         : [];
     subagents = agents;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(
-      `ccmon: getSubagents failed for ${projectInfo.projectName}: ${msg}`,
-    );
+    log.warn("getSubagents failed", err, { project: projectInfo.projectName });
   }
   const subagentCount = subagents?.filter((s) => s.isActive).length ?? 0;
+
+  let notification: NotificationMeta | null = null;
+  if (backend.getNotification) {
+    try {
+      notification = await backend.getNotification(projectInfo);
+    } catch (err) {
+      log.warn("getNotification failed", err, {
+        project: projectInfo.projectName,
+      });
+    }
+  }
 
   return {
     ...base,
     ...(enrichment ?? {}),
     subagents: subagents && subagents.length > 0 ? subagents : undefined,
     subagentCount: subagentCount > 0 ? subagentCount : undefined,
+    ...(notification ?? {}),
   };
 }

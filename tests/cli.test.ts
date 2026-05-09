@@ -10,7 +10,7 @@ const STATUS_LOG_FILE = "ccmon-status.jsonl";
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const CLI_PATH = join(__dirname, "..", "src", "cli.ts");
+const CLI_PATH = join(__dirname, "..", "src", "cli", "main.ts");
 const NODE = process.execPath;
 
 /**

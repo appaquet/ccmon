@@ -1,22 +1,16 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import {
+  JSONL_ACTIVE_THRESHOLD_MS,
+  PERMISSION_RESOLVE_GAP_MS,
+  PERMISSION_STALE_MS,
+  STATUS_LOG_TAIL_BYTES,
+} from "./timing.js";
 
-// Staleness window for waiting_for_permission signals.
-const PERMISSION_STALE_MS = 5 * 60 * 1000;
-
-// Minimum time after a PermissionRequest before a same-session PostToolUse can resolve it.
-// Guards against concurrent sub-agents that share the same session_id arriving within this window.
-export const PERMISSION_RESOLVE_GAP_MS = 3000;
-
-// JSONL mtime threshold: files written within this window indicate active session.
-// Claude writes continuously during turns so 60s covers any lag.
-const JSONL_ACTIVE_THRESHOLD_MS = 60_000;
+export { PERMISSION_RESOLVE_GAP_MS };
 
 export const STATUS_LOG_FILE = "ccmon-status.jsonl";
 export const STATUS_FILE_LEGACY = "ccmon-status.json";
-
-// Bytes to keep when trimming the status log after it exceeds MAX_STATUS_LOG_BYTES.
-const STATUS_LOG_TAIL_BYTES = 8 * 1024;
 
 const VALID_STATES: ReadonlySet<string> = new Set([
   "running",
@@ -51,6 +45,14 @@ export interface StatusEvent {
   notificationMessage?: string;
   notificationTimestamp?: string;
 }
+
+type ResolutionContext = {
+  events: StatusEvent[];
+  jsonlMtimeMs: number | null;
+  now: number;
+};
+
+type ResolutionRule = (ctx: ResolutionContext) => SessionState | null;
 
 // Legacy single-object format for migration from ccmon-status.json.
 interface StatusFileLegacy {
@@ -160,24 +162,16 @@ export async function readStatusLog(
   return [];
 }
 
-export function resolveState(
-  jsonlMtimeMs: number | null,
-  events: StatusEvent[],
-): SessionState {
-  // Filter to state-bearing events only.
-  const stateful = events.filter((e) => !NON_STATE_EVENTS.has(e.event));
-
-  // Priority 1: scan backward for unresolved PermissionRequest.
-  for (let i = stateful.length - 1; i >= 0; i--) {
-    const e = stateful[i];
+function unresolvedPermissionRule(ctx: ResolutionContext): SessionState | null {
+  for (let i = ctx.events.length - 1; i >= 0; i--) {
+    const e = ctx.events[i];
     if (PERMISSION_RESOLVERS.has(e.event)) break;
     if (e.event === "PermissionRequest") {
-      // Forward-scan from this position for a same-session PostToolUse.
       const sid = e.session_id;
       const permTs = new Date(e.timestamp).getTime();
       let resolved = false;
-      for (let j = i + 1; j < stateful.length; j++) {
-        const candidate = stateful[j];
+      for (let j = i + 1; j < ctx.events.length; j++) {
+        const candidate = ctx.events[j];
         if (candidate.session_id === sid && candidate.event === "PostToolUse") {
           const candidateTs = new Date(candidate.timestamp).getTime();
           if (
@@ -191,62 +185,82 @@ export function resolveState(
         }
       }
       if (resolved) break;
-
-      const age = Date.now() - new Date(e.timestamp).getTime();
+      const age = ctx.now - new Date(e.timestamp).getTime();
       if (!Number.isNaN(age) && age < PERMISSION_STALE_MS) {
         return "waiting_for_permission";
       }
       break;
     }
   }
+  return null;
+}
 
-  // Priority 2 & 3: check latest state-bearing event.
-  if (stateful.length > 0) {
-    const latest = stateful[stateful.length - 1];
-    if (latest.event === "SessionEnd") {
-      return "closed";
+function sessionEndRule(ctx: ResolutionContext): SessionState | null {
+  if (ctx.events.length === 0) return null;
+  const latest = ctx.events[ctx.events.length - 1];
+  if (latest.event === "SessionEnd") return "closed";
+  return null;
+}
+
+function stopOrActivityRule(ctx: ResolutionContext): SessionState | null {
+  if (ctx.events.length === 0) return null;
+  const latest = ctx.events[ctx.events.length - 1];
+  if (latest.event === "Stop") return "stopped";
+  if (latest.event === "PostToolUse" || latest.event === "UserPromptSubmit") {
+    const age = ctx.now - new Date(latest.timestamp).getTime();
+    if (!Number.isNaN(age) && age < JSONL_ACTIVE_THRESHOLD_MS) {
+      return "running";
     }
-    if (latest.event === "Stop") {
-      return "stopped";
-    }
-    if (latest.event === "PostToolUse" || latest.event === "UserPromptSubmit") {
-      const age = Date.now() - new Date(latest.timestamp).getTime();
+  }
+  return null;
+}
+
+function jsonlActivityRule(ctx: ResolutionContext): SessionState | null {
+  if (ctx.jsonlMtimeMs === null) return null;
+  if (ctx.jsonlMtimeMs <= ctx.now - JSONL_ACTIVE_THRESHOLD_MS) return null;
+
+  if (ctx.events.length > 0) {
+    const latest = ctx.events[ctx.events.length - 1];
+    if (latest.event === "StopFailure") {
+      const age = ctx.now - new Date(latest.timestamp).getTime();
       if (!Number.isNaN(age) && age < JSONL_ACTIVE_THRESHOLD_MS) {
-        return "running";
+        return null;
       }
     }
   }
 
-  // Priority 4: JSONL mtime fallback.
-  // When the latest event is StopFailure and its timestamp is within JSONL_ACTIVE_THRESHOLD_MS,
-  // the fresh JSONL may just be from the failed run, not new activity. Skip to priority 4.5
-  // so the error state is surfaced. If the StopFailure is older than the threshold, fresh JSONL
-  // indicates legitimate activity after the failure → return running.
-  if (
-    jsonlMtimeMs !== null &&
-    jsonlMtimeMs > Date.now() - JSONL_ACTIVE_THRESHOLD_MS
-  ) {
-    const latestEvent =
-      stateful.length > 0 ? stateful[stateful.length - 1] : null;
-    if (
-      latestEvent?.event === "StopFailure" &&
-      Date.now() - new Date(latestEvent.timestamp).getTime() <
-        JSONL_ACTIVE_THRESHOLD_MS
-    ) {
-      // Recent StopFailure — fall through to priority 4.5
-    } else {
-      return "running";
-    }
-  }
+  return "running";
+}
 
-  // Priority 4.5: StopFailure → error.
+function stopFailureRule(ctx: ResolutionContext): SessionState | null {
   if (
-    stateful.length > 0 &&
-    stateful[stateful.length - 1].event === "StopFailure"
+    ctx.events.length > 0 &&
+    ctx.events[ctx.events.length - 1].event === "StopFailure"
   ) {
     return "error";
   }
+  return null;
+}
 
-  // Priority 5: default.
+const RESOLUTION_RULES: ResolutionRule[] = [
+  unresolvedPermissionRule,
+  sessionEndRule,
+  stopOrActivityRule,
+  jsonlActivityRule,
+  stopFailureRule,
+];
+
+export function resolveState(
+  jsonlMtimeMs: number | null,
+  rawEvents: StatusEvent[],
+): SessionState {
+  const events = rawEvents.filter((e) => !NON_STATE_EVENTS.has(e.event));
+  const ctx: ResolutionContext = { events, jsonlMtimeMs, now: Date.now() };
+
+  for (const rule of RESOLUTION_RULES) {
+    const state = rule(ctx);
+    if (state !== null) return state;
+  }
+
   return "stopped";
 }

@@ -2,6 +2,7 @@ import type { Dirent } from "node:fs";
 import { readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
+import type { JsonlFirstLine } from "../parsers/claude-jsonl";
 import {
   disambiguateProjectNames,
   readProjectInfo,
@@ -21,18 +22,22 @@ import {
   scanEnrichment,
   scanTaskCreateUpdate,
 } from "../session-enrichment";
-import type { ProjectInfo, ProjectState, SubagentInfo } from "../types";
+import {
+  SUBAGENT_ACTIVE_THRESHOLD_MS,
+  SUBAGENT_EXPIRY_MS,
+  SUBAGENT_STOP_GRACE_MS,
+} from "../timing.js";
+import type {
+  NotificationMeta,
+  ProjectInfo,
+  ProjectState,
+  SubagentInfo,
+} from "../types";
 import { watchForChanges } from "../watcher";
 import { buildProjectState as sharedBuildProjectState } from "./build-project-state";
 import type { SessionBackend } from "./types";
 
 const JSONL_EXT = ".jsonl";
-
-const SUBAGENT_ACTIVE_THRESHOLD_MS = 15 * 1000;
-
-const SUBAGENT_STOP_GRACE_MS = 5_000;
-
-const SUBAGENT_EXPIRY_MS = 30 * 1000;
 
 export class ClaudeBackend implements SessionBackend {
   sessionTailCache = new Map<string, SessionTailCache>();
@@ -53,31 +58,7 @@ export class ClaudeBackend implements SessionBackend {
 
   async scanProjects(): Promise<ProjectInfo[]> {
     const projects = await scanProjects(this.claudeDir);
-    return projects.map((p) => ({ ...p, source: "claude" }));
-  }
-
-  async buildProjectState(projectInfo: ProjectInfo): Promise<ProjectState> {
-    const base = await sharedBuildProjectState(this, projectInfo);
-
-    const projectDirPath = join(this.claudeDir, projectInfo.projectDir);
-    const events = await readStatusLog(projectDirPath);
-
-    let notificationMessage: string | undefined;
-    let notificationTimestamp: string | undefined;
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i];
-      if (e.notificationMessage !== undefined) {
-        notificationMessage = e.notificationMessage;
-        notificationTimestamp = e.notificationTimestamp;
-        break;
-      }
-    }
-
-    return {
-      ...base,
-      notificationMessage,
-      notificationTimestamp,
-    };
+    return projects;
   }
 
   watchForChanges(onUpdate: () => void): { stop: () => void } {
@@ -86,12 +67,35 @@ export class ClaudeBackend implements SessionBackend {
     });
   }
 
+  async getNotification(
+    projectInfo: ProjectInfo,
+  ): Promise<NotificationMeta | null> {
+    const projectDirPath = join(this.claudeDir, projectInfo.projectDir);
+    const events = await readStatusLog(projectDirPath);
+
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      if (
+        e.notificationMessage !== undefined &&
+        e.notificationTimestamp !== undefined
+      ) {
+        return {
+          notificationMessage: e.notificationMessage,
+          notificationTimestamp: e.notificationTimestamp,
+        };
+      }
+    }
+    return null;
+  }
+
   async resolveState(projectInfo: ProjectInfo): Promise<SessionState> {
+    if (projectInfo.source !== "claude") return "stopped";
     const { state } = await this._fetchStateEvents(projectInfo);
     return state;
   }
 
   async computeLastUpdated(projectInfo: ProjectInfo): Promise<string | null> {
+    if (projectInfo.source !== "claude") return null;
     try {
       const s = await stat(projectInfo.latestJSONL);
       return new Date(s.mtimeMs).toISOString();
@@ -101,6 +105,7 @@ export class ClaudeBackend implements SessionBackend {
   }
 
   async enrichProject(projectInfo: ProjectInfo): Promise<SessionEnrichment> {
+    if (projectInfo.source !== "claude") return {};
     const tail = await this.readSessionTail(projectInfo.latestJSONL);
     return {
       model: tail.model,
@@ -116,6 +121,7 @@ export class ClaudeBackend implements SessionBackend {
   }
 
   async getSubagents(projectInfo: ProjectInfo): Promise<SubagentInfo[]> {
+    if (projectInfo.source !== "claude") return [];
     return this.getSubagentInfos(projectInfo.latestJSONL);
   }
 
@@ -130,7 +136,7 @@ export class ClaudeBackend implements SessionBackend {
       const dirName = basename(changedProjectDir);
       const info = await readProjectInfo(changedProjectDir, dirName);
       if (info !== null) {
-        const updatedState = await this.buildProjectState(info);
+        const updatedState = await sharedBuildProjectState(this, info);
         this.projectStateCache.set(changedProjectDir, updatedState);
       } else {
         this.projectStateCache.delete(changedProjectDir);
@@ -153,7 +159,7 @@ export class ClaudeBackend implements SessionBackend {
     }
 
     const states = await Promise.all(
-      projects.map((p) => this.buildProjectState(p)),
+      projects.map((p) => sharedBuildProjectState(this, p)),
     );
 
     this._disambiguateProjectNames(states);
@@ -242,11 +248,15 @@ export class ClaudeBackend implements SessionBackend {
     const events = await readStatusLog(projectDirPath);
 
     let jsonlMtimeMs: number | null = null;
-    try {
-      const s = await stat(projectInfo.latestJSONL);
-      jsonlMtimeMs = s.mtimeMs;
-    } catch {
-      // JSONL disappeared — leave null
+    const latestJSONL =
+      projectInfo.source === "claude" ? projectInfo.latestJSONL : null;
+    if (latestJSONL !== null) {
+      try {
+        const s = await stat(latestJSONL);
+        jsonlMtimeMs = s.mtimeMs;
+      } catch {
+        // JSONL disappeared — leave null
+      }
     }
 
     const state = resolveState(jsonlMtimeMs, events);
@@ -303,7 +313,7 @@ export class ClaudeBackend implements SessionBackend {
           );
           try {
             const raw = readFileSync(agentStatusPath, "utf-8");
-            const parsed = JSON.parse(raw) as Record<string, unknown>;
+            const parsed = JSON.parse(raw) as { state?: string };
             if (parsed.state === "stopped") isActive = false;
           } catch {
             // Status file absent or unreadable — fall back to mtime-based detection.
@@ -323,7 +333,7 @@ export class ClaudeBackend implements SessionBackend {
           );
           const firstLine = text.split("\n")[0];
           if (firstLine) {
-            const parsed = JSON.parse(firstLine) as Record<string, unknown>;
+            const parsed = JSON.parse(firstLine) as JsonlFirstLine;
             if (typeof parsed.slug === "string") slug = parsed.slug;
             if (typeof parsed.timestamp === "string")
               launchTime = parsed.timestamp;

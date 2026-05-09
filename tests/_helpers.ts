@@ -11,3 +11,7 @@ export async function makeTempDir(prefix: string): Promise<string> {
   await mkdir(dir, { recursive: true });
   return dir;
 }
+
+export function makeFirstLine(cwd: string, sessionId: string): string {
+  return `${JSON.stringify({ cwd, sessionId })}\n`;
+}

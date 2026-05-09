@@ -75,27 +75,27 @@ OpenCode Process          ccmon Process
 
 ## Questions & Investigations
 
-- [ ] Q: Does the `session.idle` event reliably fire for sub-agent sessions?
+- [x] Q: Does the `session.idle` event reliably fire for sub-agent sessions?
   - Uncertainty: Sub-agent sessions may use a different idle semantics (sub-agent processes exit rather than going idle)
   - Mitigation: Test with real OpenCode task delegation. If sub-agents don't fire `session.idle`, detect sub-agent stops via `session.deleted` instead.
 
-- [ ] Q: Does `chat.message` fire for ALL messages or only the first?
+- [x] Q: Does `chat.message` fire for ALL messages or only the first?
   - Uncertainty: From plugin docs, `chat.message` fires when a "new message is received" — ambiguous if this includes tool results or system messages
   - Mitigation: Filter by `input.variant` and/or check parts for user-role content. If `chat.message` fires too broadly, fall back to event-based detection via `message.updated`.
 
-- [ ] Q: Can the plugin access `process.env.HOME` / `os.homedir()` via Bun for constructing the status file path?
+- [x] Q: Can the plugin access `process.env.HOME` / `os.homedir()` via Bun for constructing the status file path?
   - Uncertainty: OpenCode plugins run in Bun's runtime which may sandbox environment variables (similar to the Bun/Nix issue that required `src/env.ts`)
   - Mitigation: Use `Bun.env.HOME` or `process.env.HOME`. If unavailable, derive XDG paths from `context.directory`. Document that `CCMON_OPENCODE_STATUS_PATH` env var can override.
 
-- [ ] Q: Is `appendFile` on the shared status file safe from multiple OpenCode sessions?
+- [x] Q: Is `appendFile` on the shared status file safe from multiple OpenCode sessions?
   - Uncertainty: Multiple OpenCode instances writing to the same file could cause interleaved lines
   - Mitigation: POSIX `O_APPEND` is atomic for writes under PIPE_BUF (4096 bytes on Linux). Plugin writes lines < 1KB — should be safe. If interleaving occurs in practice, switch to per-session files.
 
-- [ ] Q: Does the `session.created` event fire for sub-agent sessions with `info.parentID`?
+- [x] Q: Does the `session.created` event fire for sub-agent sessions with `info.parentID`?
   - From plugin source: yes, `session.created` fires with `event.properties.info` (a Session object). Sub-agent sessions have `info.parentID` set to parent session ID.
   - Result: Use `info.parentID` to detect sub-agent creation and write state for the parent session.
 
-- [ ] Q: What `cwd` do we write for sub-agent events?
+- [x] Q: What `cwd` do we write for sub-agent events?
   - Decision: Use the parent session's cwd (stored in the plugin's session→cwd map). Sub-agent sessions share the same project directory as their parent. The `client.session.get({ path: { id: parentID } })` can retrieve parent session info including directory.
 
 ## Tasks

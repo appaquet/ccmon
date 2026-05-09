@@ -10,7 +10,7 @@ See [00-ccmon](00-ccmon.md). When a project transitions to `stopped`, the card s
 - [x] Keep stopped-transition check as `prevState === 'running'` → `stopped` only (broadening to any non-stopped caused false flashes on page refresh when `waiting_for_permission` → `stopped`)
 - [x] Add 5s pruning: remove map entries older than 5000ms on each render
 - [x] Fix `flashNotification` false trigger on page refresh: add `prevTs !== undefined` guard so first-seen projects don't flash for stale `notificationTimestamp`
-- [ ] Visual verification: run `bun run serve`, refresh page, confirm no projects flash; trigger running→stopped transition, confirm 5s flash persists
+- [x] Visual verification: run `bun run serve`, refresh page, confirm no projects flash; trigger running→stopped transition, confirm 5s flash persists
 
 ## Files
 

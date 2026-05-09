@@ -2,12 +2,18 @@ import { readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import type { JsonlFirstLine } from "./parsers/claude-jsonl";
 import { STATUS_LOG_FILE } from "./session-core";
+import {
+  CLOSED_PROJECT_TTL_MS,
+  MAX_STATUS_LOG_BYTES,
+  MS_PER_HOUR,
+} from "./timing.js";
 import type { ProjectInfo, ProjectState } from "./types";
 
-export const MAX_STATUS_LOG_BYTES = 64 * 1024;
+export type ClaudeProjectInfo = Extract<ProjectInfo, { source: "claude" }>;
 
-export const CLOSED_PROJECT_TTL_MS = 60_000;
+export { CLOSED_PROJECT_TTL_MS, MAX_STATUS_LOG_BYTES };
 
 export const DEFAULT_CLAUDE_DIR = join(homedir(), ".claude", "projects");
 
@@ -61,7 +67,7 @@ export function disambiguateProjectNames(projects: ProjectState[]): void {
 
 export async function scanProjects(
   claudeDir: string = DEFAULT_CLAUDE_DIR,
-): Promise<ProjectInfo[]> {
+): Promise<ClaudeProjectInfo[]> {
   let entries: string[];
   try {
     entries = await readdir(claudeDir);
@@ -69,7 +75,7 @@ export async function scanProjects(
     return [];
   }
 
-  const results: ProjectInfo[] = [];
+  const results: ClaudeProjectInfo[] = [];
 
   for (const entry of entries) {
     if (entry === "subagents") continue;
@@ -95,7 +101,7 @@ export function filterStaleProjects(
 ): ProjectState[] {
   if (maxInactivityHours <= 0 || !Number.isFinite(maxInactivityHours))
     return projects;
-  const cutoff = Date.now() - maxInactivityHours * 3600 * 1000;
+  const cutoff = Date.now() - maxInactivityHours * MS_PER_HOUR;
   const closedCutoff = Date.now() - CLOSED_PROJECT_TTL_MS;
   return projects.filter((p) => {
     if (p.lastUpdated === null) return false;
@@ -109,7 +115,7 @@ export function filterStaleProjects(
 export async function readProjectInfo(
   fullPath: string,
   dirName: string,
-): Promise<ProjectInfo | null> {
+): Promise<ClaudeProjectInfo | null> {
   let isDir: boolean;
   try {
     const s = await stat(fullPath);
@@ -166,7 +172,7 @@ export async function findLatestJSONL(dirPath: string): Promise<string | null> {
 
 export async function readFirstLine(
   filePath: string,
-): Promise<{ cwd: string; sessionId: string } | null> {
+): Promise<JsonlFirstLine | null> {
   try {
     const text = readFileSync(filePath, { encoding: "utf-8" }).slice(0, 4096);
     const lines = text.split("\n");
@@ -186,9 +192,7 @@ export async function readFirstLine(
   }
 }
 
-export function isFirstLineRecord(
-  v: unknown,
-): v is { cwd: string; sessionId: string } {
+export function isFirstLineRecord(v: unknown): v is JsonlFirstLine {
   if (typeof v !== "object" || v === null) return false;
   const obj = v as Record<string, unknown>;
   return typeof obj.cwd === "string" && typeof obj.sessionId === "string";

@@ -2,11 +2,13 @@ import type { FSWatcher } from "node:fs";
 import { watch } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-
-const DEBOUNCE_MS = 100;
-const BACKOFF_INITIAL_MS = 1000;
-const BACKOFF_MAX_MS = 30_000;
-const MAX_RETRIES = 10;
+import { log } from "./log";
+import {
+  BACKOFF_INITIAL_MS,
+  BACKOFF_MAX_MS,
+  DEBOUNCE_MS,
+  MAX_RETRIES,
+} from "./timing.js";
 
 function backoffDelay(attempts: number): number {
   return Math.min(BACKOFF_INITIAL_MS * 2 ** attempts, BACKOFF_MAX_MS);
@@ -63,9 +65,11 @@ export function watchForChanges(
         const attempt = restartAttempts.get(key) ?? 0;
         if (attempt >= MAX_RETRIES) return;
         const delay = backoffDelay(attempt);
-        console.error(
-          `ccmon: watcher error for ${projectDir}, restarting in ${delay}ms (attempt ${attempt + 1})`,
-        );
+        log.error("watcher error, restarting", undefined, {
+          dir: projectDir,
+          delay,
+          attempt: attempt + 1,
+        });
         restartAttempts.set(key, attempt + 1);
         setTimeout(() => {
           if (stopped) return;
@@ -101,7 +105,7 @@ export function watchForChanges(
         if (!filename || stopped) return;
         const newProjectDir = join(claudeDir, filename);
         watchProject(newProjectDir).catch((err) =>
-          console.error("ccmon: failed to watch new project dir:", err),
+          log.error("failed to watch new project dir", err),
         );
       });
       watcher.on("error", () => {
@@ -112,9 +116,10 @@ export function watchForChanges(
         const attempt = restartAttempts.get(key) ?? 0;
         if (attempt >= MAX_RETRIES) return;
         const delay = backoffDelay(attempt);
-        console.error(
-          `ccmon: watcher error for claudeDir, restarting in ${delay}ms (attempt ${attempt + 1})`,
-        );
+        log.error("claudeDir watcher error, restarting", undefined, {
+          delay,
+          attempt: attempt + 1,
+        });
         restartAttempts.set(key, attempt + 1);
         setTimeout(() => {
           if (stopped) return;
@@ -154,7 +159,7 @@ export function watchForChanges(
     startClaudeDirWatcher();
   }
 
-  init().catch((err) => console.error("ccmon: watcher init error:", err));
+  init().catch((err) => log.error("watcher init error", err));
 
   return {
     stop(): void {

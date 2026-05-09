@@ -9,7 +9,7 @@ See [00-ccmon](00-ccmon.md). Projects are currently sorted alphabetically by `pr
 - [x] Add `lastSortOrder` array and `lastSortTime` timestamp as module-level state in frontend
 - [x] Create `getSortedProjects(projects)` function: if 30s elapsed since `lastSortTime`, re-sort by `lastUpdated` descending and cache; otherwise reorder `projects` to match cached `lastSortOrder` (by composite key), appending any new projects at top
 - [x] Replace both `localeCompare` sorts in `mergeAndRender()` and `render()` with `getSortedProjects()` call (single call site, remove duplicate sort)
-- [ ] Visual verification: run `bun run serve`, confirm most recently active projects appear first, and card order only changes every ~30s
+- [x] Visual verification: run `bun run serve`, confirm most recently active projects appear first, and card order only changes every ~30s
 
 ## Files
 

@@ -1,11 +1,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { appendFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { MAX_STATUS_LOG_BYTES } from "./project-utils";
 import type { SessionState, StatusEvent } from "./session-core";
 import { readStatusLog, resolveState, STATUS_LOG_FILE } from "./session-core";
-
-const STATUS_LOG_TAIL_BYTES = 8 * 1024;
+import { MAX_STATUS_LOG_BYTES, STATUS_LOG_TAIL_BYTES } from "./timing.js";
 
 // Prevents concurrent write+trim races on the same status log.
 const writeLocks = new Set<string>();

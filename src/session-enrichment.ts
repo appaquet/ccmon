@@ -1,30 +1,17 @@
-/**
- * Enrichment fields shared between main sessions and sub-agents,
- * extracted by scanning the tail of a JSONL file.
- */
+import type {
+  JsonlAssistantEntry,
+  JsonlContentBlock,
+  JsonlCustomTitleEntry,
+  JsonlEntry,
+  JsonlProgressEntry,
+  JsonlQueueOperationEntry,
+  JsonlTextBlock,
+  JsonlToolUseBlock,
+  JsonlUserEntry,
+} from "./parsers/claude-jsonl";
+import type { SessionEnrichment, TaskInfo } from "./types";
 
-/**
- * A parsed task from JSONL TaskCreate/TaskUpdate tool_use blocks
- * with id, subject, status, and optional activeForm.
- */
-export interface TaskInfo {
-  id: string;
-  subject: string;
-  status: string;
-  activeForm?: string;
-}
-
-export interface SessionEnrichment {
-  model?: string;
-  latestUserActivity?: { text: string; isCommand: boolean };
-  latestAssistantActivity?: { text?: string; tool?: string };
-  tasks?: TaskInfo[];
-  tasksDone?: number;
-  tasksTotal?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  sessionName?: string;
-}
+export type { SessionEnrichment, TaskInfo };
 
 /**
  * Carries enrichment extracted from a JSONL tail scan, plus the per-session
@@ -34,15 +21,14 @@ export interface SessionTailInfo extends SessionEnrichment {
   agentDescriptions: Map<string, string>;
 }
 
+import { MAX_FIRST_READ } from "./timing.js";
+
 // Keyed by jsonlPath; avoids re-reading the tail unless the file changed.
 export interface SessionTailCache {
   mtime: number;
   fileSize: number;
   data: SessionTailInfo;
 }
-
-// Maximum bytes to read on first access for large files (10 MB).
-const MAX_FIRST_READ = 10 * 1024 * 1024;
 
 /**
  * Extracts a slash command string from a user message content string.
@@ -116,18 +102,16 @@ export function scanEnrichment(
   };
 
   for (const line of reversed) {
-    let entry: Record<string, unknown>;
+    let entry: JsonlEntry;
     try {
       const parsed = JSON.parse(line);
       if (typeof parsed !== "object" || parsed === null) continue;
-      entry = parsed as Record<string, unknown>;
+      entry = parsed as JsonlEntry;
     } catch {
       continue;
     }
 
-    const type = entry.type;
-
-    switch (type) {
+    switch (entry.type) {
       case "user":
         handleUserEntry(entry, ctx);
         break;
@@ -257,29 +241,28 @@ export function scanTaskCreateUpdate(
   );
 
   for (const line of lines) {
-    let entry: Record<string, unknown>;
+    let entry: JsonlEntry;
     try {
       const parsed = JSON.parse(line);
       if (typeof parsed !== "object" || parsed === null) continue;
-      entry = parsed as Record<string, unknown>;
+      entry = parsed as JsonlEntry;
     } catch {
       continue;
     }
 
-    const type = entry.type;
-    const message = entry.message as Record<string, unknown> | undefined;
-
-    if (type === "assistant" && message && Array.isArray(message.content)) {
-      for (const block of message.content as unknown[]) {
-        if (typeof block !== "object" || block === null) continue;
-        const b = block as Record<string, unknown>;
-        if (b.type !== "tool_use") continue;
-        if (typeof b.id !== "string") continue;
-        const input = b.input as Record<string, unknown> | undefined;
+    if (
+      entry.type === "assistant" &&
+      entry.message &&
+      Array.isArray(entry.message.content)
+    ) {
+      for (const block of entry.message.content) {
+        if (block.type !== "tool_use") continue;
+        if (typeof block.id !== "string") continue;
+        const input = block.input;
         if (!input) continue;
 
-        if (b.name === "TaskCreate" && typeof input.subject === "string") {
-          pendingCreates.set(b.id, {
+        if (block.name === "TaskCreate" && typeof input.subject === "string") {
+          pendingCreates.set(block.id, {
             subject: input.subject,
             activeForm:
               typeof input.activeForm === "string"
@@ -288,7 +271,7 @@ export function scanTaskCreateUpdate(
           });
         }
 
-        if (b.name === "TaskUpdate" && typeof input.taskId === "string") {
+        if (block.name === "TaskUpdate" && typeof input.taskId === "string") {
           const existing = tasks.get(input.taskId);
           if (existing) {
             if (typeof input.status === "string")
@@ -304,18 +287,20 @@ export function scanTaskCreateUpdate(
       }
     }
 
-    if (type === "user" && message && Array.isArray(message.content)) {
-      for (const block of message.content as unknown[]) {
-        if (typeof block !== "object" || block === null) continue;
-        const b = block as Record<string, unknown>;
-        if (b.type !== "tool_result") continue;
-        if (typeof b.tool_use_id !== "string") continue;
+    if (
+      entry.type === "user" &&
+      entry.message &&
+      Array.isArray(entry.message.content)
+    ) {
+      for (const block of entry.message.content) {
+        if (block.type !== "tool_result") continue;
+        if (typeof block.tool_use_id !== "string") continue;
 
-        const pending = pendingCreates.get(b.tool_use_id);
+        const pending = pendingCreates.get(block.tool_use_id);
         if (!pending) continue;
 
         let taskId: string | undefined;
-        const content = b.content;
+        const content = block.content;
         const text =
           typeof content === "string"
             ? content
@@ -340,7 +325,7 @@ export function scanTaskCreateUpdate(
             status: "pending",
             activeForm: pending.activeForm,
           });
-          pendingCreates.delete(b.tool_use_id);
+          pendingCreates.delete(block.tool_use_id);
         }
       }
     }
@@ -350,21 +335,14 @@ export function scanTaskCreateUpdate(
 }
 
 export function scanTodoWrite(
-  contentBlocks: unknown[],
+  contentBlocks: JsonlContentBlock[],
 ): { tasksDone: number; tasksTotal: number } | null {
   const todoWrite = contentBlocks.find(
-    (
-      item,
-    ): item is { type: string; name: string; input: Record<string, unknown> } =>
-      typeof item === "object" &&
-      item !== null &&
-      (item as Record<string, unknown>).type === "tool_use" &&
-      (item as Record<string, unknown>).name === "TodoWrite",
+    (item): item is JsonlToolUseBlock & { name: "TodoWrite" } =>
+      item.type === "tool_use" && item.name === "TodoWrite",
   );
   if (todoWrite === undefined) return null;
-  const input = (todoWrite as Record<string, unknown>).input as
-    | Record<string, unknown>
-    | undefined;
+  const input = todoWrite.input;
   if (input === undefined || !Array.isArray(input.todos)) return null;
   const todos = input.todos as Array<{ status: string }>;
   return {
@@ -373,7 +351,7 @@ export function scanTodoWrite(
   };
 }
 
-export function isTextBlock(b: unknown): b is { type: string; text: string } {
+export function isTextBlock(b: unknown): b is JsonlTextBlock {
   return (
     typeof b === "object" &&
     b !== null &&
@@ -382,9 +360,7 @@ export function isTextBlock(b: unknown): b is { type: string; text: string } {
   );
 }
 
-export function isToolUseBlock(
-  b: unknown,
-): b is { type: string; name: string } {
+export function isToolUseBlock(b: unknown): b is JsonlToolUseBlock {
   return (
     typeof b === "object" &&
     b !== null &&
@@ -406,25 +382,22 @@ interface ScanContext {
   scanOutputTokens: number;
 }
 
-function handleUserEntry(
-  entry: Record<string, unknown>,
-  ctx: ScanContext,
-): void {
-  const message = entry.message as Record<string, unknown> | undefined;
+function handleUserEntry(entry: JsonlUserEntry, ctx: ScanContext): void {
+  const message = entry.message;
 
   if (message && Array.isArray(message.content)) {
-    const toolUseResult = entry.toolUseResult as
-      | Record<string, unknown>
-      | undefined;
+    const toolUseResult = entry.toolUseResult;
     const agentId =
       typeof toolUseResult?.agentId === "string"
         ? toolUseResult.agentId
         : undefined;
     if (agentId !== undefined) {
-      for (const block of message.content as unknown[]) {
-        const b = block as Record<string, unknown>;
-        if (b.type === "tool_result" && typeof b.tool_use_id === "string") {
-          ctx.pendingToolResults.set(b.tool_use_id, agentId);
+      for (const block of message.content) {
+        if (
+          block.type === "tool_result" &&
+          typeof block.tool_use_id === "string"
+        ) {
+          ctx.pendingToolResults.set(block.tool_use_id, agentId);
         }
       }
     }
@@ -449,10 +422,10 @@ function handleUserEntry(
 }
 
 function handleAssistantEntry(
-  entry: Record<string, unknown>,
+  entry: JsonlAssistantEntry,
   ctx: ScanContext,
 ): void {
-  const message = entry.message as Record<string, unknown> | undefined;
+  const message = entry.message;
   if (!message) return;
 
   if (!ctx.foundModel && typeof message.model === "string") {
@@ -460,7 +433,7 @@ function handleAssistantEntry(
     ctx.foundModel = true;
   }
 
-  const usage = message.usage as Record<string, unknown> | undefined;
+  const usage = message.usage;
   if (usage !== undefined) {
     const input =
       typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
@@ -479,7 +452,7 @@ function handleAssistantEntry(
   }
 
   if (Array.isArray(message.content)) {
-    const contentBlocks = message.content as unknown[];
+    const contentBlocks = message.content;
 
     if (!ctx.foundTasks) {
       const todoWriteResult = scanTodoWrite(contentBlocks);
@@ -503,15 +476,14 @@ function handleAssistantEntry(
     }
 
     for (const block of contentBlocks) {
-      const b = block as Record<string, unknown>;
       if (
-        b.type === "tool_use" &&
-        b.name === "Task" &&
-        typeof b.id === "string"
+        block.type === "tool_use" &&
+        block.name === "Task" &&
+        typeof block.id === "string"
       ) {
-        const input = b.input as Record<string, unknown> | undefined;
+        const input = block.input;
         if (typeof input?.description === "string") {
-          ctx.taskToolDescriptions.set(b.id, input.description);
+          ctx.taskToolDescriptions.set(block.id, input.description);
         }
       }
     }
@@ -519,16 +491,16 @@ function handleAssistantEntry(
 }
 
 function handleProgressEntry(
-  entry: Record<string, unknown>,
+  entry: JsonlProgressEntry,
   ctx: ScanContext,
 ): void {
   if (ctx.foundTasks) return;
-  const data = entry.data as Record<string, unknown> | undefined;
-  const outerMsg = data?.message as Record<string, unknown> | undefined;
-  const innerMsg = outerMsg?.message as Record<string, unknown> | undefined;
+  const data = entry.data;
+  const outerMsg = data?.message;
+  const innerMsg = outerMsg?.message;
   const content = innerMsg?.content;
   if (Array.isArray(content)) {
-    const todoWriteResult = scanTodoWrite(content as unknown[]);
+    const todoWriteResult = scanTodoWrite(content);
     if (todoWriteResult !== null) {
       ctx.result.tasksDone = todoWriteResult.tasksDone;
       ctx.result.tasksTotal = todoWriteResult.tasksTotal;
@@ -538,7 +510,7 @@ function handleProgressEntry(
 }
 
 function handleQueueOperationEntry(
-  entry: Record<string, unknown>,
+  entry: JsonlQueueOperationEntry,
   ctx: ScanContext,
 ): void {
   const operation = entry.operation;
@@ -558,7 +530,7 @@ function handleQueueOperationEntry(
 }
 
 function handleCustomTitleEntry(
-  entry: Record<string, unknown>,
+  entry: JsonlCustomTitleEntry,
   ctx: ScanContext,
 ): void {
   if (ctx.foundSessionName) return;
