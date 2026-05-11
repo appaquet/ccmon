@@ -9,8 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, test } from "vitest";
-import { buildProjectState } from "../../src/backends/build-project-state";
-import { OpencodeBackend } from "../../src/backends/opencode";
+import { buildProjectState } from "../../src/backends/build-project-state.ts";
+import { OpencodeBackend } from "../../src/backends/opencode.ts";
 
 type DB = DatabaseSync;
 

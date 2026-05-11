@@ -2,11 +2,11 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { buildProjectState } from "../src/backends/build-project-state";
-import { ClaudeBackend } from "../src/backends/claude";
-import { OpencodeBackend } from "../src/backends/opencode";
-import { startServer } from "../src/server";
-import { makeTempDir } from "./_helpers";
+import { buildProjectState } from "../src/backends/build-project-state.ts";
+import { ClaudeBackend } from "../src/backends/claude.ts";
+import { OpencodeBackend } from "../src/backends/opencode.ts";
+import { startServer } from "../src/server.ts";
+import { makeTempDir } from "./_helpers.ts";
 
 type DB = DatabaseSync;
 

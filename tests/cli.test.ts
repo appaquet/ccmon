@@ -3,7 +3,7 @@ import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { makeTempDir } from "./_helpers";
+import { makeTempDir } from "./_helpers.ts";
 
 const STATUS_LOG_FILE = "ccmon-status.jsonl";
 
@@ -68,7 +68,7 @@ async function spawnCli(
   options: { stdin?: string; env?: Record<string, string> } = {},
 ): Promise<SpawnResult> {
   try {
-    const stdout = execSync(`npx tsx ${CLI_PATH} ${args.join(" ")}`, {
+    const stdout = execSync(`${NODE} ${CLI_PATH} ${args.join(" ")}`, {
       encoding: "utf-8",
       stdio: "pipe",
       env: { ...process.env, ...options.env },
@@ -254,15 +254,7 @@ describe("dump --watch --project", () => {
 
     const proc = spawn(
       NODE,
-      [
-        "--import",
-        "tsx/esm",
-        CLI_PATH,
-        "dump",
-        "--watch",
-        "--project",
-        "watchapp",
-      ],
+      [CLI_PATH, "dump", "--watch", "--project", "watchapp"],
       {
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, CLAUDE_PROJECTS_DIR: tmpDir },
@@ -297,15 +289,7 @@ describe("dump --watch --project", () => {
 
     const proc = spawn(
       NODE,
-      [
-        "--import",
-        "tsx/esm",
-        CLI_PATH,
-        "dump",
-        "--watch",
-        "--project",
-        "watchapp2",
-      ],
+      [CLI_PATH, "dump", "--watch", "--project", "watchapp2"],
       {
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, CLAUDE_PROJECTS_DIR: tmpDir },
@@ -800,18 +784,14 @@ describe("dump --watch", () => {
     );
 
     // Start the watcher, wait briefly, then kill it
-    const proc = spawn(
-      NODE,
-      ["--import", "tsx/esm", CLI_PATH, "dump", "--watch"],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          CLAUDE_PROJECTS_DIR: tmpDir,
-          CCMON_CONFIG: cfgPath,
-        },
+    const proc = spawn(NODE, [CLI_PATH, "dump", "--watch"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        CLAUDE_PROJECTS_DIR: tmpDir,
+        CCMON_CONFIG: cfgPath,
       },
-    );
+    });
 
     const stdoutChunks: Buffer[] = [];
     proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
@@ -846,18 +826,14 @@ describe("dump --watch", () => {
       JSON.stringify({ backends: [{ type: "claude", enabled: true }] }),
     );
 
-    const proc = spawn(
-      NODE,
-      ["--import", "tsx/esm", CLI_PATH, "dump", "--watch"],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          CLAUDE_PROJECTS_DIR: tmpDir,
-          CCMON_CONFIG: cfgPath,
-        },
+    const proc = spawn(NODE, [CLI_PATH, "dump", "--watch"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        CLAUDE_PROJECTS_DIR: tmpDir,
+        CCMON_CONFIG: cfgPath,
       },
-    );
+    });
 
     const stdoutChunks: Buffer[] = [];
     proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
@@ -890,14 +866,10 @@ describe("dump --watch", () => {
   }, 5000);
 
   test("exits cleanly on SIGINT", async () => {
-    const proc = spawn(
-      NODE,
-      ["--import", "tsx/esm", CLI_PATH, "dump", "--watch"],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, CLAUDE_PROJECTS_DIR: tmpDir },
-      },
-    );
+    const proc = spawn(NODE, [CLI_PATH, "dump", "--watch"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, CLAUDE_PROJECTS_DIR: tmpDir },
+    });
 
     await new Promise((r) => setTimeout(r, 200));
     proc.kill("SIGINT");

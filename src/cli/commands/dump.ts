@@ -1,12 +1,12 @@
 import { basename } from "node:path";
-import { createBackends } from "../../backends";
-import { collectBackendStates } from "../../backends/collect-states";
-import type { CcmonConfig } from "../../config";
+import { collectBackendStates } from "../../backends/collect-states.ts";
+import { createBackends } from "../../backends/index.ts";
+import type { CcmonConfig } from "../../config.ts";
 import {
   disambiguateProjectNames,
   filterStaleProjects,
-} from "../../project-utils";
-import type { ProjectState } from "../../types";
+} from "../../project-utils.ts";
+import type { ProjectState } from "../../types.ts";
 
 export async function runDump(
   config: CcmonConfig,

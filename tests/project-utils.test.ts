@@ -6,10 +6,10 @@ import {
   disambiguateProjectNames,
   filterStaleProjects,
   scanProjects,
-} from "../src/project-utils";
-import type { SessionState } from "../src/session-core";
-import type { ProjectState } from "../src/types";
-import { makeFirstLine, makeTempDir } from "./_helpers";
+} from "../src/project-utils.ts";
+import type { SessionState } from "../src/session-core.ts";
+import type { ProjectState } from "../src/types.ts";
+import { makeFirstLine, makeTempDir } from "./_helpers.ts";
 
 // ─── scanProjects ────────────────────────────────────────────────────────────
 

@@ -2,15 +2,15 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { CcmonConfig } from "../config";
-import { log } from "../log";
+import type { CcmonConfig } from "../config.ts";
+import { log } from "../log.ts";
 import {
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_STATUS_POLL_INTERVAL_MS,
-} from "../timing.js";
-import { ClaudeBackend } from "./claude";
-import { OpencodeBackend } from "./opencode";
-import type { SessionBackend } from "./types";
+} from "../timing.ts";
+import { ClaudeBackend } from "./claude.ts";
+import { OpencodeBackend } from "./opencode.ts";
+import type { SessionBackend } from "./types.ts";
 
 function createClaudeBackend(entry: {
   type: "claude";

@@ -2,48 +2,51 @@ import type { Dirent } from "node:fs";
 import { readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import type { JsonlFirstLine } from "../parsers/claude-jsonl";
+import type { JsonlFirstLine } from "../parsers/claude-jsonl.ts";
 import {
   disambiguateProjectNames,
   readProjectInfo,
   scanProjects,
   sessionDirFromJSONL,
-} from "../project-utils";
-import type { SessionState, StatusEvent } from "../session-core";
-import { readStatusLog, resolveState } from "../session-core";
+} from "../project-utils.ts";
+import type { SessionState, StatusEvent } from "../session-core.ts";
+import { readStatusLog, resolveState } from "../session-core.ts";
 import type {
   SessionEnrichment,
   SessionTailCache,
   SessionTailInfo,
-} from "../session-enrichment";
+} from "../session-enrichment.ts";
 import {
   computeReadRange,
   mergeEnrichment,
   scanEnrichment,
   scanTaskCreateUpdate,
-} from "../session-enrichment";
+} from "../session-enrichment.ts";
 import {
   SUBAGENT_ACTIVE_THRESHOLD_MS,
   SUBAGENT_EXPIRY_MS,
   SUBAGENT_STOP_GRACE_MS,
-} from "../timing.js";
+} from "../timing.ts";
 import type {
   NotificationMeta,
   ProjectInfo,
   ProjectState,
   SubagentInfo,
-} from "../types";
-import { watchForChanges } from "../watcher";
-import { buildProjectState as sharedBuildProjectState } from "./build-project-state";
-import type { SessionBackend } from "./types";
+} from "../types.ts";
+import { watchForChanges } from "../watcher.ts";
+import { buildProjectState as sharedBuildProjectState } from "./build-project-state.ts";
+import type { SessionBackend } from "./types.ts";
 
 const JSONL_EXT = ".jsonl";
 
 export class ClaudeBackend implements SessionBackend {
   sessionTailCache = new Map<string, SessionTailCache>();
   projectStateCache = new Map<string, ProjectState>();
+  private claudeDir: string;
 
-  constructor(private claudeDir: string) {}
+  constructor(claudeDir: string) {
+    this.claudeDir = claudeDir;
+  }
 
   get _claudeDir(): string {
     return this.claudeDir;

@@ -1,15 +1,15 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import type { StatusEvent } from "../src/session-core";
+import type { StatusEvent } from "../src/session-core.ts";
 import {
   PERMISSION_RESOLVE_GAP_MS,
   readStatusLog,
   resolveState,
   STATUS_FILE_LEGACY,
   STATUS_LOG_FILE,
-} from "../src/session-core";
-import { makeTempDir } from "./_helpers";
+} from "../src/session-core.ts";
+import { makeTempDir } from "./_helpers.ts";
 
 // ─── readStatusLog ───────────────────────────────────────────────────────────
 

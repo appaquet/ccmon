@@ -1,6 +1,6 @@
-import { log } from "../log";
-import type { NotificationMeta, ProjectInfo, ProjectState } from "../types";
-import type { SessionBackend } from "./types";
+import { log } from "../log.ts";
+import type { NotificationMeta, ProjectInfo, ProjectState } from "../types.ts";
+import type { SessionBackend } from "./types.ts";
 
 /**
  * Shared utility that assembles a full ProjectState from a backend using
@@ -19,14 +19,14 @@ export async function buildProjectState(
 
   const base: ProjectState = { ...projectInfo, state, lastUpdated };
 
-  let enrichment: import("../types").SessionEnrichment | undefined;
+  let enrichment: import("../types.ts").SessionEnrichment | undefined;
   try {
     enrichment = await backend.enrichProject(projectInfo);
   } catch (err) {
     log.warn("enrichment failed", err, { project: projectInfo.projectName });
   }
 
-  let subagents: import("../types").SubagentInfo[] | undefined;
+  let subagents: import("../types.ts").SubagentInfo[] | undefined;
   try {
     const agents =
       state === "running" || state === "waiting_for_permission"

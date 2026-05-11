@@ -2,13 +2,13 @@ import type { FSWatcher } from "node:fs";
 import { watch } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { log } from "./log";
+import { log } from "./log.ts";
 import {
   BACKOFF_INITIAL_MS,
   BACKOFF_MAX_MS,
   DEBOUNCE_MS,
   MAX_RETRIES,
-} from "./timing.js";
+} from "./timing.ts";
 
 function backoffDelay(attempts: number): number {
   return Math.min(BACKOFF_INITIAL_MS * 2 ** attempts, BACKOFF_MAX_MS);

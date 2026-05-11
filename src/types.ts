@@ -1,4 +1,4 @@
-import type { SessionState } from "./session-core";
+import type { SessionState } from "./session-core.ts";
 
 export type BackendSource = "claude" | "opencode";
 

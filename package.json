@@ -3,21 +3,20 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "esbuild src/cli/main.ts --bundle --platform=node --format=esm --outfile=dist/cli.js --external:ws",
-    "dump": "tsx src/cli/main.ts dump",
-    "status": "tsx src/cli/main.ts status",
-    "serve": "tsx src/cli/main.ts serve",
-    "sub": "tsx src/cli/main.ts sub",
+    "dump": "node src/cli/main.ts dump",
+    "status": "node src/cli/main.ts status",
+    "serve": "node src/cli/main.ts serve",
+    "sub": "node src/cli/main.ts sub",
     "test": "vitest run",
     "lint": "npx biome check src/ tests/",
     "lint:fix": "npx biome check --write --unsafe src/ tests/",
     "typecheck": "tsc --noEmit"
   },
   "bin": {
-    "ccmon": "dist/cli.js"
+    "ccmon": "src/cli/main.ts"
   },
   "files": [
-    "dist",
+    "src",
     "public"
   ],
   "dependencies": {
@@ -26,8 +25,6 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.4",
     "@types/ws": "^8.18.1",
-    "esbuild": "^0.27.0",
-    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.5"
   }

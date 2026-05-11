@@ -1,7 +1,7 @@
-import { log } from "../log";
-import type { ProjectState } from "../types";
-import { buildProjectState } from "./build-project-state";
-import type { SessionBackend } from "./types";
+import { log } from "../log.ts";
+import type { ProjectState } from "../types.ts";
+import { buildProjectState } from "./build-project-state.ts";
+import type { SessionBackend } from "./types.ts";
 
 /**
  * Iterates all backends, scanning projects and building full ProjectState

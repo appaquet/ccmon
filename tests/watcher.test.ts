@@ -1,8 +1,8 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { _backoffDelayForTesting, watchForChanges } from "../src/watcher";
-import { makeTempDir } from "./_helpers";
+import { _backoffDelayForTesting, watchForChanges } from "../src/watcher.ts";
+import { makeTempDir } from "./_helpers.ts";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

@@ -1,10 +1,10 @@
-import type { SessionState } from "../session-core";
+import type { SessionState } from "../session-core.ts";
 import type {
   NotificationMeta,
   ProjectInfo,
   SessionEnrichment,
   SubagentInfo,
-} from "../types";
+} from "../types.ts";
 
 /**
  * Abstraction over a data source that provides Claude Code / OpenCode

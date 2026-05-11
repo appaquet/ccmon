@@ -1,16 +1,16 @@
 import { appendFile, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { MAX_STATUS_LOG_BYTES } from "../src/project-utils";
-import type { StatusEvent } from "../src/session-core";
-import { readStatusLog, STATUS_LOG_FILE } from "../src/session-core";
+import { MAX_STATUS_LOG_BYTES } from "../src/project-utils.ts";
+import type { StatusEvent } from "../src/session-core.ts";
+import { readStatusLog, STATUS_LOG_FILE } from "../src/session-core.ts";
 import {
   mapHookEventToState,
   writeNotificationStatus,
   writeStatusEvent,
   writeStatusTruncate,
-} from "../src/status-writer";
-import { makeTempDir } from "./_helpers";
+} from "../src/status-writer.ts";
+import { makeTempDir } from "./_helpers.ts";
 
 // ─── mapHookEventToState ──────────────────────────────────────────────────────
 

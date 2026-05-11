@@ -1,7 +1,7 @@
-import { createBackends } from "../../backends";
-import type { CcmonConfig } from "../../config";
-import { mergeCliOverrides } from "../../config";
-import { startServer } from "../../server";
+import { createBackends } from "../../backends/index.ts";
+import type { CcmonConfig } from "../../config.ts";
+import { mergeCliOverrides } from "../../config.ts";
+import { startServer } from "../../server.ts";
 
 export function runServe(
   config: CcmonConfig,

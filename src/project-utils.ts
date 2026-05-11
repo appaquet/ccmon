@@ -2,14 +2,14 @@ import { readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import type { JsonlFirstLine } from "./parsers/claude-jsonl";
-import { STATUS_LOG_FILE } from "./session-core";
+import type { JsonlFirstLine } from "./parsers/claude-jsonl.ts";
+import { STATUS_LOG_FILE } from "./session-core.ts";
 import {
   CLOSED_PROJECT_TTL_MS,
   MAX_STATUS_LOG_BYTES,
   MS_PER_HOUR,
-} from "./timing.js";
-import type { ProjectInfo, ProjectState } from "./types";
+} from "./timing.ts";
+import type { ProjectInfo, ProjectState } from "./types.ts";
 
 export type ClaudeProjectInfo = Extract<ProjectInfo, { source: "claude" }>;
 

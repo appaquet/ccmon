@@ -20,12 +20,22 @@
         ccmon = pkgs.buildNpmPackage {
           name = "ccmon";
           src = ./.;
-          npmDepsHash = "sha256-HRd4ArTKST3/tvttF/bFwn6rTwRfuFM95+tf7OX63AA=";
-          makeWrapperArgs = [
-            "--set"
-            "NODE_NO_WARNINGS"
-            "1"
-          ];
+          nodejs = pkgs.nodejs_22;
+          npmDepsHash = "sha256-aMqw3o68F5ftYFm8BK0QNwWhR7PBmM0It+ftnYqX2jU=";
+          dontNpmBuild = true;
+
+          # Node refuses to type-strip files under node_modules/. Move source
+          # outside that path and rewrite the bin to invoke node on it directly.
+          postInstall = ''
+            mkdir -p $out/share/ccmon
+            cp -r $out/lib/node_modules/ccmon/src $out/share/ccmon/src
+            cp -r $out/lib/node_modules/ccmon/public $out/share/ccmon/public
+            ln -s $out/lib/node_modules/ccmon/node_modules $out/share/ccmon/node_modules
+            rm $out/bin/ccmon
+            makeWrapper ${pkgs.nodejs_22}/bin/node $out/bin/ccmon \
+              --add-flags "$out/share/ccmon/src/cli/main.ts" \
+              --set NODE_NO_WARNINGS 1
+          '';
         };
 
         opencodePlugin = pkgs.runCommand "ccmon-opencode-plugin" { } ''

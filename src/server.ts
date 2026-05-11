@@ -4,13 +4,16 @@ import { hostname as osHostname } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type WebSocket, WebSocketServer } from "ws";
-import { collectBackendStates } from "./backends/collect-states";
-import type { SessionBackend } from "./backends/types";
-import { DEFAULT_CONFIG } from "./config";
-import { log } from "./log";
-import { disambiguateProjectNames, filterStaleProjects } from "./project-utils";
-import { BROADCAST_INTERVAL_MS } from "./timing.js";
-import type { ProjectState } from "./types";
+import { collectBackendStates } from "./backends/collect-states.ts";
+import type { SessionBackend } from "./backends/types.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
+import { log } from "./log.ts";
+import {
+  disambiguateProjectNames,
+  filterStaleProjects,
+} from "./project-utils.ts";
+import { BROADCAST_INTERVAL_MS } from "./timing.ts";
+import type { ProjectState } from "./types.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const htmlPath = join(__dirname, "..", "public", "index.html");

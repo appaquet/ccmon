@@ -9,11 +9,11 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { buildProjectState } from "../../src/backends/build-project-state";
-import { ClaudeBackend } from "../../src/backends/claude";
-import type { StatusEvent } from "../../src/session-core";
-import { STATUS_LOG_FILE } from "../../src/session-core";
-import { makeFirstLine, makeTempDir } from "../_helpers";
+import { buildProjectState } from "../../src/backends/build-project-state.ts";
+import { ClaudeBackend } from "../../src/backends/claude.ts";
+import type { StatusEvent } from "../../src/session-core.ts";
+import { STATUS_LOG_FILE } from "../../src/session-core.ts";
+import { makeFirstLine, makeTempDir } from "../_helpers.ts";
 
 describe("ClaudeBackend", () => {
   let tmpDir: string;

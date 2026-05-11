@@ -5,8 +5,8 @@ export {
   filterStaleProjects,
   MAX_STATUS_LOG_BYTES,
   scanProjects,
-} from "./project-utils";
-export type { SessionState, StatusEvent } from "./session-core";
+} from "./project-utils.ts";
+export type { SessionState, StatusEvent } from "./session-core.ts";
 export {
   isStatusEvent,
   PERMISSION_RESOLVE_GAP_MS,
@@ -14,23 +14,23 @@ export {
   resolveState,
   STATUS_FILE_LEGACY,
   STATUS_LOG_FILE,
-} from "./session-core";
+} from "./session-core.ts";
 export type {
   SessionEnrichment,
   SessionTailCache,
   SessionTailInfo,
   TaskInfo,
-} from "./session-enrichment";
+} from "./session-enrichment.ts";
 export {
   mapHookEventToState,
   writeNotificationStatus,
   writeStatusEvent,
   writeStatusTruncate,
   writeSubagentStatus,
-} from "./status-writer";
+} from "./status-writer.ts";
 export type {
   BackendSource,
   ProjectInfo,
   ProjectState,
   SubagentInfo,
-} from "./types";
+} from "./types.ts";

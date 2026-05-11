@@ -1,9 +1,13 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { appendFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { SessionState, StatusEvent } from "./session-core";
-import { readStatusLog, resolveState, STATUS_LOG_FILE } from "./session-core";
-import { MAX_STATUS_LOG_BYTES, STATUS_LOG_TAIL_BYTES } from "./timing.js";
+import type { SessionState, StatusEvent } from "./session-core.ts";
+import {
+  readStatusLog,
+  resolveState,
+  STATUS_LOG_FILE,
+} from "./session-core.ts";
+import { MAX_STATUS_LOG_BYTES, STATUS_LOG_TAIL_BYTES } from "./timing.ts";
 
 // Prevents concurrent write+trim races on the same status log.
 const writeLocks = new Set<string>();

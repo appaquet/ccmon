@@ -2,23 +2,27 @@ import { utimesSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { ClaudeBackend } from "../src/backends/claude";
-import type { SessionBackend } from "../src/backends/types";
-import { startServer } from "../src/server";
-import type { SessionState } from "../src/session-core";
+import { ClaudeBackend } from "../src/backends/claude.ts";
+import type { SessionBackend } from "../src/backends/types.ts";
+import { startServer } from "../src/server.ts";
+import type { SessionState } from "../src/session-core.ts";
 import type {
   ProjectInfo,
   SessionEnrichment,
   SubagentInfo,
-} from "../src/types";
-import { makeTempDir } from "./_helpers";
+} from "../src/types.ts";
+import { makeTempDir } from "./_helpers.ts";
 
 /**
  * Wraps a SessionBackend so watchForChanges is a no-op.
  * Used to test the periodic rescan path independently of watchers.
  */
 class NoWatchBackend implements SessionBackend {
-  constructor(private inner: SessionBackend) {}
+  private inner: SessionBackend;
+
+  constructor(inner: SessionBackend) {
+    this.inner = inner;
+  }
 
   scanProjects() {
     return this.inner.scanProjects();

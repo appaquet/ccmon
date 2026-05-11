@@ -14,7 +14,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-All 3 sprints of Phase 58 (Architecture Review) implemented May 2026. 12 refactor tasks, 36 files created/modified. Key deliverables: `src/timing.ts` (19 centralized constants), `src/log.ts` (NDJSON structured logger), `src/parsers/` (typed JSONL/SQLite shapes), `src/cli/` (5 command modules + helpers), composable `resolveState` rules, discriminated `ProjectInfo` union with `source` tag, `SessionBackend.getNotification()` interface method, nested server `backendStates` Map, and split frontend JS (4 ES modules, `index.html` 1112→533 lines). `tests/sessions.test.ts` (3596 lines) deleted; 304 tests pass across 10 test files. Lint and typecheck clean.
+Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 — dropped `tsx` and `esbuild` devDeps and the dist bundle. 116 relative imports rewritten with `.ts` extensions across 29 files; tsconfig switched to `nodenext` + `allowImportingTsExtensions` + `verbatimModuleSyntax`. Three constructors rewritten from parameter-property to explicit-field form (Node's strip-only mode rejects them). Nix `flake.nix` pins `nodejs_22` and uses a `postInstall` to relocate `src/`+`public/` outside `node_modules/` so Node's type-strip guardrail accepts the bin entry; `dontNpmBuild = true` avoids the missing build script. 304 tests pass; nix-built binary hook latency ~111ms median.
 
 
 
@@ -311,6 +311,7 @@ All 3 sprints of Phase 58 (Architecture Review) implemented May 2026. 12 refacto
 - R97: ✅ Server stateMap triple-Map (`stateMap` + `backendIndex` + `backendToKeys`) simplified to nested Map (Phase: Architecture Review)
   - R97.1: Remove unused `backendIndex`
 - R98: ✅ Backend factory separated from I/O (`backends/index.ts` pure orchestration, per-backend factories do I/O) (Phase: Architecture Review)
+- R99: ✅ Run TypeScript natively under Node 22 — drop `tsx` and `esbuild` (Phase: Drop tsx & esbuild, see R99.A-G in phase doc)
 
 ## Questions
 
@@ -588,6 +589,12 @@ Split 849-line sessions.ts into 5 focused modules (types, project-utils, status-
 
 Systematic architecture review of all 15 source files, 8 test files, HTML frontend, and OpenCode plugin. All 12 tasks completed in 3 sprints: extraction of enrichment contract, centralized timing constants, server Map simplification, discriminated ProjectInfo union, structured logger, getNotification interface method, factory-vs-IO separation, composable resolveState rules, CLI command-module split, test file split, typed JSONL/SQLite parsers, and frontend ES module split. 304 tests pass across 10 test files.
 
+### ✅ 59 Phase: Drop tsx & esbuild
+
+[59-drop-tsx-esbuild](59-drop-tsx-esbuild.md)
+
+Follow-up to Phase 55. Run TS directly under Node 22 native type-stripping. 116 relative imports rewritten with `.ts` extensions (29 files); tsconfig → `nodenext` + `allowImportingTsExtensions`; `tsx` + `esbuild` removed. Discovered along the way: Node strip-only mode rejects TS parameter properties (rewrote 3 constructors) and refuses to strip files under `node_modules/` (Nix `postInstall` now copies `src/` + `public/` to `$out/share/ccmon/` outside node_modules, symlinks deps, rewrites bin). Pinned `nodejs_22` in `buildNpmPackage` (was defaulting to nodejs_24). All 304 tests pass; nix-built binary runs in ~111ms median.
+
 ## Files
 
 - **docs/features/2026-02-18-ccmon/**: Project documentation
@@ -595,12 +602,12 @@ Systematic architecture review of all 15 source files, 8 test files, HTML fronte
 - **docs/features/2026-02-18-ccmon/56-opencode-plugin.md**: Phase 56 plan — OpenCode plugin for hook-like status updates via event subscription + fs.watch (Phase: OpenCode Plugin)
 - **CLAUDE.md**: Development instructions; trimmed to 57 lines — commands table, architecture overview, key files (Phase: Session Detection, Packaging, Review Fixes, Linting Setup, StopFailure Hook, Migrate to Node.js, OpenCode Plugin, CLAUDE.md Trim)
 - **README.md**: Install guide, Node.js prerequisite, hook config, commands reference (Phase: Packaging, Migrate to Node.js)
-- **flake.nix**: Nix devShell + packages/apps outputs for ccmon; nodejs_22 wrapper (Phase: Session Detection, Packaging, Migrate to Node.js)
+- **flake.nix**: Nix devShell + packages/apps outputs for ccmon; nodejs_22 pinned in `buildNpmPackage`; `dontNpmBuild = true`; `postInstall` copies `src/`+`public/` to `$out/share/ccmon/` outside `node_modules/` and rewrites bin wrapper (Phase: Session Detection, Packaging, Migrate to Node.js, Drop tsx & esbuild)
 - **.envrc**: direnv config — `use flake` (Phase: Session Detection)
 - **.gitignore**: Excludes `.direnv/` and `*.local.log` (Phase: Session Detection)
-- **package.json**: Node.js project config — `"type": "module"`, `@types/better-sqlite3`, `@types/ws`, `dump` script; `test`, `lint`, `lint:fix`, `typecheck` scripts; Biome + TypeScript + vitest devDeps; better-sqlite3 + ws deps (Phase: Session Detection, Linting Setup, Migrate to Node.js)
+- **package.json**: Node.js project config — `"type": "module"`, `bin: src/cli/main.ts`, `files: ["src","public"]`; scripts invoke `node` directly (no `tsx`); no `build` script; `ws` runtime dep; Biome + TypeScript + vitest + @types/ws devDeps (Phase: Session Detection, Linting Setup, Migrate to Node.js, Drop tsx & esbuild)
 - **package-lock.json**: npm lockfile (Phase: Migrate to Node.js)
-- **tsconfig.json**: IDE TypeScript support — ESNext, strict (Phase: Session Detection, Migrate to Node.js)
+- **tsconfig.json**: IDE TypeScript support — ESNext target, `nodenext` module/moduleResolution, strict, `allowImportingTsExtensions`, `noEmit`, `verbatimModuleSyntax` (Phase: Session Detection, Migrate to Node.js, Drop tsx & esbuild)
 - **biome.json**: Biome linter + formatter config — 2-space indent, recommended rules (Phase: Linting Setup)
 - **.github/workflows/ci.yml**: GHA CI workflow — lint + typecheck + test on push and pull_request; Node.js 22 + npm (Phase: GitHub Actions CI, Migrate to Node.js)
 - **.github/dependabot.yml**: Dependabot config — npm ecosystem, daily checks, 7-day release cooldown (Phase: Dependabot Setup, Migrate to Node.js)
@@ -643,3 +650,4 @@ Systematic architecture review of all 15 source files, 8 test files, HTML fronte
 - **tests/sessions.test.ts**: Deleted — split into 4 per-module test files (Phase: Architecture Review)
 - **resources/opencode-plugin/ccmon.ts**: OpenCode plugin — event subscription + status NDJSON writing (Phase: OpenCode Plugin)
 - **tests/_helpers.ts**: Shared makeTempDir utility; process.env replaces Bun.env (Phase: Review Fixes, Migrate to Node.js)
+- **docs/features/2026-02-18-ccmon/59-drop-tsx-esbuild.md**: Phase 59 plan — drop tsx and esbuild; run TS natively via Node 22 type-stripping; rewrite relative imports with `.ts` extensions; `bin` points at source (Phase: Drop tsx & esbuild)

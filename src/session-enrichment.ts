@@ -8,8 +8,8 @@ import type {
   JsonlTextBlock,
   JsonlToolUseBlock,
   JsonlUserEntry,
-} from "./parsers/claude-jsonl";
-import type { SessionEnrichment, TaskInfo } from "./types";
+} from "./parsers/claude-jsonl.ts";
+import type { SessionEnrichment, TaskInfo } from "./types.ts";
 
 export type { SessionEnrichment, TaskInfo };
 
@@ -21,7 +21,7 @@ export interface SessionTailInfo extends SessionEnrichment {
   agentDescriptions: Map<string, string>;
 }
 
-import { MAX_FIRST_READ } from "./timing.js";
+import { MAX_FIRST_READ } from "./timing.ts";
 
 // Keyed by jsonlPath; avoids re-reading the tail unless the file changed.
 export interface SessionTailCache {

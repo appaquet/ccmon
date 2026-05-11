@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import { loadConfig, mergeCliOverrides } from "../config";
-import { runDump, runDumpWatch } from "./commands/dump";
-import { runServe } from "./commands/serve";
-import { runStatus } from "./commands/status";
-import { runSub } from "./commands/sub";
-import { parseNumberFlag, parseStringFlag } from "./helpers";
+import { loadConfig, mergeCliOverrides } from "../config.ts";
+import { runDump, runDumpWatch } from "./commands/dump.ts";
+import { runServe } from "./commands/serve.ts";
+import { runStatus } from "./commands/status.ts";
+import { runSub } from "./commands/sub.ts";
+import { parseNumberFlag, parseStringFlag } from "./helpers.ts";
 
 const VERSION = "0.1.0";
 

@@ -5,7 +5,7 @@ import {
   PERMISSION_RESOLVE_GAP_MS,
   PERMISSION_STALE_MS,
   STATUS_LOG_TAIL_BYTES,
-} from "./timing.js";
+} from "./timing.ts";
 
 export { PERMISSION_RESOLVE_GAP_MS };
 

@@ -3,16 +3,16 @@ import { existsSync, readFileSync, statSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { log } from "../log";
+import { log } from "../log.ts";
 import type {
   OpencodeMessageData,
   OpencodePartData,
-} from "../parsers/opencode-db";
+} from "../parsers/opencode-db.ts";
 import {
   isStatusEvent,
   type SessionState,
   type StatusEvent,
-} from "../session-core";
+} from "../session-core.ts";
 import {
   DEBOUNCE_MS,
   DEFAULT_POLL_INTERVAL_MS,
@@ -20,14 +20,14 @@ import {
   OPENCODE_ACTIVE_THRESHOLD_MS,
   SUBAGENT_ACTIVE_THRESHOLD_MS,
   SUBAGENT_EXPIRY_MS,
-} from "../timing.js";
+} from "../timing.ts";
 import type {
   NotificationMeta,
   ProjectInfo,
   SessionEnrichment,
   SubagentInfo,
-} from "../types";
-import type { SessionBackend } from "./types";
+} from "../types.ts";
+import type { SessionBackend } from "./types.ts";
 
 function statSyncTerse(p: string): number | null {
   try {
@@ -46,13 +46,22 @@ function resolveDefaultStatusLogPath(): string {
 export class OpencodeBackend implements SessionBackend {
   private lastStatusLogMtime: number | null = null;
   private statusLogEvents: StatusEvent[] | null = null;
+  private db: DatabaseSync;
+  private pollIntervalMs: number;
+  private statusLogPath: string;
+  private statusPollIntervalMs: number;
 
   constructor(
-    private db: DatabaseSync,
-    private pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
-    private statusLogPath = resolveDefaultStatusLogPath(),
-    private statusPollIntervalMs = DEFAULT_STATUS_POLL_INTERVAL_MS,
-  ) {}
+    db: DatabaseSync,
+    pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+    statusLogPath = resolveDefaultStatusLogPath(),
+    statusPollIntervalMs = DEFAULT_STATUS_POLL_INTERVAL_MS,
+  ) {
+    this.db = db;
+    this.pollIntervalMs = pollIntervalMs;
+    this.statusLogPath = statusLogPath;
+    this.statusPollIntervalMs = statusPollIntervalMs;
+  }
 
   async scanProjects(): Promise<ProjectInfo[]> {
     const rows = this.db

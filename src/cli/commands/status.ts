@@ -1,16 +1,16 @@
 import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { DEFAULT_CLAUDE_DIR, scanProjects } from "../../project-utils";
-import type { StatusEvent } from "../../session-core";
+import { DEFAULT_CLAUDE_DIR, scanProjects } from "../../project-utils.ts";
+import type { StatusEvent } from "../../session-core.ts";
 import {
   mapHookEventToState,
   writeNotificationStatus,
   writeStatusEvent,
   writeStatusTruncate,
   writeSubagentStatus,
-} from "../../status-writer";
-import { exit } from "../helpers";
+} from "../../status-writer.ts";
+import { exit } from "../helpers.ts";
 
 export async function runStatus(
   claudeDir?: string,

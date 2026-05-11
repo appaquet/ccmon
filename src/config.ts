@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { BACKEND_TYPES, type BackendConfigEntry } from "./backends/types";
+import { BACKEND_TYPES, type BackendConfigEntry } from "./backends/types.ts";
 
 export interface CcmonConfig {
   maxInactivityHours: number;
