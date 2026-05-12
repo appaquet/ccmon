@@ -5,7 +5,7 @@
   "scripts": {
     "dump": "node src/cli/main.ts dump",
     "status": "node src/cli/main.ts status",
-    "serve": "node src/cli/main.ts serve",
+    "serve": "NODE_NO_WARNINGS=1 node src/cli/main.ts serve",
     "sub": "node src/cli/main.ts sub",
     "test": "vitest run",
     "lint": "npx biome check src/ tests/",

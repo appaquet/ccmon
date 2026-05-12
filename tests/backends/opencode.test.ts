@@ -1025,6 +1025,10 @@ describe("OpencodeBackend — sub-agents", () => {
     const parentId = setupParent();
 
     const parentUpdated = now;
+    run(db, "UPDATE session SET time_updated = ? WHERE id = ?", [
+      parentUpdated,
+      parentId,
+    ]);
 
     run(
       db,
