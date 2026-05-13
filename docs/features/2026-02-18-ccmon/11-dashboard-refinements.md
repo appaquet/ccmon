@@ -4,7 +4,7 @@
 
 See [00-ccmon](00-ccmon.md). Fixes and improvements from real-world usage: token counting bug, task reintroduction with modern TaskCreate/TaskUpdate tools, UI layout tweaks.
 
-## Questions
+## Questions & Investigations
 
 * Q1: Are `output_tokens` in JSONL per-call deltas or running totals? → Per-call deltas (small values like 7, 21). Confirmed from real session data. Continue summing for output.
 * Q2: Are `input_tokens` + `cache_read_input_tokens` running totals? → Yes. `cache_read_input_tokens` represents the entire cached context sent each call (~119K), grows monotonically. Must take last value, not sum.

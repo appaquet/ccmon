@@ -4,7 +4,7 @@
 
 See [00-ccmon](00-ccmon.md). Fix stop detection race: Claude writes a `system` JSONL entry ~8ms after the Stop hook fires, making JSONL mtime slightly newer than the stopped timestamp. `resolveState()` misinterprets this as "activity resumed" and returns `running` for up to 60s.
 
-## Questions
+## Questions & Investigations
 
 * Q1: Why 5s grace? Observed delta is 8ms. 5s gives margin for any future post-stop writes. Sessions that genuinely resume will have JSONL writes many seconds/minutes later.
 

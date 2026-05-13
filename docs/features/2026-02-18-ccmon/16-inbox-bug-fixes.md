@@ -4,7 +4,7 @@
 
 See [00-ccmon](00-ccmon.md). Three bugs from the inbox: task completions not reflected in WebSocket/sub mode, permission state sticking after answering, and hook config safety verification.
 
-## Questions
+## Questions & Investigations
 
 * Q1: Bug 3 (hook safety) — already handled correctly. `mapHookEventToState()` returns `null` for unknown events, `runStatus()` handles gracefully. Only adding a test to document the expectation.
 

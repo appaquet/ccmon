@@ -4,7 +4,7 @@
 
 See [00-ccmon](00-ccmon.md). Replace stateless 64KB tail reads with byte-offset JSONL streaming. Add notification hook, assistant message extraction, and structured sub-agent info.
 
-## Questions
+## Questions & Investigations
 
 * Q1: ✅ SubagentInfo included in dump/serve immediately, no flag. Web UI updated too.
 * Q2: ✅ Cap first-read at ~10MB. For files larger than cap, start reading from `fileSize - cap` bytes (like current tail) to establish baseline, then stream forward. Avoids slow first-parse on very large JSONL.
@@ -30,7 +30,9 @@ See [00-ccmon](00-ccmon.md). Replace stateless 64KB tail reads with byte-offset 
 * [x]Update server/dump serialization for new fields — automatic via JSON.stringify, no changes needed (R28, R29)
 * [x]Update dashboard web UI to display latestAssistantMessage (◀), latestUserMessage (▶), SubagentInfo list with active/total count (R28, R29)
 
-## Architecture Decisions
+## Questions & Investigations
+
+### Architecture Decisions
 
 - **Shared SessionEnrichment base type**: Both `ProjectState` and `SubagentInfo` extend a common `SessionEnrichment` type. Eliminates field duplication and ensures sub-agents expose the same richness as the main session.
 - **Byte-offset streaming replaces 64KB tail**: Cache entry becomes `{mtime, fileSize, byteOffset, accumulatedState}`. Accumulated state: "latest wins" for model/lastToolUse, "latest TodoWrite" for task counts. Applied to both main and sub-agent JSONL files.
@@ -38,7 +40,7 @@ See [00-ccmon](00-ccmon.md). Replace stateless 64KB tail reads with byte-offset 
 - **Notification is flash-only, no new SessionState value**: notificationTimestamp in StatusFile triggers UI animation. Dashboard detects timestamp change → CSS animation.
 - **Sub-agent stopped detection**: Primary: parent JSONL tool_result correlation (reliable). Fallback: mtime heuristic.
 
-## Testing Strategy
+### Testing Strategy
 
 - **Byte-offset streaming**: JSONL fixtures — write initial → parse → append → parse again → assert only new entries processed. Test file shrink reset. Verify tasksDone/tasksTotal across full file.
 - **Notification**: Unit test status command with Notification hook JSON. Verify StatusFile output. Test permission_prompt filtering.

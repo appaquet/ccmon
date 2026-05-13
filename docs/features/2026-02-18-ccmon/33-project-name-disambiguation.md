@@ -4,7 +4,7 @@
 
 See [00-ccmon](00-ccmon.md). When multiple projects share the same leaf directory name (e.g. `projectA/backend` and `projectB/backend`), they both appear as "backend" in the dashboard and are indistinguishable via `--project` CLI filter. Disambiguate `projectName` directly by expanding with parent path segments until unique.
 
-## Questions
+## Questions & Investigations
 
 - Q1: Should disambiguation run after stale filtering (callers do it) or inside `getProjectState()`?
   - Inside `getProjectState()` is simpler but stale-filtered views may show unnecessarily long names (e.g. `projectA/backend` when `projectB/backend` was already filtered out). Acceptable tradeoff — the name is still correct, just verbose.

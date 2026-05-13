@@ -5,8 +5,6 @@
 See [00-ccmon](00-ccmon.md). Sub-agent permission prompts are "hit or miss" in the dashboard because
 concurrent PostToolUse events from other sub-agents instantly resolve them.
 
-## Root Cause
-
 All Claude Code hook events (main session AND sub-agents) carry the **same session_id** (the main
 session's ID). The Phase 28 session_id-aware forward-scan in `resolveState` is correct but
 irrelevant in practice — sub-agent PostToolUse events share the main session_id.

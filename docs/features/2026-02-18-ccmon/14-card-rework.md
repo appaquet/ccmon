@@ -4,14 +4,14 @@
 
 See [00-ccmon](00-ccmon.md). Rework dashboard cards to a unified agent-row layout: context window progress bar, unified main/sub-agent rows, pulsing indicators, sub-agent initial instruction line.
 
-## Questions
+## Questions & Investigations
 
 * Q1: ✅ Progress bar max? → 128k. Orange >100k, red >120k. Visually emphasizes when context is near capacity.
 * Q2: ✅ Git branch? → Dropped from UI.
 * Q3: ✅ Output tokens? → Dropped. Input tokens are the context window proxy — the only important metric.
 * Q4: ✅ Stopped sessions? → Always show agent rows (no pulsing dot when stopped, shows last context/messages).
 
-## Design
+### Design
 
 ```
   <project name>               <status>

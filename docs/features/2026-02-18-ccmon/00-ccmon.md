@@ -8,10 +8,6 @@ A lightweight monitoring dashboard that reads Claude Code session data and hook-
 
 Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will extend that script to also write `ccmon-status.json` to each project's working directory.
 
-## Inbox
-
-(empty)
-
 ## Checkpoint
 
 Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 — dropped `tsx` and `esbuild` devDeps and the dist bundle. 116 relative imports rewritten with `.ts` extensions across 29 files; tsconfig switched to `nodenext` + `allowImportingTsExtensions` + `verbatimModuleSyntax`. Three constructors rewritten from parameter-property to explicit-field form (Node's strip-only mode rejects them). Nix `flake.nix` pins `nodejs_22` and uses a `postInstall` to relocate `src/`+`public/` outside `node_modules/` so Node's type-strip guardrail accepts the bin entry; `dontNpmBuild = true` avoids the missing build script. 304 tests pass; nix-built binary hook latency ~111ms median.
@@ -25,22 +21,22 @@ Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 
 - R1: ✅ Enumerate all Claude Code projects by scanning `~/.claude/projects/` (Phase: Session Detection)
   - R1.1: Working directory read from `cwd` field in first line of most recent JSONL session file (directory name encoding is lossy)
   - R1.2: Project name derived from last path segment of working directory (e.g. `ccmon`)
-- R2: ✅ Determine current state of each project via layered detection (Phase: Session Detection)
-  - R2.1: Primary: read `ccmon-status.json` (written by hooks). If absent or stale (>5min, state !== `stopped`) → treat as `stopped`
-  - R2.2: Fallback: `pgrep -a claude` + `/proc/{pid}/cwd` (NixOS: `.claude-wrapped`) to detect live processes. If no process and status not `stopped` → override to `stopped`
+- R2: ✅ Determine current state of each project via status event log and JSONL activity (Phase: Session Detection)
+  - R2.1: Primary: read `ccmon-status.jsonl` event log. State resolved via `resolveState()` composable rules for permission/stopped/running (see R59)
+  - R2.2: Secondary: JSONL file mtime as fallback when hooks are absent (JSONL mtime < 60s → running)
 
 ### State Reporting via Hooks
 
-- R3: ✅ `ccmon status` sub-command writes `ccmon-status.json` from hook stdin (Phase: Backend)
+- R3: ✅ `ccmon status` sub-command appends to `ccmon-status.jsonl` from hook stdin (Phase: Backend)
   - R3.1: Hook events → states:
     - `UserPromptSubmit` → `running` (Claude processing user input)
     - `PostToolUse` → `running` (Claude continuing after tool)
     - `PermissionRequest` → `waiting_for_permission`
     - `Stop` → `stopped` (Claude idle, matches tmux indicator behavior)
-    - `SessionEnd` → `stopped`
-    - `SubagentStop` → writes per-sub-agent `ccmon-status.json` + updates session-level status
-  - R3.2: `ccmon-status.json` contains: `state`, `timestamp`, `session_id`, `working_dir`, optional `lastSubagentStoppedAt`
-  - R3.3: File written to `~/.claude/projects/{dir}/ccmon-status.json` (project dir found via `sessions-index.json` lookup or path encoding fallback)
+    - `SessionEnd` → `closed` (closed sessions removed from dashboard after 1 minute)
+    - `SubagentStop` → writes per-sub-agent `ccmon-status.jsonl` + updates session-level status
+  - R3.2: `ccmon-status.jsonl` contains NDJSON events: `state`, `timestamp`, `session_id`, `working_dir`
+  - R3.3: File written to `~/.claude/projects/{dir}/ccmon-status.jsonl` (project dir found via JSONL first-line lookup or path encoding fallback)
   - R3.4: Reads hook JSON from stdin (cwd, session_id, hook_event_name), maps event to state, resolves cwd to project dir
 - R14: ✅ ~~Use `sessions-index.json` as primary data source~~ → Removed in Phase 42. JSONL first-line scan is now the sole discovery mechanism. `sessions-index.json` deprecated by Claude Code (~2026-02-03)
 - R4: ✅ Hook config adds `ccmon status` alongside existing `claude-tmux-indicator` in `~/dotfiles/home-manager/modules/claude/settings.json` (Phase: Backend)
@@ -49,7 +45,7 @@ Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 
 
 ### Web Server
 
-- R5: ✅ Bun HTTP server serves the dashboard at `/` (Phase: Backend)
+- R5: ✅ Node HTTP server serves the dashboard at `/` (Phase: Backend)
 - R6: ✅ WebSocket endpoint pushes real-time state updates to connected clients (Phase: Backend)
   - R6.1: Server watches all known `ccmon-status.json` files for changes and broadcasts updates
   - R6.2: On new client connect, send current state of all projects immediately
@@ -80,9 +76,9 @@ Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 
 ### Packaging
 
 - R15: ✅ Nix flake exposes ccmon as a package (Phase: Packaging)
-  - R15.1: `writeShellScriptBin` wrapper calling `${pkgs.bun}/bin/bun run` on source in Nix store
+  - R15.1: `buildNpmPackage` with `nodejs = pkgs.nodejs_22`, `dontNpmBuild = true`, `postInstall` copying `src/` + `public/` outside `node_modules/`
   - R15.2: `packages.${system}.default` and `apps.${system}.default` outputs
-  - R15.3: Bun pinned from nixpkgs (hermetic)
+  - R15.3: Node.js 22 pinned from nixpkgs (hermetic); `bin` points to `src/cli/main.ts`
 - R16: ✅ README with install and hook configuration instructions (Phase: Packaging)
   - R16.1: Personal/dotfiles audience — concise, assumes NixOS + home-manager
   - R16.2: Covers: flake input, adding to packages, hook configuration, available commands
@@ -96,13 +92,13 @@ Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 
   - R18.3: `serve` reads config and applies filter to all outputs (no CLI override for serve)
   - R18.4: Config at `$XDG_CONFIG_HOME/ccmon/config.json`; `CCMON_CONFIG` env var overrides path; silent defaults if missing
 - R19: ✅ Session enrichment — richer `ProjectState` fields from JSONL tail parse (Phase: Backend)
-  - R19.1: `gitBranch` from `sessions-index.json` (zero extra I/O)
+  - R19.1: `gitBranch` field removed (`sessions-index.json` deprecated; R68)
   - R19.2: `subagentCount` — active sub-agent JSONL files (mtime < 45s) in `{sessionDir}/subagents/`
   - R19.3: `latestUserMessage`, `model`, `lastToolUse` from JSONL tail read (~64KB); only for non-stopped sessions
 - R20: ✅ `getProjectState()` efficiency — caching and targeted refresh to reduce I/O on frequent calls (Phase: Backend)
   - R20.1: Sub-agent active threshold reduced 5min → 45s (avoids counting recently-finished agents)
   - R20.2: Liveness scan (`pgrep`/`/proc`) cached with 2-3s TTL
-  - R20.3: `sessions-index.json` parse cached by file mtime
+  - R20.3: `sessions-index.json` cache removed (R68)
   - R20.4: `readSessionTail()` cached by JSONL file mtime
   - R20.5: Watcher passes changed `projectDir` → only that project is rescanned
 
@@ -124,9 +120,9 @@ Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 
   - R27.1: First read parses the entire JSONL file; subsequent reads parse only new bytes (offset-based delta)
   - R27.2: If file size shrinks (session replaced), cache resets and performs a full re-read
   - R27.3: Task counts (tasksDone/tasksTotal) reflect all TodoWrite entries in the session, not just the last 64KB
-- R28: ✅ Session payload exposes both latestUserMessage and latestAssistantMessage as a pair, displayed in dashboard (Phase: Notifications & Streaming)
+- R28: ✅ Session payload exposes unified `latestUserActivity` and `latestAssistantActivity` fields (replaces separate latestUserMessage/latestAssistantMessage; R49, R50) (Phase: Notifications & Streaming)
 - R29: ✅ Sub-agent info shares a common enrichment structure with the main session (Phase: Notifications & Streaming)
-  - R29.1: A shared base type carries model, latestUserMessage, latestAssistantMessage, lastToolUse, tasksDone, tasksTotal — used by both ProjectState and SubagentInfo
+  - R29.1: A shared base type carries model, latestUserActivity, latestAssistantActivity, lastToolUse, tasksDone, tasksTotal — used by both ProjectState and SubagentInfo
   - R29.2: SubagentInfo extends the base with agentId, slug, jsonlPath; ProjectState keeps its session-level fields (cwd, state, gitBranch, etc.)
   - R29.3: Sub-agent active/stopped status is determined via parent JSONL tool_result correlation or mtime heuristic fallback
 
@@ -157,7 +153,7 @@ Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 
   - R37.1: `latestCommand?: string` added to `SessionEnrichment`; extracted from `<command-name>` user entries during `readSessionTail()` streaming
 - R38: ✅ Sub-agent UI shows either last tool use OR last message, not both (Phase: UI Polish)
 - R39: ✅ Input token count reflects full provider-billed total: `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` (Phase: UI Polish)
-- R40: ✅ Completed sub-agents auto-hidden in UI after 2m; backend stops returning them after 5m (Phase: UI Polish)
+- R40: ✅ Completed sub-agents auto-hidden in UI after 2m; backend stops returning them after 30s (Phase: UI Polish)
   - R40.1: `SubagentInfo` gains `lastMessageTime` (ISO 8601) from file mtime
 - R41: ✅ Enrichment info (messages, tokens, tasks) remains visible when session transitions to stopped; only state pill updates (Phase: UI Polish)
 - R42: ✅ Completed sub-agents show a checkmark indicator instead of active dot (Phase: UI Polish)
@@ -254,7 +250,7 @@ Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 
 - R69: ✅ Abstract data source behind `SessionBackend` interface (Phase: OpenCode Backend)
   - R69.1: `scanProjects()`, `buildProjectState()`, `watchForChanges()`, `resolveState()`, `enrichProject()`, `getSubagents()`, `projectKey()` methods
 - R70: ✅ Claude Code backend as thin wrapper around existing functions, zero behavior change (Phase: Claude Backend Extraction)
-- R71: ✅ OpenCode backend reads SQLite database read-only via Bun's built-in `bun:sqlite` (Phase: OpenCode Backend)
+- R71: ✅ OpenCode backend reads SQLite database read-only via `better-sqlite3` (Phase: OpenCode Backend)
   - R71.1: ✅ Project discovery from `session` + `project` tables; returns only latest session per `directory` via `MAX(time_updated)` grouping (Phase: OpenCode Session Deduplication)
   - R71.2: ✅ State inferred from `time_updated` recency; also considers child session activity so active sub-agents keep the parent project "running" (Phase: OpenCode State Detection Fix)
   - R71.3: Enrichment from `message.data` + `part.data` JSON blobs (model, messages, tokens)
@@ -313,7 +309,7 @@ Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 
 - R98: ✅ Backend factory separated from I/O (`backends/index.ts` pure orchestration, per-backend factories do I/O) (Phase: Architecture Review)
 - R99: ✅ Run TypeScript natively under Node 22 — drop `tsx` and `esbuild` (Phase: Drop tsx & esbuild, see R99.A-G in phase doc)
 
-## Questions
+## Questions & Investigations
 
 - Q1: ✅ Status file location → per-project in working directory as `ccmon-status.json` (same as `tmux.local.log`)
 - Q2: ✅ Permission hook event → `PermissionRequest` (confirmed from existing settings.json)
@@ -327,6 +323,10 @@ Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 
   * Verified: Phase 52 resolveState child check + getSubagents parent_id query are both correct and deployed.
   * Verified on live DB: sub-agents have parent_id set, scanProjects returns correct sessionId.
   * Fix: Phase 54 — added fallback directory-scan query in resolveState. If parent_id check finds no active children, scans same directory for any recent non-parent session activity.
+
+## Inbox
+
+(empty)
 
 ## Phases
 
@@ -462,11 +462,11 @@ Reduced CLAUDE.md from 181 to 114 lines (37%) by removing JSON schema examples a
 
 Fix same-named projects across backends causing double flash. Use composite `hostname::projectName` key in frontend state maps. Show hostname prefix in card header when names collide.
 
-### ✅ 25 Phase: Stopped Flash Fix
+### ✅ 23 Phase: UI Triangle Arrows
 
-[25-stopped-flash-fix](25-stopped-flash-fix.md)
+[23-ui-triangle-arrows](23-ui-triangle-arrows.md)
 
-Fix stopped flash persistence: promote `flashStopped`/`flashNotification` to module-level Maps with 5s TTL. Broaden transition check to any non-stopped → stopped.
+Replace ASCII `>` / `<` message direction indicators with UTF-8 solid triangles (`▶` / `◀`) in dashboard cards.
 
 ### ✅ 24 Phase: Dashboard Sort Order
 
@@ -474,11 +474,11 @@ Fix stopped flash persistence: promote `flashStopped`/`flashNotification` to mod
 
 Sort dashboard projects by most recently active (`lastUpdated` descending) instead of alphabetically. Throttle re-sorting to every 30s to prevent constant card reordering.
 
-### ✅ 23 Phase: UI Triangle Arrows
+### ✅ 25 Phase: Stopped Flash Fix
 
-[23-ui-triangle-arrows](23-ui-triangle-arrows.md)
+[25-stopped-flash-fix](25-stopped-flash-fix.md)
 
-Replace ASCII `>` / `<` message direction indicators with UTF-8 solid triangles (`▶` / `◀`) in dashboard cards.
+Fix stopped flash persistence: promote `flashStopped`/`flashNotification` to module-level Maps with 5s TTL. Broaden transition check to any non-stopped → stopped.
 
 ### ✅ 26 Phase: SubagentStop Hook + Status File Rename
 
@@ -540,10 +540,94 @@ Reduce sub-agent active threshold (45s→15s) and expiry (5min→30s) so complet
 
 New `closed` state for SessionEnd events. Closed projects removed from dashboard after 1 minute (vs `maxInactivityHours` for idle/stopped). Grey "Closed" badge in UI.
 
+### ✅ 36 Phase: Server State Staleness Fix
+
+[36-server-state-staleness](36-server-state-staleness.md)
+
+Fix `resolveProjectDir()` failing when hook `working_dir` is a subdirectory (additionalDirectories). Add `session_id` lookup fallback in status command to locate the correct project dir when exact cwd match fails.
+
+### ✅ 37 Phase: Permission Race Fix
+
+[37-permission-race-fix](37-permission-race-fix.md)
+
+Sub-agent permission prompts being instantly resolved by concurrent PostToolUse events from other sub-agents (all share the same main session_id). Add `PERMISSION_RESOLVE_GAP_MS` (3s) to require a time gap before considering a PostToolUse as a resolver.
+
+### ✅ 38 Phase: StopFailure Hook Detection
+
+[38-stop-failure-hook](38-stop-failure-hook.md)
+
+Add `StopFailure` hook event detection for API errors (rate limit, auth failure). Sessions get `error` state with persistent attention flash (infinite, click-to-dismiss). JSONL mtime activity overrides to `running` (session recovered).
+
+### ✅ 39 Phase: Card Width Cap
+
+[39-card-width-cap](39-card-width-cap.md)
+
+Cap dashboard card width at 360px and center the grid so cards stay compact and more fit per row.
+
+### ✅ 40 Phase: Card Height Cap
+
+[40-card-height-cap](40-card-height-cap.md)
+
+Add max-height with overflow hidden on the agents section so cards with many sub-agents don't consume the entire viewport.
+
+### ✅ 41 Phase: Session Name Display
+
+[41-session-name-display](41-session-name-display.md)
+
+Extract `sessionName` from JSONL `custom-title` lines during enrichment. Display `projectName (sessionName)` in card header.
+
+### ✅ 42 Phase: Remove sessions-index.json + Fix JSONL Discovery
+
+[42-first-line-fallback-fix](42-first-line-fallback-fix.md)
+
+Remove deprecated `sessions-index.json` support entirely. Make JSONL first-line discovery robust against newer files starting with `permission-mode` records.
+
+### ✅ 43 Phase: Fix Home Directory Resolution
+
+[43-home-resolution](43-home-resolution.md)
+
+Fix `homedir()` fallback resolving to `/root` on NixOS where Bun's `process.env.HOME` is undefined. Use `os.homedir()` instead of `process.env.HOME`.
+
+### ✅ 44 Phase: OpenCode Support — Multi-Backend Abstraction
+
+[44-opencode-support](44-opencode-support.md)
+
+Abstract data source behind `SessionBackend` interface. Add OpenCode backend reading SQLite database. Server merges projects from all backends. Config supports backends array. Frontend shows source badge (CC/OC).
+
 ### ✅ 45 Phase: Review Fixes — OpenCode Support
 [45-review-fixes](45-review-fixes.md)
 
 Address 18 REVIEW comments from 4 review agents (style, correctness, architecture, requirements) planted during Phase 44. 3 release-blocking, 5 high, 5 medium, 5 low priority fixes across 8 files. All 18 tasks complete.
+
+### ✅ 46 Phase: Dependabot Setup
+
+[46-dependabot](46-dependabot.md)
+
+Configure Dependabot version updates for the npm ecosystem with daily checks and 7-day release cooldown.
+
+### ✅ 47 Phase: Backend Pill Alignment
+
+[47-backend-pill-alignment](47-backend-pill-alignment.md)
+
+Group source badge (OC/CC) with status pill at card header right edge using a `.card-pills` wrapper div, eliminating unwanted gaps from `space-between` distribution.
+
+### ✅ 48 Phase: OpenCode Session Deduplication
+
+[48-opencode-session-dedup](48-opencode-session-dedup.md)
+
+Deduplicate OpenCode sessions per directory by grouping with `MAX(time_updated)` in SQL, returning only the latest session per project directory.
+
+### ✅ 49 Phase: Review Fixes 3
+
+[49-review-fixes-3](49-review-fixes-3.md)
+
+Address 21 REVIEW comments from 4 review agents (4 high, 7 medium, 8 low) across 9 files; 2 items deferred to Phase 50.
+
+### ✅ 50 Phase: SessionStore + Module Split
+
+[50-session-store](50-session-store.md)
+
+Extract module-level caches into `SessionStore` class for testability. Split `sessions.ts` god module (~320 lines migrated) into focused modules: session-core, session-enrichment, project-utils, status-writer, types.
 
 ### ✅ 51 Phase: Review Fixes 4
 [51-review-fixes-4](51-review-fixes-4.md)

@@ -4,14 +4,14 @@
 
 See [00-ccmon](00-ccmon.md). Show meaningful names for sub-agents in the dashboard instead of raw `agentId`. Claude Code's UI already shows descriptions — they live in the parent session JSONL.
 
-## Questions
+## Questions & Investigations
 
 * Q1: ✅ Where is the sub-agent name stored? → Parent session JSONL has `type: "queue-operation"` entries where `operation === "enqueue"` and `content` (JSON string) contains `{ task_id, description }`. `task_id` equals the `agentId` from `agent-{agentId}.jsonl` filename.
 * Q2: ✅ Is the description in the sub-agent JSONL first line? → No. First line has `agentId` and `slug` but not the short description.
 * Q3: ✅ How to correlate? → Accumulate during `readSessionTail()` streaming — no separate read needed.
 * Q4: ✅ Is description extraction a separate JSONL read or part of streaming? → Part of streaming. `readSessionTail()` already byte-offset streams the parent JSONL. It also collects `queue-operation` enqueue entries into `SessionTailInfo.agentDescriptions: Map<agentId, description>`. Delta reads append new entries as new agents are launched. `getSubagentInfos()` reads from the already-cached map — zero extra I/O.
 
-## Architecture
+### Architecture
 
 `SessionTailInfo` gains `agentDescriptions: Map<string, string>`. During `readSessionTail()`, for each line with `type === "queue-operation"` and `operation === "enqueue"`, parse `content` JSON and add `task_id → description` to the map. Delta reads merge new entries into the cached map. `getSubagentInfos()` receives the map via `SessionTailInfo` and attaches descriptions without touching JSONL.
 

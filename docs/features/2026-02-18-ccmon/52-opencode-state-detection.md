@@ -29,7 +29,9 @@ See [00-ccmon](00-ccmon.md). OpenCode projects with active sub-agents are report
   - AC: When children are more recently updated than parent, `lastUpdated` uses child's `time_updated`
   - AC: When parent is the most recent, `lastUpdated` uses parent's `time_updated`
 
-## Tests
+## Questions & Investigations
+
+### Tests
 
 All tests in `tests/backends/opencode.test.ts`. Each test inserts exact DB state, calls the relevant method, and asserts the result.
 

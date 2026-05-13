@@ -8,7 +8,7 @@ See [00-ccmon](00-ccmon.md). Two REVIEW comments deferred from Phase 49:
 
 2. **sessions.ts:298-318**: God module (1312 lines) conflates 6+ responsibilities: project scanning, status I/O, enrichment parsing, name disambiguation, CLI state mapping, sub-agent resolution.
 
-## Research Findings
+### Research Findings
 
 ### Cache usage reality
 

@@ -4,7 +4,7 @@
 
 See [00-ccmon](00-ccmon.md). Bug fixes and improvements identified during real-world usage.
 
-## Questions
+## Questions & Investigations
 
 * Q1: ✅ Does server-side state persistence solve all issues? → Partially. Helps R31 (serve cached state to new connections) and R33 (hysteresis prevents flicker). R30 is a UI timer issue. R32 is a new extraction feature.
 * Q2: ✅ Root cause of R31? → Yes, server was doing full rescan on new WS/API connections. Fix: maintain an in-memory map (projectDir → ProjectState) as the source of truth, updated by the watcher. New WS connections and `/api/state` read directly from this map — no rescan.

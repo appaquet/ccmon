@@ -182,7 +182,9 @@ OpenCode Process          ccmon Process
 - **tests/backends/opencode.test.ts**: Tests for status log reading, fallback, watcher integration. +10 dual-mode tests (fs.watch + polling interaction) added to cover previously uncovered code paths. (modified)
 - **CLAUDE.md**: Plugin installation docs + architecture notes; trimmed from 183 to 57 lines for conciseness (modified)
 
-## Testing Strategy
+## Questions & Investigations
+
+### Testing Strategy
 
 1. **Plugin behavior**: Manual verification — install plugin in `~/.config/opencode/plugins/`, start OpenCode, write a prompt, verify `~/.local/state/ccmon/opencode-status.jsonl` receives events. Check that ccmon `dump` shows correct state.
 

@@ -4,7 +4,7 @@
 
 See [00-ccmon](00-ccmon.md). After a session stops and resumes (same session UUID), old sub-agents can briefly appear active because `getSubagentInfos()` uses a 45s mtime threshold with no awareness of session stop events.
 
-## Questions
+## Questions & Investigations
 
 * Q1: Window is narrow (resume within 45s of sub-agent's last write), but could also be triggered if Claude Code touches sub-agent files during context reconstruction on resume.
 

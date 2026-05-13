@@ -4,7 +4,7 @@
 
 See [00-ccmon](00-ccmon.md). A collection of UI improvements and small data model fixes identified from real-world usage.
 
-## Questions
+## Questions & Investigations
 
 * Q1: ✅ How are slash commands detected in JSONL? → User messages where `message.content` is a string containing `<command-name>` XML tags. Currently filtered OUT by the `!content.startsWith('<')` check in `readSessionTail()`. Need a parallel scan to extract them.
 * Q2: ✅ Token inaccuracy root cause? → Current code only sums `input_tokens` (non-cached marginal portion, ~244 tokens). Provider-billed total = `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` (~11M tokens). Should sum all three.

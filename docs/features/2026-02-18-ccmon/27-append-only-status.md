@@ -72,7 +72,9 @@ Append-only NDJSON event log. Events are never overwritten, only appended. Reade
   - Update file structure tree.
   - Mention truncation on SessionEnd, safety cap on write.
 
-## Design Notes
+## Questions & Investigations
+
+### Design Notes
 
 - **Atomicity**: Linux `write()` with O_APPEND for small writes (<4KB) is atomic. Each event line ~200 bytes.
 - **File management**: SessionEnd truncates to 1 line. Stop appends normally (background agents may still be active). Safety cap at 64KB on write (trim to last 8KB). Reader only reads last 8KB anyway.

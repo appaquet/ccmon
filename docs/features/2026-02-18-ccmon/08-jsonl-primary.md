@@ -4,7 +4,7 @@
 
 See [00-ccmon](00-ccmon.md). Switch from hook-driven state detection to JSONL file watching as the primary signal source for running/stopped state. Keep hooks for signals absent from JSONL (PermissionRequest, Notification) and for immediate stopped detection (Stop, SessionEnd). Remove pgrep-based liveness entirely.
 
-## Questions
+## Questions & Investigations
 
 * Q1: ✅ Can JSONL fully replace hooks? → No. `PermissionRequest` writes nothing to JSONL. `Notification` is out-of-band. `Stop`/`SessionEnd` give immediate stopped signal (JSONL mtime alone has ~60s delay). Keep those 4 hooks. Remove `UserPromptSubmit` and `PostToolUse` (JSONL mtime covers running).
 * Q2: ✅ Is the R33 flicker race eliminated? → Yes. Flicker was hook→status.local.json→pgrep pipeline. New model: JSONL mtime for running, Stop hook for stopped. No conflicting signals during turn boundaries. 3s debounce becomes unnecessary.

@@ -105,7 +105,7 @@ The codebase must be refactored to abstract away the data source, allowing both 
   - Uncertainty: If `time_updated` is only updated for session metadata changes (title, permission, etc.) and NOT when messages/parts are inserted, then it's not a valid activity signal. We'd need `MAX(message.time_created)` instead.
   - Mitigation: In-memory test inserts a message → queries session.time_updated → verifies it changed. If Drizzle's `$onUpdate` fires on any table write to the same transaction, this works. Real DB validation via `bun run dump` catches the actual behavior.
 
-## Testing Strategy
+### Testing Strategy
 
 All OpenCode backend tests use `new Database(":memory:")` — Bun's built-in in-memory SQLite. Each test creates the schema from strings, inserts test data, then calls backend functions. No temp files, no cleanup, fully isolated.
 
@@ -124,7 +124,7 @@ After the backend is wired into `dump`, validate against the real `~/.local/shar
 
 Each task's first AC is always the test: write the test, see it fail, then implement. The test *defines* the task — implementation follows.
 
-## Tasks (ordered by risk, highest first)
+## Tasks
 
 ### Task 1: Design the `SessionBackend` interface (foundation)
 

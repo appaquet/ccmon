@@ -4,7 +4,7 @@
 
 See [00-ccmon](00-ccmon.md). Sub-agent completion currently relies on 45s mtime polling (`SUBAGENT_ACTIVE_THRESHOLD_MS`). Adding a `SubagentStop` hook gives immediate completion detection. Also renames `status.local.json` → `ccmon-status.json` and adds per-sub-agent status files.
 
-## Questions
+## Questions & Investigations
 
 - [x] Q1: Does the watcher need to watch subagent directories? → No. SubagentStop handler updates session-level `ccmon-status.json` (adds `lastSubagentStoppedAt`), which the watcher already monitors. This triggers a rescan that calls `getSubagentInfos`, which reads per-sub-agent status files.
 - [x] Q2: Backward compat for rename? → Not needed. `status.local.json` is transient (recreated on next hook fire). JSONL mtime detection covers the brief gap between code update and first hook fire.
