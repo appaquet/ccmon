@@ -20,7 +20,7 @@
     "public"
   ],
   "dependencies": {
-    "ws": "^8.20.0"
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.4",
