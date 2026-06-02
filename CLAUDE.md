@@ -39,7 +39,7 @@ npm run dump               # stale filter applied
 
 States: `running`, `stopped`, `waiting_for_permission`, `error`, `closed`. Plugin enables all 5 for OpenCode; without it only `running`/`stopped` via timestamp inference.
 
-**Config**: `~/.config/ccmon/config.json` (`CCMON_CONFIG` env override). Schema: `{ maxInactivityHours: 3, backends: [{ type, enabled, ...opts }] }`. Defaults to both backends enabled.
+**Config**: `~/.config/ccmon/config.json` (`CCMON_CONFIG` env override). Schema: `{ maxInactivityHours: 1, backends: [{ type, enabled, ...opts }] }`. Defaults to both backends enabled.
 
 **Environment**: `CLAUDE_PROJECTS_DIR` (default `~/.claude/projects`).
 

@@ -1,5 +1,12 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { appendFile, stat } from "node:fs/promises";
+import {
+  appendFile,
+  open,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionState, StatusEvent } from "./session-core.ts";
 import {
@@ -8,9 +15,6 @@ import {
   STATUS_LOG_FILE,
 } from "./session-core.ts";
 import { MAX_STATUS_LOG_BYTES, STATUS_LOG_TAIL_BYTES } from "./timing.ts";
-
-// Prevents concurrent write+trim races on the same status log.
-const writeLocks = new Set<string>();
 
 /**
  * Maps a Claude hook event name to the corresponding SessionState.
@@ -82,33 +86,94 @@ export async function writeNotificationStatus(
 
 /**
  * Appends a single StatusEvent as an NDJSON line to {projectDirPath}/ccmon-status.jsonl.
- * After appending, trims the file to the last STATUS_LOG_TAIL_BYTES if it exceeds MAX_STATUS_LOG_BYTES.
+ * After appending, trims the file to the last STATUS_LOG_TAIL_BYTES if it exceeds
+ * MAX_STATUS_LOG_BYTES. The trim is serialized across OS processes via an exclusive
+ * lockfile (O_CREAT|O_EXCL) so that a concurrent append from another `ccmon status`
+ * process cannot be lost when the file is rewritten.
  */
 export async function writeStatusEvent(
   projectDirPath: string,
   event: StatusEvent,
 ): Promise<void> {
   const logPath = join(projectDirPath, STATUS_LOG_FILE);
-  await appendFile(logPath, `${JSON.stringify(event)}\n`);
+  const lockPath = `${logPath}.lock`;
 
-  if (writeLocks.has(logPath)) return;
-  writeLocks.add(logPath);
+  const release = await acquireLock(lockPath);
+  try {
+    await appendFile(logPath, `${JSON.stringify(event)}\n`);
+    await trimLogIfNeeded(logPath);
+  } finally {
+    await release();
+  }
+}
 
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+const LOCK_RETRY_INTERVAL_MS = 10;
+const LOCK_TIMEOUT_MS = 2_000;
+
+/**
+ * Acquires an exclusive cross-process lockfile using O_CREAT|O_EXCL.
+ * Retries until the lock is obtained or the timeout elapses.
+ * Returns a release function that deletes the lockfile.
+ */
+async function acquireLock(lockPath: string): Promise<() => Promise<void>> {
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  while (true) {
+    try {
+      const fh = await open(lockPath, "wx");
+      await fh.close();
+      return async () => {
+        try {
+          await rm(lockPath, { force: true });
+        } catch {
+          // Lockfile already gone — nothing to do.
+        }
+      };
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw new Error(
+          `Failed to create lock file ${lockPath}: ${(err as Error).message}`,
+        );
+      }
+      if (Date.now() >= deadline) {
+        // Stale lock: the process that created it likely crashed. Remove and retry once.
+        try {
+          await rm(lockPath, { force: true });
+        } catch {
+          // Already removed by another process — continue.
+        }
+        continue;
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, LOCK_RETRY_INTERVAL_MS),
+      );
+    }
+  }
+}
+
+/**
+ * Trims the log file to STATUS_LOG_TAIL_BYTES via an atomic temp-file rename
+ * when the file size exceeds MAX_STATUS_LOG_BYTES + STATUS_LOG_TAIL_BYTES.
+ * Must be called while the caller holds the lockfile for this log path.
+ */
+async function trimLogIfNeeded(logPath: string): Promise<void> {
   try {
     const s = await stat(logPath);
-    if (s.size > MAX_STATUS_LOG_BYTES + STATUS_LOG_TAIL_BYTES) {
-      let raw = readFileSync(logPath, "utf-8");
-      if (raw.length > STATUS_LOG_TAIL_BYTES) {
-        raw = raw.slice(-STATUS_LOG_TAIL_BYTES);
-      }
-      const firstNewline = raw.indexOf("\n");
-      const trimmed = firstNewline >= 0 ? raw.slice(firstNewline + 1) : raw;
-      writeFileSync(logPath, trimmed, "utf-8");
+    if (s.size <= MAX_STATUS_LOG_BYTES + STATUS_LOG_TAIL_BYTES) return;
+
+    let raw = readFileSync(logPath, "utf-8");
+    if (raw.length > STATUS_LOG_TAIL_BYTES) {
+      raw = raw.slice(-STATUS_LOG_TAIL_BYTES);
     }
+    const firstNewline = raw.indexOf("\n");
+    const trimmed = firstNewline >= 0 ? raw.slice(firstNewline + 1) : raw;
+
+    const tmpPath = `${logPath}.tmp`;
+    await writeFile(tmpPath, trimmed, "utf-8");
+    await rename(tmpPath, logPath);
   } catch {
     // stat or trim failed — not critical, the append already succeeded.
-  } finally {
-    writeLocks.delete(logPath);
   }
 }
 

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { DEFAULT_CLAUDE_DIR, scanProjects } from "../../project-utils.ts";
 import type { StatusEvent } from "../../session-core.ts";
 import {
@@ -10,12 +10,11 @@ import {
   writeStatusTruncate,
   writeSubagentStatus,
 } from "../../status-writer.ts";
-import { exit } from "../helpers.ts";
 
 export async function runStatus(
   claudeDir?: string,
   input?: string,
-): Promise<void> {
+): Promise<number> {
   const dir =
     claudeDir ?? process.env.CLAUDE_PROJECTS_DIR ?? DEFAULT_CLAUDE_DIR;
 
@@ -25,12 +24,12 @@ export async function runStatus(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`Error reading stdin: ${message}\n`);
-    exit(1);
+    return 1;
   }
 
   if (!raw.trim()) {
     process.stderr.write("Error: empty stdin — expected hook JSON payload\n");
-    exit(1);
+    return 1;
   }
 
   let payload: unknown;
@@ -40,24 +39,39 @@ export async function runStatus(
     process.stderr.write(
       "Error: invalid JSON on stdin — expected hook JSON payload\n",
     );
-    exit(1);
+    return 1;
   }
 
   if (!isHookPayload(payload)) {
     process.stderr.write(
       "Error: stdin JSON missing required fields (session_id, cwd, hook_event_name)\n",
     );
-    exit(1);
+    return 1;
   }
 
   const { session_id, cwd, hook_event_name } = payload;
 
   if (!cwd) {
     process.stderr.write("Error: cwd is empty; cannot resolve project dir\n");
-    exit(1);
+    return 1;
   }
 
-  const projectDir = await resolveProjectDir(cwd, dir);
+  if (!isAbsolute(cwd)) {
+    process.stderr.write(
+      "Error: cwd must be an absolute path; got a relative path\n",
+    );
+    return 1;
+  }
+
+  const projectDir = resolveProjectDir(cwd, dir, await scanProjects(dir));
+
+  try {
+    await mkdir(projectDir, { recursive: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`Error creating project dir: ${message}\n`);
+    return 1;
+  }
 
   if (hook_event_name === "Notification") {
     try {
@@ -71,10 +85,10 @@ export async function runStatus(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`Error writing notification status: ${message}\n`);
-      exit(1);
+      return 1;
     }
     process.stdout.write("{}\n");
-    process.exit(0);
+    return 0;
   }
 
   if (hook_event_name === "SubagentStop") {
@@ -88,17 +102,17 @@ export async function runStatus(
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         process.stderr.write(`Error writing subagent status: ${message}\n`);
-        exit(1);
+        return 1;
       }
     }
     process.stdout.write("{}\n");
-    process.exit(0);
+    return 0;
   }
 
   const state = mapHookEventToState(hook_event_name);
   if (state === null) {
     process.stdout.write("{}\n");
-    process.exit(0);
+    return 0;
   }
 
   const event: StatusEvent = {
@@ -118,18 +132,23 @@ export async function runStatus(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`Error writing status: ${message}\n`);
-    exit(1);
+    return 1;
   }
 
   process.stdout.write("{}\n");
-  process.exit(0);
+  return 0;
 }
 
-export async function resolveProjectDir(
+/**
+ * Resolves the project directory for a given cwd against the list of known projects.
+ * Pure: does not perform any filesystem side effects.
+ * Returns the best-matching project dir, or a fallback encoded-path dir under `dir`.
+ */
+export function resolveProjectDir(
   cwd: string,
   dir: string,
-): Promise<string> {
-  const projects = await scanProjects(dir);
+  projects: Array<{ cwd: string; projectDir: string }>,
+): string {
   const match = projects.find((p) => p.cwd === cwd);
   if (match) {
     return join(dir, match.projectDir);
@@ -148,9 +167,7 @@ export async function resolveProjectDir(
   }
 
   const encoded = cwd.replace(/\//g, "-");
-  const fallbackDir = join(dir, encoded);
-  await mkdir(fallbackDir, { recursive: true });
-  return fallbackDir;
+  return join(dir, encoded);
 }
 
 async function readStdin(): Promise<string> {
@@ -163,7 +180,6 @@ interface HookPayload {
   hook_event_name: string;
   message?: string;
   notification_type?: string;
-  agent_id?: string;
   agent_transcript_path?: string;
 }
 

@@ -18,6 +18,8 @@ See [00-ccmon](00-ccmon.md). Fixes and improvements from real-world usage: token
 
 ### R45 — Last update time in card header
 
+> Superseded in Phase 60 (Review Fixes 5): briefly moved into the context row, then dropped entirely (felt out of place) — the last-update timestamp is no longer displayed and `_relativeTime` was removed. See `60-review-fixes-5.md`.
+
 - [x] In `index.html`, move/add relative timestamp from card footer into card header, between project name and state pill (R45)
 - [x] Style as muted text, adjust flex layout to accommodate three elements (name, time, pill) (R45)
 - [x] Removed card-footer div and CSS

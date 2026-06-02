@@ -90,15 +90,30 @@ function isCcmonConfig(v: unknown): v is Record<string, unknown> {
 /**
  * Merges a partial config loaded from file with defaults.
  * File may contain only a subset of fields.
+ * Numeric fields are range-checked: port must be an integer in 1..65535,
+ * maxInactivityHours must be a positive finite number; invalid values fall
+ * back to their defaults.
  */
 function mergeWithDefaults(partial: Record<string, unknown>): CcmonConfig {
+  const rawPort = partial.port;
+  const port =
+    typeof rawPort === "number" &&
+    Number.isInteger(rawPort) &&
+    rawPort >= 1 &&
+    rawPort <= 65535
+      ? rawPort
+      : DEFAULT_CONFIG.port;
+
+  const rawHours = partial.maxInactivityHours;
+  const maxInactivityHours =
+    typeof rawHours === "number" && Number.isFinite(rawHours) && rawHours > 0
+      ? rawHours
+      : DEFAULT_CONFIG.maxInactivityHours;
+
   return {
-    maxInactivityHours:
-      typeof partial.maxInactivityHours === "number"
-        ? partial.maxInactivityHours
-        : DEFAULT_CONFIG.maxInactivityHours,
+    maxInactivityHours,
     host: typeof partial.host === "string" ? partial.host : DEFAULT_CONFIG.host,
-    port: typeof partial.port === "number" ? partial.port : DEFAULT_CONFIG.port,
+    port,
     backends: Array.isArray(partial.backends)
       ? partial.backends.filter(isValidBackendEntry)
       : DEFAULT_CONFIG.backends,

@@ -10,7 +10,7 @@ Hooks already exist via `claude-tmux-indicator` (in `~/dotfiles`). ccmon will ex
 
 ## Checkpoint
 
-Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 — dropped `tsx` and `esbuild` devDeps and the dist bundle. 116 relative imports rewritten with `.ts` extensions across 29 files; tsconfig switched to `nodenext` + `allowImportingTsExtensions` + `verbatimModuleSyntax`. Three constructors rewritten from parameter-property to explicit-field form (Node's strip-only mode rejects them). Nix `flake.nix` pins `nodejs_22` and uses a `postInstall` to relocate `src/`+`public/` outside `node_modules/` so Node's type-strip guardrail accepts the bin entry; `dontNpmBuild = true` avoids the missing build script. 304 tests pass; nix-built binary hook latency ~111ms median.
+Phase 60 (Review Fixes 5) implemented May 2026 — all 33 REVIEW comments from a 4-agent whole-codebase review are fixed. Delivered in waves: W1 correctness/CLI (plugin HOME regression, cross-process status-log lockfile, ws.send/JSON.parse guards, numeric validation, R90 return-code testability); W2A the central refactor — `ProjectInfo`/`ProjectState` are now `source`-discriminated unions (R88), dead `getProjectState` path deleted; W2B opencode internals (enrichMessages decomposed, typed `opencode-db` parsers, tail-capped log read); W3 frontend (template literals, `pruneStale`, reconnect dedup, R45 timestamp re-implemented, source-aware `projKey`); W4 tightened `render.js` cross-server disambiguation (investigation showed server and frontend passes are orthogonal scopes — kept split, made it provable). 368 tests pass, typecheck + Biome lint clean, `dump` integration verified. Post-review, the R45 timestamp was iterated then **dropped entirely** at the user's request (it felt out of place): first moved header→context row, then removed altogether along with the now-dead `_relativeTime` helper and the `.card-time`/`.ctx-time` CSS, with `.ctx-bar-container` restored to 120px — so the original R45 review finding (dead helper) is resolved by removal and the context row is back to bar · tokens · task-count. **Pending:** user browser-verification of the broader frontend (card/agent rendering, reconnect) — no browser driver available in-session. Phase 60 left 🔄 (awaiting user sign-off to mark ✅).
 
 
 
@@ -87,7 +87,7 @@ Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 
   - R17.1: `--port N` flag (default 3000), `--host` flag (default localhost); exits on SIGINT or server disconnect
   - R17.2: Used for smoke-testing server stack and background monitoring
 - R18: ✅ Config file system with stale project filter (Phase: Backend)
-  - R18.1: `filterStaleProjects()` excludes projects with `lastUpdated` null or older than `maxInactivityHours` (default 3h)
+  - R18.1: `filterStaleProjects()` excludes projects with `lastUpdated` null or older than `maxInactivityHours` (default 1h)
   - R18.2: `dump` and `dump --watch` apply filter; `--max-age <hours>` and `--no-filter` CLI flags override config
   - R18.3: `serve` reads config and applies filter to all outputs (no CLI override for serve)
   - R18.4: Config at `$XDG_CONFIG_HOME/ccmon/config.json`; `CCMON_CONFIG` env var overrides path; silent defaults if missing
@@ -170,7 +170,7 @@ Phase 59 (Drop tsx & esbuild) completed May 2026. Run TS natively under Node 22 
 
 ### Dashboard Refinements
 
-- R45: ✅ Last update timestamp displayed in card header next to project name, left of state pill (Phase: Dashboard Refinements)
+- R45: ⬜ Dropped — last-update timestamp removed from the card (felt out of place); dead `_relativeTime` helper removed too (Phase: Dashboard Refinements; dropped in Review Fixes 5)
 - R46: ✅ Task list from JSONL — individual tasks with subject and status via `TaskCreate`/`TaskUpdate` parsing; `TodoWrite` as legacy fallback (Phase: Dashboard Refinements, Inbox Bug Fixes)
   - R46.1: `tasks?: Array<{ id, subject, status, activeForm? }>` in `SessionEnrichment`; `tasksDone`/`tasksTotal` derived from it
   - R46.2: UI shows task count summary + in-progress task subjects
@@ -678,6 +678,12 @@ Systematic architecture review of all 15 source files, 8 test files, HTML fronte
 [59-drop-tsx-esbuild](59-drop-tsx-esbuild.md)
 
 Follow-up to Phase 55. Run TS directly under Node 22 native type-stripping. 116 relative imports rewritten with `.ts` extensions (29 files); tsconfig → `nodenext` + `allowImportingTsExtensions`; `tsx` + `esbuild` removed. Discovered along the way: Node strip-only mode rejects TS parameter properties (rewrote 3 constructors) and refuses to strip files under `node_modules/` (Nix `postInstall` now copies `src/` + `public/` to `$out/share/ccmon/` outside node_modules, symlinks deps, rewrites bin). Pinned `nodejs_22` in `buildNpmPackage` (was defaulting to nodejs_24). All 304 tests pass; nix-built binary runs in ~111ms median.
+
+### 🔄 60 Phase: Review Fixes 5
+
+[60-review-fixes-5](60-review-fixes-5.md)
+
+Address 33 REVIEW comments from a 4-agent whole-codebase review (style/correctness/architecture/requirements), validated by senior-dev research: 31 valid, 1 debatable, 1 valid-with-nuance. 5 High (plugin HOME regression silently dropping status, cross-process status-log data loss, unguarded ws.send/JSON.parse, unbounded log read), 10 Medium (numeric validation, R90 testability, type-union correctness, disambiguation ownership), 18 Low (dead code, transpiler-style frontend, duplication). 5 open decisions tracked in phase Q&I.
 
 ## Files
 

@@ -96,6 +96,56 @@ describe("loadConfig", () => {
     expect(config.port).toBe(DEFAULT_CONFIG.port);
   });
 
+  test("port -1 falls back to default", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(configPath, JSON.stringify({ port: -1 }));
+
+    const config = loadConfig(configPath);
+    expect(config.port).toBe(DEFAULT_CONFIG.port);
+  });
+
+  test("port 70000 falls back to default", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(configPath, JSON.stringify({ port: 70000 }));
+
+    const config = loadConfig(configPath);
+    expect(config.port).toBe(DEFAULT_CONFIG.port);
+  });
+
+  test("port 3.5 (non-integer) falls back to default", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(configPath, JSON.stringify({ port: 3.5 }));
+
+    const config = loadConfig(configPath);
+    expect(config.port).toBe(DEFAULT_CONFIG.port);
+  });
+
+  test("maxInactivityHours -1 falls back to default", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(configPath, JSON.stringify({ maxInactivityHours: -1 }));
+
+    const config = loadConfig(configPath);
+    expect(config.maxInactivityHours).toBe(DEFAULT_CONFIG.maxInactivityHours);
+  });
+
+  test("maxInactivityHours 0 falls back to default", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(configPath, JSON.stringify({ maxInactivityHours: 0 }));
+
+    const config = loadConfig(configPath);
+    expect(config.maxInactivityHours).toBe(DEFAULT_CONFIG.maxInactivityHours);
+  });
+
+  test("port 1 and port 65535 are accepted as boundary values", async () => {
+    const configPath = join(tmpDir, "config.json");
+
+    await writeFile(configPath, JSON.stringify({ port: 1 }));
+    expect(loadConfig(configPath).port).toBe(1);
+
+    await writeFile(configPath, JSON.stringify({ port: 65535 }));
+    expect(loadConfig(configPath).port).toBe(65535);
+  });
+
   test("partial config (empty {}): returns defaults", async () => {
     const configPath = join(tmpDir, "config.json");
     await writeFile(configPath, JSON.stringify({}));

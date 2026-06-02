@@ -1,5 +1,11 @@
 import { log } from "../log.ts";
-import type { NotificationMeta, ProjectInfo, ProjectState } from "../types.ts";
+import type {
+  NotificationMeta,
+  ProjectInfo,
+  ProjectState,
+  SessionEnrichment,
+  SubagentInfo,
+} from "../types.ts";
 import type { SessionBackend } from "./types.ts";
 
 /**
@@ -17,16 +23,14 @@ export async function buildProjectState(
   const state = await backend.resolveState(projectInfo);
   const lastUpdated = await backend.computeLastUpdated(projectInfo);
 
-  const base: ProjectState = { ...projectInfo, state, lastUpdated };
-
-  let enrichment: import("../types.ts").SessionEnrichment | undefined;
+  let enrichment: SessionEnrichment | undefined;
   try {
     enrichment = await backend.enrichProject(projectInfo);
   } catch (err) {
     log.warn("enrichment failed", err, { project: projectInfo.projectName });
   }
 
-  let subagents: import("../types.ts").SubagentInfo[] | undefined;
+  let subagents: SubagentInfo[] | undefined;
   try {
     const agents =
       state === "running" || state === "waiting_for_permission"
@@ -50,7 +54,9 @@ export async function buildProjectState(
   }
 
   return {
-    ...base,
+    ...projectInfo,
+    state,
+    lastUpdated,
     ...(enrichment ?? {}),
     subagents: subagents && subagents.length > 0 ? subagents : undefined,
     subagentCount: subagentCount > 0 ? subagentCount : undefined,

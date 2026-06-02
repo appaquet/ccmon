@@ -16,7 +16,7 @@ function createClaudeBackend(entry: {
   type: "claude";
   enabled: boolean;
   projectsDir?: string;
-}): SessionBackend | null {
+}): SessionBackend {
   const projectsDir =
     entry.projectsDir ??
     process.env.CLAUDE_PROJECTS_DIR ??
@@ -87,8 +87,7 @@ export function createBackends(config: CcmonConfig): {
 
     switch (entry.type) {
       case "claude": {
-        const backend = createClaudeBackend(entry);
-        if (backend) backends.push(backend);
+        backends.push(createClaudeBackend(entry));
         break;
       }
       case "opencode": {
@@ -113,7 +112,9 @@ export function createBackends(config: CcmonConfig): {
       for (const db of dbs) {
         try {
           db.close();
-        } catch {}
+        } catch {
+          // already closed or never opened — ignore
+        }
       }
     },
   };

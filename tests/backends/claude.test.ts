@@ -11,9 +11,24 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { buildProjectState } from "../../src/backends/build-project-state.ts";
 import { ClaudeBackend } from "../../src/backends/claude.ts";
+import { disambiguateProjectNames } from "../../src/project-utils.ts";
 import type { StatusEvent } from "../../src/session-core.ts";
 import { STATUS_LOG_FILE } from "../../src/session-core.ts";
+import type { ProjectState } from "../../src/types.ts";
 import { makeFirstLine, makeTempDir } from "../_helpers.ts";
+
+/**
+ * Assembles full ProjectState for every project a backend discovers, mirroring
+ * the production scan→buildProjectState→disambiguate path used by the server.
+ */
+async function buildAllStates(backend: ClaudeBackend): Promise<ProjectState[]> {
+  const projects = await backend.scanProjects();
+  const states = await Promise.all(
+    projects.map((p) => buildProjectState(backend, p)),
+  );
+  disambiguateProjectNames(states);
+  return states;
+}
 
 describe("ClaudeBackend", () => {
   let tmpDir: string;
@@ -266,9 +281,9 @@ describe("ClaudeBackend", () => {
     expect(result.latestAssistantActivity?.tool).toBe("Grep");
   });
 
-  // ── targeted refresh ──────────────────────────────────────────────────────
+  // ── buildProjectState (full scan) ──────────────────────────────────────────
 
-  test("getProjectState: returns all projects from a clean scan", async () => {
+  test("buildAllStates: returns all projects from a clean scan", async () => {
     const projDirA = join(tmpDir, "-home-user-a");
     await mkdir(projDirA, { recursive: true });
     await writeFile(
@@ -283,13 +298,13 @@ describe("ClaudeBackend", () => {
       `${makeFirstLine("/home/user/b", "sid-b")}\n`,
     );
 
-    const results = await backend.getProjectState();
+    const results = await buildAllStates(backend);
     expect(results).toHaveLength(2);
     const names = results.map((p) => p.projectName).sort();
     expect(names).toEqual(["a", "b"]);
   });
 });
-describe("getProjectState", () => {
+describe("buildProjectState full scan", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
@@ -319,7 +334,7 @@ describe("getProjectState", () => {
     await makeProject("-home-user-fresh", "/home/user/fresh", "sid1");
     // No status file; fresh JSONL mtime drives state.
     const before = Date.now();
-    const results = await new ClaudeBackend(tmpDir).getProjectState();
+    const results = await buildAllStates(new ClaudeBackend(tmpDir));
 
     expect(results).toHaveLength(1);
     expect(results[0].state).toBe("running");
@@ -344,7 +359,7 @@ describe("getProjectState", () => {
     const staleMtime = new Date(Date.now() - 2 * 60 * 1000); // 2 min ago
     utimesSync(jsonlPath, staleMtime, staleMtime);
 
-    const results = await new ClaudeBackend(tmpDir).getProjectState();
+    const results = await buildAllStates(new ClaudeBackend(tmpDir));
 
     expect(results).toHaveLength(1);
     expect(results[0].state).toBe("stopped");
@@ -378,7 +393,7 @@ describe("getProjectState", () => {
     const olderMtime = new Date(staleMtime.getTime() - 1000);
     utimesSync(statusLogPath, olderMtime, olderMtime);
 
-    const results = await new ClaudeBackend(tmpDir).getProjectState();
+    const results = await buildAllStates(new ClaudeBackend(tmpDir));
 
     expect(results).toHaveLength(1);
     expect(results[0].state).toBe("stopped");
@@ -408,7 +423,7 @@ describe("getProjectState", () => {
     const olderMtime = new Date(staleMtime.getTime() - 1000);
     utimesSync(statusLogPath, olderMtime, olderMtime);
 
-    const results = await new ClaudeBackend(tmpDir).getProjectState();
+    const results = await buildAllStates(new ClaudeBackend(tmpDir));
 
     expect(results).toHaveLength(1);
     expect(results[0].state).toBe("stopped");
@@ -418,7 +433,7 @@ describe("getProjectState", () => {
     await makeProject("-home-user-a", "/home/user/a", "sida");
     await makeProject("-home-user-b", "/home/user/b", "sidb");
 
-    const results = await new ClaudeBackend(tmpDir).getProjectState();
+    const results = await buildAllStates(new ClaudeBackend(tmpDir));
     expect(results).toHaveLength(2);
   });
 
@@ -453,7 +468,7 @@ describe("getProjectState", () => {
     const past = new Date(Date.now() - 5000);
     utimesSync(statusLogPath, past, past);
 
-    const results = await new ClaudeBackend(tmpDir).getProjectState();
+    const results = await buildAllStates(new ClaudeBackend(tmpDir));
     expect(results).toHaveLength(1);
     expect(results[0].notificationMessage).toBe("You have a notification");
     expect(results[0].notificationTimestamp).toBe("2026-02-22T10:00:00.000Z");
@@ -478,7 +493,7 @@ describe("getProjectState", () => {
     const past = new Date(Date.now() - 5000);
     utimesSync(statusLogPath, past, past);
 
-    const results = await new ClaudeBackend(tmpDir).getProjectState();
+    const results = await buildAllStates(new ClaudeBackend(tmpDir));
     expect(results).toHaveLength(1);
     expect(results[0].notificationMessage).toBeUndefined();
     expect(results[0].notificationTimestamp).toBeUndefined();
@@ -509,7 +524,7 @@ describe("getProjectState", () => {
     const olderMtime = new Date(staleMtime.getTime() - 1000);
     utimesSync(statusLogPath, olderMtime, olderMtime);
 
-    const results = await new ClaudeBackend(tmpDir).getProjectState();
+    const results = await buildAllStates(new ClaudeBackend(tmpDir));
     expect(results).toHaveLength(1);
     // NaN age on permission signal treated as stale → falls through to priority 4 → stopped
     expect(results[0].state).toBe("stopped");
@@ -1284,7 +1299,7 @@ describe("session enrichment", () => {
     );
   });
 
-  test("getProjectState includes subagents array (R29)", async () => {
+  test("buildProjectState includes subagents array (R29)", async () => {
     // Build a project dir with a sessions-index, JSONL, and sub-agents
     const projDir = join(tmpDir, "-home-user-r29-proj");
     await mkdir(projDir, { recursive: true });
@@ -1332,7 +1347,7 @@ describe("session enrichment", () => {
     const past = new Date(Date.now() - 5000);
     utimesSync(statusLogPath, past, past);
 
-    const results = await new ClaudeBackend(tmpDir).getProjectState();
+    const results = await buildAllStates(new ClaudeBackend(tmpDir));
     const proj = results.find((p) => p.projectName === "r29-proj");
     expect(proj).toBeDefined();
 
@@ -1403,7 +1418,7 @@ describe("session enrichment", () => {
     const past = new Date(Date.now() - 5000);
     utimesSync(statusLogPath, past, past);
 
-    const results = await new ClaudeBackend(tmpDir).getProjectState();
+    const results = await buildAllStates(new ClaudeBackend(tmpDir));
     const proj = results.find((p) => p.projectName === "r41-stopped");
     expect(proj).toBeDefined();
     expect(proj?.state).toBe("stopped");
@@ -1478,11 +1493,11 @@ describe("sessionTailCache (R20.4)", () => {
     expect(second.latestUserActivity?.text).toBe("new");
   });
 });
-describe("getProjectState targeted refresh (R20.5)", () => {
+describe("buildProjectState rescan (R20.5)", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await makeTempDir("ccmon-targeted");
+    tmpDir = await makeTempDir("ccmon-rescan");
   });
 
   afterEach(async () => {
@@ -1503,15 +1518,17 @@ describe("getProjectState targeted refresh (R20.5)", () => {
     return projDir;
   }
 
-  test("targeted rescan updates only the changed project while other projects stay cached", async () => {
-    const _dirA = await makeProject("-home-user-a", "/home/user/a", "sid-a");
+  test("rescan reflects a status change on one project while siblings remain", async () => {
+    await makeProject("-home-user-a", "/home/user/a", "sid-a");
     const dirB = await makeProject("-home-user-b", "/home/user/b", "sid-b");
 
-    // Full scan to warm the cache
-    const first = await new ClaudeBackend(tmpDir).getProjectState();
+    const first = await buildAllStates(new ClaudeBackend(tmpDir));
     expect(first).toHaveLength(2);
 
-    // Write a status event for project B to see state change — simplest observable diff
+    // Write a Stop event for project B and backdate its JSONL so the stop wins.
+    const jsonlB = join(dirB, "session.jsonl");
+    const staleMtime = new Date(Date.now() - 2 * 60 * 1000);
+    utimesSync(jsonlB, staleMtime, staleMtime);
     const event: StatusEvent = {
       event: "Stop",
       state: "stopped",
@@ -1521,53 +1538,41 @@ describe("getProjectState targeted refresh (R20.5)", () => {
     };
     const statusLogPath = join(dirB, STATUS_LOG_FILE);
     await appendFile(statusLogPath, `${JSON.stringify(event)}\n`);
-    // Backdate status log so findLatestJSONL selects the session JSONL
-    const past = new Date(Date.now() - 5000);
-    utimesSync(statusLogPath, past, past);
+    const olderMtime = new Date(staleMtime.getTime() - 1000);
+    utimesSync(statusLogPath, olderMtime, olderMtime);
 
-    // Targeted rescan of only project B
-    const second = await new ClaudeBackend(tmpDir).getProjectState(dirB);
+    const second = await buildAllStates(new ClaudeBackend(tmpDir));
     expect(second).toHaveLength(2);
 
-    // Project A should still be present
     const projA = second.find((p) => p.projectName === "a");
     const projB = second.find((p) => p.projectName === "b");
     expect(projA).toBeDefined();
-    expect(projB).toBeDefined();
+    expect(projB?.state).toBe("stopped");
   });
 
-  test("targeted rescan with cold cache falls back to full scan", async () => {
+  test("rescan discovers a newly created project", async () => {
     await makeProject("-home-user-x", "/home/user/x", "sid-x");
 
-    // Cache is cold (reset in beforeEach) — changedProjectDir provided but ignored
-    const results = await new ClaudeBackend(tmpDir).getProjectState(
-      join(tmpDir, "-home-user-x"),
-    );
+    const results = await buildAllStates(new ClaudeBackend(tmpDir));
     expect(results).toHaveLength(1);
     expect(results[0].projectName).toBe("x");
   });
 
-  test("targeted rescan of disappeared project removes it from cache", async () => {
+  test("rescan drops a project whose JSONL disappeared", async () => {
     const dirA = await makeProject(
       "-home-user-gone",
       "/home/user/gone",
       "sid-gone",
     );
-    const _dirB = await makeProject(
-      "-home-user-stay",
-      "/home/user/stay",
-      "sid-stay",
-    );
+    await makeProject("-home-user-stay", "/home/user/stay", "sid-stay");
 
-    // Warm the cache
-    const first = await new ClaudeBackend(tmpDir).getProjectState();
+    const first = await buildAllStates(new ClaudeBackend(tmpDir));
     expect(first).toHaveLength(2);
 
-    // Remove project A's JSONL so readProjectInfo returns null
+    // Remove project A so readProjectInfo no longer finds a JSONL for it.
     await rm(dirA, { recursive: true, force: true });
 
-    // Targeted rescan of the now-gone project
-    const second = await new ClaudeBackend(tmpDir).getProjectState(dirA);
+    const second = await buildAllStates(new ClaudeBackend(tmpDir));
     expect(second).toHaveLength(1);
     expect(second[0].projectName).toBe("stay");
   });
@@ -2721,13 +2726,11 @@ describe("readSessionTail delta task completion (R46 Bug 1)", () => {
   });
 });
 describe("ClaudeBackend", () => {
-  test("constructing a fresh ClaudeBackend gives clean caches", async () => {
+  test("constructing a fresh ClaudeBackend gives a clean cache", async () => {
     const tmpDir = await makeTempDir("ccmon-store-isolation");
     const backend = new ClaudeBackend(tmpDir);
 
-    backend.resetCaches();
     expect(backend.sessionTailCache.size).toBe(0);
-    expect(backend.projectStateCache.size).toBe(0);
 
     await rm(tmpDir, { recursive: true, force: true });
   });

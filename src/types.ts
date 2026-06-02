@@ -21,15 +21,25 @@ export interface SessionEnrichment {
   sessionName?: string;
 }
 
+/** Fields shared by every backend's project, with backend-agnostic meaning. */
 interface ProjectInfoBase {
-  projectDir: string;
   cwd: string;
   projectName: string;
   sessionId: string;
 }
 
+/**
+ * A discovered project, discriminated by its backend `source`. Backend-specific
+ * locators live only on the variant that can interpret them: `projectDir` (the
+ * encoded directory segment under ~/.claude/projects) and `latestJSONL` are
+ * meaningful only with Claude's filesystem layout, so they are claude-only.
+ */
 export type ProjectInfo =
-  | (ProjectInfoBase & { source: "claude"; latestJSONL: string })
+  | (ProjectInfoBase & {
+      source: "claude";
+      projectDir: string;
+      latestJSONL: string;
+    })
   | (ProjectInfoBase & { source: "opencode" });
 
 export interface NotificationMeta {
@@ -47,13 +57,8 @@ export interface SubagentInfo extends SessionEnrichment {
   launchTime: string;
 }
 
-export interface ProjectState extends SessionEnrichment {
-  projectDir: string;
-  cwd: string;
-  projectName: string;
-  sessionId: string;
-  source: BackendSource;
-  latestJSONL?: string;
+/** Resolved session state and metadata layered on top of a discovered project. */
+export interface SessionFields {
   state: SessionState;
   lastUpdated: string | null;
   notificationMessage?: string;
@@ -61,3 +66,11 @@ export interface ProjectState extends SessionEnrichment {
   subagents?: SubagentInfo[];
   subagentCount?: number;
 }
+
+/**
+ * A fully assembled project: its `ProjectInfo` enriched with model/message data
+ * and resolved session state. Intersecting the `ProjectInfo` union keeps the
+ * `source` discrimination, so `latestJSONL`/`projectDir` are present on claude
+ * and absent on opencode by construction — no optional sentinel.
+ */
+export type ProjectState = ProjectInfo & SessionEnrichment & SessionFields;

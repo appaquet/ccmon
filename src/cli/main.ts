@@ -4,7 +4,7 @@ import { runDump, runDumpWatch } from "./commands/dump.ts";
 import { runServe } from "./commands/serve.ts";
 import { runStatus } from "./commands/status.ts";
 import { runSub } from "./commands/sub.ts";
-import { parseNumberFlag, parseStringFlag } from "./helpers.ts";
+import { parseNumberFlag, parsePortFlag, parseStringFlag } from "./helpers.ts";
 
 const VERSION = "0.1.0";
 
@@ -42,11 +42,12 @@ if (subcommand === "dump") {
     await runDump(config, projectFilter);
   }
 } else if (subcommand === "status") {
-  await runStatus();
+  const statusCode = await runStatus();
+  process.exit(statusCode);
 } else if (subcommand === "sub") {
   let subPort: number;
   if (process.argv.includes("--port")) {
-    const parsed = parseNumberFlag(process.argv, "--port");
+    const parsed = parsePortFlag(process.argv, "--port");
     if (parsed === undefined) {
       process.stderr.write("Error: --port requires a valid number\n");
       process.exit(1);
@@ -64,7 +65,7 @@ if (subcommand === "dump") {
 
   runSub(subPort, subHost);
 } else if (subcommand === "serve") {
-  const port = parseNumberFlag(process.argv, "--port");
+  const port = parsePortFlag(process.argv, "--port");
   if (process.argv.includes("--port") && port === undefined) {
     process.stderr.write("Error: --port requires a valid number\n");
     process.exit(1);
@@ -95,7 +96,7 @@ Subcommands:
   sub --port <N>         Connect to custom port (default: 8080)
 
 Supports Claude Code and OpenCode monitoring. Configure backends in
-~/.config/ccmon/config.json (default: Claude Code only).
+~/.config/ccmon/config.json (default: both Claude Code and OpenCode).
 `,
   );
   process.exit(1);

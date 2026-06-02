@@ -93,7 +93,10 @@ function isStatusFileLegacy(v: unknown): v is StatusFileLegacy {
  * Parses NDJSON lines into StatusEvent[], skipping corrupt lines.
  * When slicedMidFile is true, the first line is discarded (may be partial).
  */
-function parseStatusLines(raw: string, slicedMidFile: boolean): StatusEvent[] {
+export function parseStatusLines(
+  raw: string,
+  slicedMidFile = false,
+): StatusEvent[] {
   const lines = raw.split("\n").filter((l) => l.trim() !== "");
   const startIdx = slicedMidFile && lines.length > 0 ? 1 : 0;
   const events: StatusEvent[] = [];

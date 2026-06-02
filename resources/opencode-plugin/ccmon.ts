@@ -1,4 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 type SessionState = "running" | "waiting_for_permission" | "stopped" | "closed" | "error";
 
@@ -53,11 +55,9 @@ export async function ccmonPlugin(context: PluginContext) {
   const sessionCwdMap = new Map<string, string>();
   const lastWrittenState = new Map<string, SessionState>();
 
-  const home = process.env.HOME;
-  const logDir = home
-    ? `${home}/.local/state/ccmon`
-    : `${directory}/.opencode`;
-  const logPath = `${logDir}/opencode-status.jsonl`;
+  const stateHome = process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
+  const logDir = join(stateHome, "ccmon");
+  const logPath = join(logDir, "opencode-status.jsonl");
 
   await mkdir(logDir, { recursive: true }).catch(() => {});
 

@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { hostname as osHostname } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type WebSocket, WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import { collectBackendStates } from "./backends/collect-states.ts";
 import type { SessionBackend } from "./backends/types.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
@@ -16,7 +16,8 @@ import { BROADCAST_INTERVAL_MS } from "./timing.ts";
 import type { ProjectState } from "./types.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const htmlPath = join(__dirname, "..", "public", "index.html");
+const publicDir = resolve(__dirname, "..", "public");
+const htmlPath = join(publicDir, "index.html");
 let html: string;
 try {
   html = readFileSync(htmlPath, "utf8");
@@ -70,7 +71,9 @@ export function startServer(options: ServerOptions): {
       projects: currentFilteredState(),
     });
     for (const ws of clients) {
-      ws.send(payload);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(payload);
+      }
     }
   }
 
@@ -131,12 +134,14 @@ export function startServer(options: ServerOptions): {
 
   wss.on("connection", (ws: WebSocket) => {
     clients.add(ws);
-    ws.send(
-      JSON.stringify({
-        hostname: osHostname(),
-        projects: currentFilteredState(),
-      }),
-    );
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          hostname: osHostname(),
+          projects: currentFilteredState(),
+        }),
+      );
+    }
     ws.on("close", () => {
       clients.delete(ws);
     });
@@ -161,7 +166,12 @@ export function startServer(options: ServerOptions): {
     }
 
     if (url.pathname.startsWith("/js/")) {
-      const filePath = join(__dirname, "..", "public", url.pathname);
+      const filePath = resolve(publicDir, url.pathname.slice(1));
+      if (!filePath.startsWith(`${publicDir}/`)) {
+        res.writeHead(403);
+        res.end("Forbidden");
+        return;
+      }
       try {
         const content = readFileSync(filePath, "utf8");
         res.writeHead(200, {

@@ -1,14 +1,10 @@
 import type { Dirent } from "node:fs";
 import { readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import type { JsonlFirstLine } from "../parsers/claude-jsonl.ts";
-import {
-  disambiguateProjectNames,
-  readProjectInfo,
-  scanProjects,
-  sessionDirFromJSONL,
-} from "../project-utils.ts";
+import type { ClaudeProjectInfo } from "../project-utils.ts";
+import { scanProjects, sessionDirFromJSONL } from "../project-utils.ts";
 import type { SessionState, StatusEvent } from "../session-core.ts";
 import { readStatusLog, resolveState } from "../session-core.ts";
 import type {
@@ -27,41 +23,24 @@ import {
   SUBAGENT_EXPIRY_MS,
   SUBAGENT_STOP_GRACE_MS,
 } from "../timing.ts";
-import type {
-  NotificationMeta,
-  ProjectInfo,
-  ProjectState,
-  SubagentInfo,
-} from "../types.ts";
+import type { NotificationMeta, ProjectInfo, SubagentInfo } from "../types.ts";
 import { watchForChanges } from "../watcher.ts";
-import { buildProjectState as sharedBuildProjectState } from "./build-project-state.ts";
 import type { SessionBackend } from "./types.ts";
 
 const JSONL_EXT = ".jsonl";
 
 export class ClaudeBackend implements SessionBackend {
   sessionTailCache = new Map<string, SessionTailCache>();
-  projectStateCache = new Map<string, ProjectState>();
   private claudeDir: string;
 
   constructor(claudeDir: string) {
     this.claudeDir = claudeDir;
   }
 
-  get _claudeDir(): string {
-    return this.claudeDir;
-  }
-
-  resetCaches(): void {
-    this.sessionTailCache.clear();
-    this.projectStateCache.clear();
-  }
-
   // ── SessionBackend interface ───────────────────────────────────────────────
 
   async scanProjects(): Promise<ProjectInfo[]> {
-    const projects = await scanProjects(this.claudeDir);
-    return projects;
+    return scanProjects(this.claudeDir);
   }
 
   watchForChanges(onUpdate: () => void): { stop: () => void } {
@@ -73,6 +52,7 @@ export class ClaudeBackend implements SessionBackend {
   async getNotification(
     projectInfo: ProjectInfo,
   ): Promise<NotificationMeta | null> {
+    if (projectInfo.source !== "claude") return null;
     const projectDirPath = join(this.claudeDir, projectInfo.projectDir);
     const events = await readStatusLog(projectDirPath);
 
@@ -129,62 +109,17 @@ export class ClaudeBackend implements SessionBackend {
   }
 
   projectKey(project: ProjectInfo): string {
+    if (project.source !== "claude") return project.cwd;
     return join(this.claudeDir, project.projectDir);
   }
 
-  // ── Public helpers (used by tests & watcher path) ──────────────────────────
-
-  async getProjectState(changedProjectDir?: string): Promise<ProjectState[]> {
-    if (changedProjectDir !== undefined && this.projectStateCache.size > 0) {
-      const dirName = basename(changedProjectDir);
-      const info = await readProjectInfo(changedProjectDir, dirName);
-      if (info !== null) {
-        const updatedState = await sharedBuildProjectState(this, info);
-        this.projectStateCache.set(changedProjectDir, updatedState);
-      } else {
-        this.projectStateCache.delete(changedProjectDir);
-      }
-      const allStates = [...this.projectStateCache.values()];
-      for (const s of allStates) {
-        s.projectName = basename(s.cwd);
-      }
-      this._disambiguateProjectNames(allStates);
-      for (const s of allStates) {
-        this.projectStateCache.set(join(this.claudeDir, s.projectDir), s);
-      }
-      return allStates;
-    }
-
-    const projects = await this.scanProjects();
-    if (projects.length === 0) {
-      this.projectStateCache.clear();
-      return [];
-    }
-
-    const states = await Promise.all(
-      projects.map((p) => sharedBuildProjectState(this, p)),
-    );
-
-    this._disambiguateProjectNames(states);
-
-    this.projectStateCache.clear();
-    for (let i = 0; i < projects.length; i++) {
-      const fullPath = join(this.claudeDir, projects[i].projectDir);
-      this.projectStateCache.set(fullPath, states[i]);
-    }
-
-    return states;
-  }
+  // ── Public helpers (used by tests) ─────────────────────────────────────────
 
   readSessionTail(jsonlPath: string): Promise<SessionTailInfo> {
     return this._readSessionTail(jsonlPath);
   }
 
   // ── Private ────────────────────────────────────────────────────────────────
-
-  private _disambiguateProjectNames(projects: ProjectState[]): void {
-    disambiguateProjectNames(projects);
-  }
 
   private async _readSessionTail(jsonlPath: string): Promise<SessionTailInfo> {
     let mtimeMs: number;
@@ -242,7 +177,7 @@ export class ClaudeBackend implements SessionBackend {
     return merged;
   }
 
-  private async _fetchStateEvents(projectInfo: ProjectInfo): Promise<{
+  private async _fetchStateEvents(projectInfo: ClaudeProjectInfo): Promise<{
     state: SessionState;
     events: StatusEvent[];
     jsonlMtimeMs: number | null;
@@ -251,15 +186,11 @@ export class ClaudeBackend implements SessionBackend {
     const events = await readStatusLog(projectDirPath);
 
     let jsonlMtimeMs: number | null = null;
-    const latestJSONL =
-      projectInfo.source === "claude" ? projectInfo.latestJSONL : null;
-    if (latestJSONL !== null) {
-      try {
-        const s = await stat(latestJSONL);
-        jsonlMtimeMs = s.mtimeMs;
-      } catch {
-        // JSONL disappeared — leave null
-      }
+    try {
+      const s = await stat(projectInfo.latestJSONL);
+      jsonlMtimeMs = s.mtimeMs;
+    } catch {
+      // JSONL disappeared — leave null
     }
 
     const state = resolveState(jsonlMtimeMs, events);

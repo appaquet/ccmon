@@ -193,7 +193,6 @@ describe("integration — both backends", () => {
     });
 
     const opencodeKey = opencodeBackend.projectKey({
-      projectDir: "/home/user/b",
       cwd: "/home/user/b",
       projectName: "b",
       sessionId: "ses_b",

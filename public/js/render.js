@@ -9,37 +9,62 @@ function renderContextBar(inputTokens, tasksDone, tasksTotal) {
   var tasksHtml = tasksTotal > 0
     ? '<span class="ctx-tasks">\u{1F4CB} ' + tasksDone + '/' + tasksTotal + '</span>'
     : '';
-  return '\n    <div class="ctx-row">\n      <span>\u{1F4AD}</span>\n      <div class="ctx-bar-container">\n        <div class="ctx-bar">\n          <div class="' + fillClass + '" style="width:' + pct + '%"></div>\n        </div>\n      </div>\n      <span class="ctx-label">' + esc(label) + '</span>\n      ' + tasksHtml + '\n    </div>\n  ';
+  return `
+    <div class="ctx-row">
+      <span>💭</span>
+      <div class="ctx-bar-container">
+        <div class="ctx-bar">
+          <div class="${fillClass}" style="width:${pct}%"></div>
+        </div>
+      </div>
+      <span class="ctx-label">${esc(label)}</span>
+      ${tasksHtml}
+    </div>
+  `;
 }
 
-function renderAgentRow(_a) {
-  var label = _a.label, model = _a.model, userActivity = _a.userActivity, assistantActivity = _a.assistantActivity, isActive = _a.isActive;
+function renderAgentRow(opts) {
+  var label = opts.label;
+  var model = opts.model;
+  var userActivity = opts.userActivity;
+  var assistantActivity = opts.assistantActivity;
+  var isActive = opts.isActive;
   var dotClass = isActive ? 'agent-dot agent-dot-active' : 'agent-dot agent-dot-idle';
   var modelHtml = model
     ? '<span class="agent-model">\u{1F916} ' + esc(shortModel(model)) + '</span>'
     : '';
   var userHtml = '';
-  if (userActivity === null || userActivity === void 0 ? void 0 : userActivity.text) {
+  if (userActivity && userActivity.text) {
     userHtml = '<div class="agent-msg agent-msg-in">\u25B6 ' + esc(truncate(userActivity.text, 80)) + '</div>';
   }
   var assistantHtml = '';
   if (assistantActivity) {
-    var actText = assistantActivity.text !== null && assistantActivity.text !== void 0 ? assistantActivity.text : assistantActivity.tool;
+    var actText = assistantActivity.text || assistantActivity.tool;
     if (actText) {
       assistantHtml = '<div class="agent-msg agent-msg-out">\u25C0 ' + esc(truncate(actText, 80)) + '</div>';
     }
   }
-  return '\n    <div class="agent-row">\n      <div class="agent-header">\n        <span class="' + dotClass + '"></span>\n        <span class="agent-label">' + esc(label) + '</span>\n        ' + modelHtml + '\n      </div>\n      ' + userHtml + '\n      ' + assistantHtml + '\n    </div>\n  ';
+  return `
+    <div class="agent-row">
+      <div class="agent-header">
+        <span class="${dotClass}"></span>
+        <span class="agent-label">${esc(label)}</span>
+        ${modelHtml}
+      </div>
+      ${userHtml}
+      ${assistantHtml}
+    </div>
+  `;
 }
 
-function createCard(proj, _flashStopped, flashNotification, displayName, key) {
+function createCard(proj, flashStopped, flashNotification, displayName, key) {
   var card = document.createElement('div');
   var s = proj.state || 'stopped';
   var isWaitingFlash = s === 'waiting_for_permission' && !flashWaitingDismissed.has(key);
   var isErrorFlash = s === 'error' && !flashErrorDismissed.has(key);
   var flashClasses = isWaitingFlash ? ' card-flashing-waiting'
     : isErrorFlash ? ' card-flashing-error'
-    : _flashStopped ? ' card-flashing-stopped'
+    : flashStopped ? ' card-flashing-stopped'
     : flashNotification ? ' card-flashing-notification'
     : '';
   card.className = 'card' + flashClasses;
@@ -73,9 +98,20 @@ function createCard(proj, _flashStopped, flashNotification, displayName, key) {
   var sessionSuffix = proj.sessionName
     ? ' <span style="font-weight:normal;color:var(--muted)">(' + esc(proj.sessionName) + ')</span>'
     : '';
-  var sourceLabel = (proj.source === "opencode") ? "OC" : "CC";
+  var sourceLabel = (proj.source === 'opencode') ? 'OC' : 'CC';
   var cardTitle = proj.sessionName ? cardName + ' (' + proj.sessionName + ')' : cardName;
-  var html = '\n    <div class="card-header">\n      <span class="card-name" title="' + esc(cardTitle) + '">' + esc(cardName) + sessionSuffix + '</span>\n      <div class="card-pills">\n        <span class="badge-source">' + esc(sourceLabel) + '</span>\n        <span class="badge ' + badgeClass + '">\n          <span class="dot ' + dotClass + '"></span>\n          ' + esc(label) + '\n        </span>\n      </div>\n    </div>\n  ';
+  var html = `
+    <div class="card-header">
+      <span class="card-name" title="${esc(cardTitle)}">${esc(cardName)}${sessionSuffix}</span>
+      <div class="card-pills">
+        <span class="badge-source">${esc(sourceLabel)}</span>
+        <span class="badge ${badgeClass}">
+          <span class="dot ${dotClass}"></span>
+          ${esc(label)}
+        </span>
+      </div>
+    </div>
+  `;
 
   html += renderContextBar(proj.inputTokens || 0, tasksDone, tasksTotal);
 
@@ -113,6 +149,20 @@ var flashStopped = new Map();
 var flashNotification = new Map();
 var flashWaitingDismissed = new Set();
 var flashErrorDismissed = new Set();
+
+// Removes entries from a Map or Set whose keys no longer appear in currentKeys,
+// or that fail an optional predicate(key, value). For Sets the value equals the key.
+function pruneStale(collection, currentKeys, predicate) {
+  var toDelete = [];
+  collection.forEach(function (value, key) {
+    var stale = !currentKeys[key];
+    if (!stale && predicate) stale = predicate(key, value);
+    if (stale) toDelete.push(key);
+  });
+  for (var i = 0; i < toDelete.length; i++) {
+    collection.delete(toDelete[i]);
+  }
+}
 
 var lastSortOrder = [];
 var lastSortTime = 0;
@@ -188,53 +238,12 @@ function render(projects) {
     currentKeys[projKey(all[i])] = true;
   }
 
-  var keysToDelete = [];
-  prevState.forEach(function (_, key) {
-    if (!currentKeys[key]) keysToDelete.push(key);
-  });
-  for (var i = 0; i < keysToDelete.length; i++) {
-    prevState.delete(keysToDelete[i]);
-  }
-
-  keysToDelete = [];
-  prevNotificationTimestamp.forEach(function (_, key) {
-    if (!currentKeys[key]) keysToDelete.push(key);
-  });
-  for (var i = 0; i < keysToDelete.length; i++) {
-    prevNotificationTimestamp.delete(keysToDelete[i]);
-  }
-
-  var entriesToDelete = [];
-  flashStopped.forEach(function (ts, key) {
-    if (!currentKeys[key] || now - ts >= flashWindow) entriesToDelete.push(key);
-  });
-  for (var i = 0; i < entriesToDelete.length; i++) {
-    flashStopped.delete(entriesToDelete[i]);
-  }
-
-  entriesToDelete = [];
-  flashNotification.forEach(function (ts, key) {
-    if (!currentKeys[key] || now - ts >= flashWindow) entriesToDelete.push(key);
-  });
-  for (var i = 0; i < entriesToDelete.length; i++) {
-    flashNotification.delete(entriesToDelete[i]);
-  }
-
-  var waitingToDelete = [];
-  flashWaitingDismissed.forEach(function (key) {
-    if (!currentKeys[key]) waitingToDelete.push(key);
-  });
-  for (var i = 0; i < waitingToDelete.length; i++) {
-    flashWaitingDismissed.delete(waitingToDelete[i]);
-  }
-
-  var errorToDelete = [];
-  flashErrorDismissed.forEach(function (key) {
-    if (!currentKeys[key]) errorToDelete.push(key);
-  });
-  for (var i = 0; i < errorToDelete.length; i++) {
-    flashErrorDismissed.delete(errorToDelete[i]);
-  }
+  pruneStale(prevState, currentKeys);
+  pruneStale(prevNotificationTimestamp, currentKeys);
+  pruneStale(flashStopped, currentKeys, function (_, ts) { return now - ts >= flashWindow; });
+  pruneStale(flashNotification, currentKeys, function (_, ts) { return now - ts >= flashWindow; });
+  pruneStale(flashWaitingDismissed, currentKeys);
+  pruneStale(flashErrorDismissed, currentKeys);
 
   grid.innerHTML = '';
 
@@ -246,16 +255,26 @@ function render(projects) {
     return;
   }
 
-  var nameCounts = new Map();
+  // Server-side disambiguateProjectNames() owns cross-backend disambiguation within
+  // a single ccmon host (claude vs opencode) and its output is consumed verbatim by
+  // both the web UI and the CLI. This block is a separate, orthogonal concern: it
+  // labels projects whose names collide ACROSS multiple ccmon servers (identified by
+  // _backendKey = server hostname). A prefix is added only when the same projectName
+  // appears under at least two distinct _backendKey values; within-host collisions
+  // are already resolved upstream and need no further treatment here.
+  var nameToBackendKeys = new Map();
   for (var i = 0; i < all.length; i++) {
     var p = all[i];
-    nameCounts.set(p.projectName, (nameCounts.get(p.projectName) || 0) + 1);
+    var keySet = nameToBackendKeys.get(p.projectName);
+    if (!keySet) { keySet = new Set(); nameToBackendKeys.set(p.projectName, keySet); }
+    keySet.add(p._backendKey);
   }
 
   for (var i = 0; i < all.length; i++) {
     var proj = all[i];
     var key = projKey(proj);
-    var displayName = nameCounts.get(proj.projectName) > 1
+    var crossServerCollision = nameToBackendKeys.get(proj.projectName).size > 1;
+    var displayName = crossServerCollision
       ? proj._backendKey + ':' + proj.projectName
       : undefined;
     grid.appendChild(createCard(

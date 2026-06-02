@@ -43,9 +43,7 @@ setInterval(function () {
   for (var i = 0; i < BackendManager.backends.length; i++) {
     var entry = BackendManager.backends[i];
     if (entry.ws && entry.ws.readyState === WebSocket.OPEN && now - entry.lastMessageAt > 60000) {
-      entry.ws.onclose = entry.ws.onerror = null;
-      entry.ws.close();
-      BackendManager._connect(entry);
+      BackendManager.reconnect(entry);
     }
   }
   mergeAndRender();
@@ -54,11 +52,6 @@ setInterval(function () {
 document.addEventListener('visibilitychange', function () {
   if (document.visibilityState !== 'visible') return;
   for (var i = 0; i < BackendManager.backends.length; i++) {
-    var entry = BackendManager.backends[i];
-    if (entry.ws && entry.ws.readyState === WebSocket.OPEN) {
-      entry.ws.onclose = entry.ws.onerror = null;
-      entry.ws.close();
-    }
-    BackendManager._connect(entry);
+    BackendManager.reconnect(BackendManager.backends[i]);
   }
 });

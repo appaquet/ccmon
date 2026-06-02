@@ -1,5 +1,7 @@
+import { spawn } from "node:child_process";
 import { appendFile, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { MAX_STATUS_LOG_BYTES } from "../src/project-utils.ts";
 import type { StatusEvent } from "../src/session-core.ts";
@@ -116,6 +118,72 @@ describe("writeStatusEvent", () => {
     // The trimmed file should still be valid NDJSON
     const result = await readStatusLog(tmpDir);
     expect(result.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── concurrent writers (cross-process race) ─────────────────────────────────
+
+describe("writeStatusEvent — concurrent processes", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir("ccmon-concurrent");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Spawns a child process that calls writeStatusEvent with the given event.
+   * The subprocess uses Node's built-in TS strip-types so no build step is needed.
+   */
+  function spawnWriter(projectDir: string, event: StatusEvent): Promise<void> {
+    const workerPath = fileURLToPath(
+      new URL("./_status-writer-worker.ts", import.meta.url),
+    );
+    return new Promise((resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        [
+          "--experimental-strip-types",
+          workerPath,
+          projectDir,
+          JSON.stringify(event),
+        ],
+        { stdio: "inherit" },
+      );
+      child.on("close", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`worker exited with code ${code}`));
+      });
+      child.on("error", reject);
+    });
+  }
+
+  test("both events survive when two processes write concurrently", async () => {
+    const e1: StatusEvent = {
+      event: "UserPromptSubmit",
+      state: "running",
+      timestamp: new Date().toISOString(),
+      session_id: "sess-concurrent-1",
+      working_dir: "/p",
+    };
+    const e2: StatusEvent = {
+      event: "Stop",
+      state: "stopped",
+      timestamp: new Date().toISOString(),
+      session_id: "sess-concurrent-2",
+      working_dir: "/p",
+    };
+
+    // Launch both workers simultaneously — they race for the lockfile.
+    await Promise.all([spawnWriter(tmpDir, e1), spawnWriter(tmpDir, e2)]);
+
+    const events = await readStatusLog(tmpDir);
+    const sessionIds = events.map((e) => e.session_id);
+    expect(sessionIds).toContain("sess-concurrent-1");
+    expect(sessionIds).toContain("sess-concurrent-2");
   });
 });
 

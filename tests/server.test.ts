@@ -589,6 +589,154 @@ describe("periodic safety broadcast (R61)", () => {
   }, 5000);
 });
 
+// ─── Broadcast guard: CLOSING client can't starve others ─────────────────────
+
+describe("broadcast guard (server.ts:72)", () => {
+  let tmpDir: string;
+  let stop: (() => void) | null = null;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir("ccmon-server-bcast-guard");
+  });
+
+  afterEach(async () => {
+    if (stop) {
+      stop();
+      stop = null;
+    }
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test("force-closed client mid-broadcast does not prevent other client from receiving", async () => {
+    const projDir = join(tmpDir, "-home-user-guardproj");
+    await mkdir(projDir, { recursive: true });
+    const firstLine = JSON.stringify({
+      sessionId: "guard-test",
+      cwd: "/home/user/guardproj",
+      timestamp: new Date().toISOString(),
+    });
+    await writeFile(join(projDir, "session.jsonl"), `${firstLine}\n`);
+
+    // Short broadcast interval so the periodic broadcast fires quickly.
+    const srv = startServer({
+      port: 0,
+      backends: [new ClaudeBackend(tmpDir)],
+      maxInactivityHours: Infinity,
+      broadcastIntervalMs: 150,
+    });
+    stop = srv.stop;
+    await srv.ready;
+
+    const messages: string[] = [];
+
+    // Connect two clients. The first will be force-terminated; the second
+    // must still receive the next periodic broadcast.
+    const ws1 = new WebSocket(`ws://localhost:${srv.port}/ws`);
+    const ws2 = new WebSocket(`ws://localhost:${srv.port}/ws`);
+    ws2.onmessage = (event) => {
+      messages.push(event.data as string);
+    };
+
+    // Wait for both initial-state messages to arrive.
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Terminate ws1 without a clean handshake so it may linger in CLOSING/CLOSED
+    // while still in the clients set during the next broadcast.
+    ws1.close();
+
+    // Wait for at least one periodic broadcast to fire after ws1 closed.
+    await new Promise((r) => setTimeout(r, 400));
+
+    ws2.close();
+
+    // ws2 must have received at least two messages (initial + ≥1 periodic).
+    expect(messages.length).toBeGreaterThanOrEqual(2);
+
+    for (const msg of messages) {
+      const envelope = JSON.parse(msg) as {
+        hostname: string;
+        projects: unknown[];
+      };
+      const entry = envelope.projects.find(
+        (e) => (e as Record<string, unknown>).projectName === "guardproj",
+      );
+      expect(entry).toBeDefined();
+    }
+  }, 5000);
+});
+
+// ─── Path traversal containment (server.ts:164) ───────────────────────────────
+
+describe("static-file path containment (server.ts:164)", () => {
+  let tmpDir: string;
+  let stop: (() => void) | null = null;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir("ccmon-server-traversal");
+  });
+
+  afterEach(async () => {
+    if (stop) {
+      stop();
+      stop = null;
+    }
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test("GET /js/../private is blocked — traversal path never serves content", async () => {
+    const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
+    await srv.ready;
+    stop = srv.stop;
+
+    // WHATWG URL normalizes /js/../private to /private before route matching,
+    // so the pathname falls through to the 404 branch rather than /js/.
+    // The resolve()+startsWith guard in the /js/ branch is defense-in-depth for
+    // future refactors that might bypass WHATWG normalization.
+    const res = await fetch(`http://localhost:${srv.port}/js/../private`);
+    expect([403, 404]).toContain(res.status);
+    const body = await res.text();
+    expect(body).not.toContain("<html");
+  });
+
+  test("resolve()+startsWith guard rejects path escaping publicDir", async () => {
+    const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
+    await srv.ready;
+    stop = srv.stop;
+
+    // Raw TCP bypasses the fetch WHATWG URL parser so the server's own
+    // new URL() processes the path. Node's WHATWG URL still normalizes %2e%2e
+    // to '..' and resolves dot-segments, so /js/%2e%2e/etc/passwd → /etc/passwd
+    // (no /js/ prefix → 404). This verifies no content escapes regardless of path.
+    const rawResponse = await new Promise<string>((resolveP, rejectP) => {
+      import("node:net").then(({ createConnection }) => {
+        const client = createConnection(srv.port, "127.0.0.1", () => {
+          client.write(
+            "GET /js/%2e%2e/etc/passwd HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+          );
+        });
+        const chunks: Buffer[] = [];
+        client.on("data", (d: Buffer) => chunks.push(d));
+        client.on("end", () => resolveP(Buffer.concat(chunks).toString()));
+        client.on("error", rejectP);
+      });
+    });
+
+    expect(rawResponse).toMatch(/HTTP\/1\.1 (403|404)/);
+    // No file content from outside the public dir must appear.
+    expect(rawResponse).not.toContain("root:");
+  });
+
+  test("GET /js/render.js is still served normally", async () => {
+    const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
+    await srv.ready;
+    stop = srv.stop;
+
+    const res = await fetch(`http://localhost:${srv.port}/js/render.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/javascript");
+  });
+});
+
 // ─── R34: state propagation ───────────────────────────────────────────────────
 
 describe("state propagation (R34)", () => {

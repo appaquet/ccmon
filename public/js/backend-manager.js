@@ -79,6 +79,14 @@ var BackendManager = {
     }
   },
 
+  reconnect: function (entry) {
+    if (entry.ws) {
+      entry.ws.onclose = entry.ws.onerror = null;
+      entry.ws.close();
+    }
+    this._connect(entry);
+  },
+
   addBackend: function (url) {
     var entry = this._createEntry(url);
     this.backends.push(entry);
@@ -167,7 +175,17 @@ function updateBackendMenu() {
       : entry.status === 'connecting' ? 'Connecting...'
       : 'Disconnected';
 
-    row.innerHTML = '\n      <div class="backend-info">\n        <div class="backend-host" title="' + esc(displayName) + '">' + esc(displayName) + '</div>\n        ' + (showUrl ? '<div class="backend-url" title="' + esc(entry.url) + '">' + esc(entry.url) + '</div>' : '') + '\n      </div>\n      <div class="backend-status">\n        <span class="' + dotClass + '"></span>\n        <span class="' + labelClass + '">' + esc(statusText) + '</span>\n      </div>\n      <button class="remove-btn" ' + (index === 0 ? 'disabled' : '') + ' data-index="' + index + '">Remove</button>\n    ';
+    row.innerHTML = `
+      <div class="backend-info">
+        <div class="backend-host" title="${esc(displayName)}">${esc(displayName)}</div>
+        ${showUrl ? '<div class="backend-url" title="' + esc(entry.url) + '">' + esc(entry.url) + '</div>' : ''}
+      </div>
+      <div class="backend-status">
+        <span class="${dotClass}"></span>
+        <span class="${labelClass}">${esc(statusText)}</span>
+      </div>
+      <button class="remove-btn" ${index === 0 ? 'disabled' : ''} data-index="${index}">Remove</button>
+    `;
 
     row.querySelector('.remove-btn').addEventListener('click', function (e) {
       var idx = parseInt(e.currentTarget.dataset.index, 10);

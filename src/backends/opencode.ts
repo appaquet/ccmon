@@ -4,12 +4,9 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { log } from "../log.ts";
-import type {
-  OpencodeMessageData,
-  OpencodePartData,
-} from "../parsers/opencode-db.ts";
+import { parseMessageData, parsePartData } from "../parsers/opencode-db.ts";
 import {
-  isStatusEvent,
+  parseStatusLines,
   type SessionState,
   type StatusEvent,
 } from "../session-core.ts";
@@ -18,6 +15,7 @@ import {
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_STATUS_POLL_INTERVAL_MS,
   OPENCODE_ACTIVE_THRESHOLD_MS,
+  STATUS_LOG_TAIL_BYTES,
   SUBAGENT_ACTIVE_THRESHOLD_MS,
   SUBAGENT_EXPIRY_MS,
 } from "../timing.ts";
@@ -92,7 +90,6 @@ export class OpencodeBackend implements SessionBackend {
     }[];
 
     return rows.map((row) => ({
-      projectDir: row.cwd,
       cwd: row.cwd,
       projectName: row.projectName ?? basename(row.cwd),
       sessionId: row.sessionId,
@@ -117,20 +114,7 @@ export class OpencodeBackend implements SessionBackend {
   async resolveState(projectInfo: ProjectInfo): Promise<SessionState> {
     const statusEvent = this.resolveStateFromStatusLog(projectInfo.sessionId);
 
-    if (statusEvent) {
-      switch (statusEvent.state) {
-        case "running":
-          return "running";
-        case "stopped":
-          return "stopped";
-        case "waiting_for_permission":
-          return "waiting_for_permission";
-        case "error":
-          return "error";
-        case "closed":
-          return "closed";
-      }
-    }
+    if (statusEvent) return statusEvent.state;
 
     const row = this.db
       .prepare(
@@ -258,122 +242,58 @@ export class OpencodeBackend implements SessionBackend {
         time_created: number;
       }[];
 
-      const msgIds = msgs.map((m) => m.id);
-      const partsByMsg = new Map<string, { data: string }[]>();
-      if (msgIds.length > 0) {
-        const placeholders = msgIds.map(() => "?").join(",");
-        const partRows = this.db
-          .prepare(
-            `SELECT message_id, data FROM part WHERE message_id IN (${placeholders})`,
+      const partsByMsg = this.fetchPartsByMessage(msgs.map((m) => m.id));
+
+      for (const msg of msgs) {
+        const parsed = parseMessageData(msg.data);
+        if (!parsed) continue;
+
+        if (parsed.role === "assistant") {
+          extractAssistantEnrichment(msg.id, parsed, partsByMsg, enrichment);
+          if (
+            enrichment.model &&
+            enrichment.inputTokens !== undefined &&
+            enrichment.latestAssistantActivity
           )
-          .all(...msgIds) as { message_id: string; data: string }[];
-        for (const row of partRows) {
-          const parts = partsByMsg.get(row.message_id);
-          if (parts) {
-            parts.push({ data: row.data });
-          } else {
-            partsByMsg.set(row.message_id, [{ data: row.data }]);
-          }
-        }
-      }
-
-      // Most recent assistant message for model + tokens
-      for (const msg of msgs) {
-        let parsed: OpencodeMessageData;
-        try {
-          parsed = JSON.parse(msg.data) as OpencodeMessageData;
-        } catch {
-          continue;
-        }
-        if (parsed.role !== "assistant") continue;
-
-        // Model
-        if (!enrichment.model && typeof parsed.modelID === "string") {
-          enrichment.model = parsed.modelID;
-        }
-
-        // Tokens — use most recent assistant's values.
-        if (enrichment.inputTokens === undefined) {
-          const tokens = parsed.tokens;
-          if (tokens) {
-            const cacheRead = tokens.cache?.read ?? 0;
-            const deltaInput = tokens.input ?? 0;
-            const deltaOutput = tokens.output ?? 0;
-            if (cacheRead > 0 || deltaInput > 0) {
-              enrichment.inputTokens = cacheRead + deltaInput;
-            }
-            if (deltaOutput > 0) {
-              enrichment.outputTokens = deltaOutput;
-            }
-          }
-        }
-
-        // Assistant activity from parts
-        if (!enrichment.latestAssistantActivity) {
-          const parts = partsByMsg.get(msg.id) ?? [];
-          let text: string | undefined;
-          let tool: string | undefined;
-          for (const part of parts) {
-            let p: OpencodePartData;
-            try {
-              p = JSON.parse(part.data) as OpencodePartData;
-            } catch {
-              continue;
-            }
-            if (p.type === "text" && typeof p.text === "string") {
-              text = p.text;
-            } else if (p.type === "tool" && typeof p.tool === "string") {
-              tool = p.tool;
-            }
-            if (text && tool) break;
-          }
-          if (text !== undefined || tool !== undefined) {
-            enrichment.latestAssistantActivity = {
-              text: text ? text.slice(0, 200) : undefined,
-              tool,
-            };
-          }
-        }
-
-        if (
-          enrichment.model &&
-          enrichment.inputTokens !== undefined &&
-          enrichment.latestAssistantActivity
-        )
-          break;
-      }
-
-      // Most recent user message parts
-      for (const msg of msgs) {
-        let parsed: OpencodeMessageData;
-        try {
-          parsed = JSON.parse(msg.data) as OpencodeMessageData;
-        } catch {
-          continue;
-        }
-        if (parsed.role !== "user") continue;
-
-        const parts = partsByMsg.get(msg.id) ?? [];
-        for (const part of parts) {
-          let p: OpencodePartData;
-          try {
-            p = JSON.parse(part.data) as OpencodePartData;
-          } catch {
-            continue;
-          }
-          if (p.type === "text" && typeof p.text === "string") {
-            enrichment.latestUserActivity = {
-              text: p.text.slice(0, 200),
-              isCommand: false,
-            };
             break;
-          }
         }
-        break;
+      }
+
+      for (const msg of msgs) {
+        const parsed = parseMessageData(msg.data);
+        if (!parsed) continue;
+
+        if (parsed.role === "user") {
+          extractUserActivity(msg.id, partsByMsg, enrichment);
+          break;
+        }
       }
     } catch {
       // message or part tables don't exist — skip enrichment
     }
+  }
+
+  private fetchPartsByMessage(
+    msgIds: string[],
+  ): Map<string, { data: string }[]> {
+    const partsByMsg = new Map<string, { data: string }[]>();
+    if (msgIds.length === 0) return partsByMsg;
+
+    const placeholders = msgIds.map(() => "?").join(",");
+    const partRows = this.db
+      .prepare(
+        `SELECT message_id, data FROM part WHERE message_id IN (${placeholders})`,
+      )
+      .all(...msgIds) as { message_id: string; data: string }[];
+    for (const row of partRows) {
+      const parts = partsByMsg.get(row.message_id);
+      if (parts) {
+        parts.push({ data: row.data });
+      } else {
+        partsByMsg.set(row.message_id, [{ data: row.data }]);
+      }
+    }
+    return partsByMsg;
   }
 
   private resolveStateFromStatusLog(sessionId: string): StatusEvent | null {
@@ -383,20 +303,17 @@ export class OpencodeBackend implements SessionBackend {
         this.lastStatusLogMtime === null ||
         s.mtimeMs !== this.lastStatusLogMtime
       ) {
-        const raw = readFileSync(this.statusLogPath, "utf-8");
-        const lines = raw.split("\n").filter((l) => l.trim() !== "");
-        const events: StatusEvent[] = [];
-        for (const line of lines) {
-          try {
-            const parsed = JSON.parse(line);
-            if (isStatusEvent(parsed)) {
-              events.push(parsed);
-            }
-          } catch {
-            // skip corrupt lines
-          }
+        let raw: string;
+        let slicedMidFile = false;
+        if (s.size > STATUS_LOG_TAIL_BYTES) {
+          raw = readFileSync(this.statusLogPath, "utf-8").slice(
+            -STATUS_LOG_TAIL_BYTES,
+          );
+          slicedMidFile = true;
+        } else {
+          raw = readFileSync(this.statusLogPath, "utf-8");
         }
-        this.statusLogEvents = events;
+        this.statusLogEvents = parseStatusLines(raw, slicedMidFile);
         this.lastStatusLogMtime = s.mtimeMs;
       }
     } catch {
@@ -562,5 +479,85 @@ export class OpencodeBackend implements SessionBackend {
 
   projectKey(project: ProjectInfo): string {
     return `opencode::${project.sessionId}`;
+  }
+}
+
+/**
+ * Fills model, token counts, and assistant activity from a single assistant message.
+ * Stops updating fields once they are already populated on the enrichment object.
+ */
+function extractAssistantEnrichment(
+  msgId: string,
+  parsed: {
+    modelID?: string;
+    tokens?: { input?: number; output?: number; cache?: { read?: number } };
+  },
+  partsByMsg: Map<string, { data: string }[]>,
+  enrichment: SessionEnrichment,
+): void {
+  if (!enrichment.model && typeof parsed.modelID === "string") {
+    enrichment.model = parsed.modelID;
+  }
+
+  if (enrichment.inputTokens === undefined) {
+    const tokens = parsed.tokens;
+    if (tokens) {
+      const cacheRead = tokens.cache?.read ?? 0;
+      const deltaInput = tokens.input ?? 0;
+      const deltaOutput = tokens.output ?? 0;
+      if (cacheRead > 0 || deltaInput > 0) {
+        enrichment.inputTokens = cacheRead + deltaInput;
+      }
+      if (deltaOutput > 0) {
+        enrichment.outputTokens = deltaOutput;
+      }
+    }
+  }
+
+  if (!enrichment.latestAssistantActivity) {
+    const parts = partsByMsg.get(msgId) ?? [];
+    let text: string | undefined;
+    let tool: string | undefined;
+    for (const part of parts) {
+      const p = parsePartData(part.data);
+      if (!p) continue;
+      if (p.type === "text") {
+        text = p.text;
+      } else if (p.type === "tool") {
+        tool = p.tool;
+      }
+      if (text && tool) break;
+    }
+    if (text !== undefined || tool !== undefined) {
+      enrichment.latestAssistantActivity = {
+        text: text ? text.slice(0, 200) : undefined,
+        tool,
+      };
+    }
+  }
+}
+
+/**
+ * Fills latestUserActivity from the parts of a single user message.
+ * Only updates the enrichment if not already populated.
+ */
+function extractUserActivity(
+  msgId: string,
+  partsByMsg: Map<string, { data: string }[]>,
+  enrichment: SessionEnrichment,
+): void {
+  if (enrichment.latestUserActivity) return;
+
+  const parts = partsByMsg.get(msgId) ?? [];
+  for (const part of parts) {
+    const p = parsePartData(part.data);
+    if (!p) continue;
+    if (p.type === "text") {
+      enrichment.latestUserActivity = {
+        text: p.text.slice(0, 200),
+        isCommand: false,
+      };
+      break;
+    }
   }
 }

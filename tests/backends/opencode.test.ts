@@ -11,6 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, test } from "vitest";
 import { buildProjectState } from "../../src/backends/build-project-state.ts";
 import { OpencodeBackend } from "../../src/backends/opencode.ts";
+import { STATUS_LOG_TAIL_BYTES } from "../../src/timing.ts";
 
 type DB = DatabaseSync;
 
@@ -1812,4 +1813,377 @@ describe("OpencodeBackend — watchForChanges dual-mode (status log exists)", ()
 
     stop();
   }, 5000);
+});
+
+describe("OpencodeBackend — status log tail-cap", () => {
+  let db: DB;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    db = new DatabaseSync(":memory:");
+    createSchema(db);
+    tmpDir = mkdtempSync(join(tmpdir(), "ccmon-opencode-tailcap-"));
+  });
+
+  function makeStatusLine(
+    sessionId: string,
+    state: string,
+    timestamp: string,
+  ): string {
+    return `${JSON.stringify({
+      event: "SessionStart",
+      state,
+      timestamp,
+      session_id: sessionId,
+      working_dir: "/tmp",
+    })}\n`;
+  }
+
+  function setupProject(
+    projId: string,
+    projName: string,
+    cwd: string,
+    sessionId: string,
+    timeUpdated: number,
+  ): void {
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+      projId,
+      projName,
+      cwd,
+    ]);
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        sessionId,
+        "Test Session",
+        cwd,
+        timeUpdated - 60000,
+        timeUpdated,
+        projId,
+      ],
+    );
+  }
+
+  test("large status log is tail-capped to STATUS_LOG_TAIL_BYTES and still resolves correct state", async () => {
+    const now = Date.now();
+    const oldTime = now - 120_000;
+    setupProject(
+      "proj-tailcap",
+      "tailcaptest",
+      "/home/user/tailcaptest",
+      "ses_tailcap",
+      oldTime,
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+
+    // Fill file with padding lines to exceed STATUS_LOG_TAIL_BYTES
+    const paddingLine = makeStatusLine(
+      "ses_other",
+      "stopped",
+      new Date(oldTime).toISOString(),
+    );
+    // Each padding line is ~110 bytes; write enough to exceed the cap
+    const linesNeeded =
+      Math.ceil((STATUS_LOG_TAIL_BYTES * 2) / paddingLine.length) + 1;
+    const padding = paddingLine.repeat(linesNeeded);
+
+    // The target session's event at the very end of the file
+    const targetTs = new Date(now - 1000).toISOString();
+    const targetLine = makeStatusLine("ses_tailcap", "running", targetTs);
+
+    writeFileSync(statusPath, padding + targetLine);
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    const state = await backend.resolveState(projects[0]);
+
+    // The target event is within the tail — state must be resolved from it
+    expect(state).toBe("running");
+  });
+
+  test("tail-cap falls back to timestamp inference when target session events are all outside the tail", async () => {
+    const now = Date.now();
+    const oldTime = now - 120_000;
+    setupProject(
+      "proj-tailcap2",
+      "tailcaptest2",
+      "/home/user/tailcaptest2",
+      "ses_tailcap2",
+      oldTime, // stale → timestamp inference → stopped
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+
+    // Build a large file: target event at the beginning (before the tail window),
+    // then padding so the tail does NOT include the target event
+    const targetTs = new Date(now - 5000).toISOString();
+    const targetLine = makeStatusLine("ses_tailcap2", "running", targetTs);
+
+    const paddingLine = makeStatusLine(
+      "ses_other",
+      "stopped",
+      new Date(oldTime).toISOString(),
+    );
+    const linesNeeded =
+      Math.ceil((STATUS_LOG_TAIL_BYTES * 2) / paddingLine.length) + 1;
+    const padding = paddingLine.repeat(linesNeeded);
+
+    writeFileSync(statusPath, targetLine + padding);
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    const state = await backend.resolveState(projects[0]);
+
+    // Target event was before the tail — timestamp inference applies: session is stale → stopped
+    expect(state).toBe("stopped");
+  });
+
+  test("file below STATUS_LOG_TAIL_BYTES is read in full without slicing", async () => {
+    const now = Date.now();
+    const oldTime = now - 120_000;
+    setupProject(
+      "proj-small",
+      "smalltest",
+      "/home/user/smalltest",
+      "ses_small",
+      oldTime,
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    const ts = new Date(now - 1000).toISOString();
+    // Single line — well below the cap
+    writeFileSync(statusPath, makeStatusLine("ses_small", "stopped", ts));
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    const state = await backend.resolveState(projects[0]);
+
+    expect(state).toBe("stopped");
+  });
+});
+
+describe("OpencodeBackend — enrichMessages decomposition", () => {
+  let db: DB;
+
+  beforeEach(() => {
+    db = new DatabaseSync(":memory:");
+    createSchema(db);
+  });
+
+  function setupSession(): { sessionId: string; backend: OpencodeBackend } {
+    const now = Date.now();
+    const projId = "proj-decomp";
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+      projId,
+      "decompproj",
+      "/home/user/decompproj",
+    ]);
+    const sessionId = "ses_decomp";
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        sessionId,
+        "Decomp Session",
+        "/home/user/decompproj",
+        now - 60000,
+        now,
+        projId,
+      ],
+    );
+    return { sessionId, backend: new OpencodeBackend(db) };
+  }
+
+  test("extractAssistantEnrichment: model, tokens, and activity extracted from single assistant message", async () => {
+    const { sessionId, backend } = setupSession();
+    const msgId = "msg-asst-decomp";
+    run(
+      db,
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+      [
+        msgId,
+        sessionId,
+        Date.now() - 1000,
+        Date.now() - 1000,
+        JSON.stringify({
+          role: "assistant",
+          modelID: "claude-sonnet-4-6",
+          tokens: { input: 200, output: 80, cache: { read: 1000 } },
+        }),
+      ],
+    );
+    run(
+      db,
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "part-text-decomp",
+        msgId,
+        sessionId,
+        Date.now() - 1000,
+        Date.now() - 1000,
+        JSON.stringify({ type: "text", text: "Working on your task now." }),
+      ],
+    );
+    run(
+      db,
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "part-tool-decomp",
+        msgId,
+        sessionId,
+        Date.now() - 1000,
+        Date.now() - 1000,
+        JSON.stringify({ type: "tool", tool: "Edit" }),
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const enrichment = await backend.enrichProject(project);
+
+    expect(enrichment.model).toBe("claude-sonnet-4-6");
+    expect(enrichment.inputTokens).toBe(1200); // 1000 cache.read + 200 input
+    expect(enrichment.outputTokens).toBe(80);
+    expect(enrichment.latestAssistantActivity?.text).toBe(
+      "Working on your task now.",
+    );
+    expect(enrichment.latestAssistantActivity?.tool).toBe("Edit");
+  });
+
+  test("extractUserActivity: text extracted from user message parts via typed parser", async () => {
+    const { sessionId, backend } = setupSession();
+    const msgId = "msg-user-decomp";
+    run(
+      db,
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+      [
+        msgId,
+        sessionId,
+        Date.now() - 500,
+        Date.now() - 500,
+        JSON.stringify({ role: "user" }),
+      ],
+    );
+    run(
+      db,
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "part-user-decomp",
+        msgId,
+        sessionId,
+        Date.now() - 500,
+        Date.now() - 500,
+        JSON.stringify({
+          type: "text",
+          text: "Please fix the bug in parser.ts",
+        }),
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const enrichment = await backend.enrichProject(project);
+
+    expect(enrichment.latestUserActivity?.text).toBe(
+      "Please fix the bug in parser.ts",
+    );
+    expect(enrichment.latestUserActivity?.isCommand).toBe(false);
+  });
+
+  test("malformed part.data is skipped gracefully without crashing", async () => {
+    const { sessionId, backend } = setupSession();
+    const msgId = "msg-bad-parts";
+    run(
+      db,
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+      [
+        msgId,
+        sessionId,
+        Date.now() - 1000,
+        Date.now() - 1000,
+        JSON.stringify({ role: "assistant", modelID: "claude-haiku" }),
+      ],
+    );
+    // Corrupt part data
+    run(
+      db,
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "part-corrupt",
+        msgId,
+        sessionId,
+        Date.now() - 1000,
+        Date.now() - 1000,
+        "not valid json {{",
+      ],
+    );
+    // Unknown part type
+    run(
+      db,
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "part-unknown",
+        msgId,
+        sessionId,
+        Date.now() - 1000,
+        Date.now() - 1000,
+        JSON.stringify({ type: "image", url: "http://x" }),
+      ],
+    );
+    // Valid text part last
+    run(
+      db,
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "part-valid",
+        msgId,
+        sessionId,
+        Date.now() - 1000,
+        Date.now() - 1000,
+        JSON.stringify({ type: "text", text: "Here is the analysis." }),
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const enrichment = await backend.enrichProject(project);
+
+    expect(enrichment.model).toBe("claude-haiku");
+    expect(enrichment.latestAssistantActivity?.text).toBe(
+      "Here is the analysis.",
+    );
+  });
+
+  test("long text in parts is truncated to 200 chars", async () => {
+    const { sessionId, backend } = setupSession();
+    const msgId = "msg-long";
+    const longText = "a".repeat(500);
+    run(
+      db,
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+      [
+        msgId,
+        sessionId,
+        Date.now() - 1000,
+        Date.now() - 1000,
+        JSON.stringify({ role: "assistant", modelID: "claude-haiku" }),
+      ],
+    );
+    run(
+      db,
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "part-long",
+        msgId,
+        sessionId,
+        Date.now() - 1000,
+        Date.now() - 1000,
+        JSON.stringify({ type: "text", text: longText }),
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const enrichment = await backend.enrichProject(project);
+
+    expect(enrichment.latestAssistantActivity?.text?.length).toBe(200);
+  });
 });

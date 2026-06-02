@@ -3,6 +3,8 @@ import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { resolveProjectDir, runStatus } from "../src/cli/commands/status.ts";
+import { parseNumberFlag, parsePortFlag } from "../src/cli/helpers.ts";
 import { makeTempDir } from "./_helpers.ts";
 
 const STATUS_LOG_FILE = "ccmon-status.jsonl";
@@ -88,6 +90,209 @@ async function spawnCli(
     };
   }
 }
+
+// ─── parseNumberFlag ─────────────────────────────────────────────────────────
+
+describe("parseNumberFlag", () => {
+  test("parses a plain integer", () => {
+    expect(parseNumberFlag(["--max-age", "5"], "--max-age")).toBe(5);
+  });
+
+  test("parses a float", () => {
+    expect(parseNumberFlag(["--max-age", "3.5"], "--max-age")).toBe(3.5);
+  });
+
+  test("rejects trailing garbage like '3.5abc'", () => {
+    expect(
+      parseNumberFlag(["--max-age", "3.5abc"], "--max-age"),
+    ).toBeUndefined();
+  });
+
+  test("rejects '8080abc'", () => {
+    expect(
+      parseNumberFlag(["--max-age", "8080abc"], "--max-age"),
+    ).toBeUndefined();
+  });
+
+  test("returns undefined when flag is absent", () => {
+    expect(parseNumberFlag([], "--max-age")).toBeUndefined();
+  });
+});
+
+// ─── parsePortFlag ────────────────────────────────────────────────────────────
+
+describe("parsePortFlag", () => {
+  test("accepts a valid port like 8080", () => {
+    expect(parsePortFlag(["--port", "8080"], "--port")).toBe(8080);
+  });
+
+  test("accepts boundary port 1", () => {
+    expect(parsePortFlag(["--port", "1"], "--port")).toBe(1);
+  });
+
+  test("accepts boundary port 65535", () => {
+    expect(parsePortFlag(["--port", "65535"], "--port")).toBe(65535);
+  });
+
+  test("rejects port -1", () => {
+    expect(parsePortFlag(["--port", "-1"], "--port")).toBeUndefined();
+  });
+
+  test("rejects port 0", () => {
+    expect(parsePortFlag(["--port", "0"], "--port")).toBeUndefined();
+  });
+
+  test("rejects port 65536", () => {
+    expect(parsePortFlag(["--port", "65536"], "--port")).toBeUndefined();
+  });
+
+  test("rejects fractional port 3.5", () => {
+    expect(parsePortFlag(["--port", "3.5"], "--port")).toBeUndefined();
+  });
+
+  test("returns undefined when flag is absent", () => {
+    expect(parsePortFlag([], "--port")).toBeUndefined();
+  });
+});
+
+// ─── resolveProjectDir (unit) ────────────────────────────────────────────────
+
+describe("resolveProjectDir", () => {
+  test("exact cwd match returns joined path", () => {
+    const projects = [
+      { cwd: "/home/user/proj", projectDir: "-home-user-proj" },
+    ];
+    expect(resolveProjectDir("/home/user/proj", "/base", projects)).toBe(
+      "/base/-home-user-proj",
+    );
+  });
+
+  test("subdirectory cwd matches parent project", () => {
+    const projects = [
+      { cwd: "/home/user/proj", projectDir: "-home-user-proj" },
+    ];
+    expect(resolveProjectDir("/home/user/proj/sub", "/base", projects)).toBe(
+      "/base/-home-user-proj",
+    );
+  });
+
+  test("deepest parent wins on ambiguous prefix match", () => {
+    const projects = [
+      { cwd: "/home/user", projectDir: "-home-user" },
+      { cwd: "/home/user/proj", projectDir: "-home-user-proj" },
+    ];
+    expect(resolveProjectDir("/home/user/proj/deep", "/base", projects)).toBe(
+      "/base/-home-user-proj",
+    );
+  });
+
+  test("no match falls back to encoded cwd", () => {
+    expect(resolveProjectDir("/tmp/unknown", "/base", [])).toBe(
+      "/base/-tmp-unknown",
+    );
+  });
+
+  test("pure: does not create any directory (no side effects)", async () => {
+    const tmpDir = await makeTempDir("ccmon-resolve-pure");
+    try {
+      resolveProjectDir("/tmp/newdir", tmpDir, []);
+      const { readdirSync } = await import("node:fs");
+      expect(readdirSync(tmpDir)).toHaveLength(0);
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── runStatus (unit, no subprocess) ─────────────────────────────────────────
+
+describe("runStatus (direct call)", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir("ccmon-runstatus-unit");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test("Stop event returns exit code 0 and writes status file", async () => {
+    const projDir = join(tmpDir, "-home-user-proj");
+    await mkdir(projDir, { recursive: true });
+    await writeFile(
+      join(projDir, "session.jsonl"),
+      `${makeFirstLine("/home/user/proj", "sess-unit")}\n`,
+    );
+
+    const payload = JSON.stringify({
+      session_id: "sess-unit",
+      cwd: "/home/user/proj",
+      hook_event_name: "Stop",
+    });
+
+    const code = await runStatus(tmpDir, payload);
+    expect(code).toBe(0);
+
+    const raw = await readFile(join(projDir, "ccmon-status.jsonl"), "utf8");
+    const lines = raw.split("\n").filter((l) => l.trim() !== "");
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    const status = JSON.parse(lines[lines.length - 1]);
+    expect(status.event).toBe("Stop");
+    expect(status.state).toBe("stopped");
+  });
+
+  test("empty input returns exit code 1", async () => {
+    const code = await runStatus(tmpDir, "");
+    expect(code).toBe(1);
+  });
+
+  test("invalid JSON returns exit code 1", async () => {
+    const code = await runStatus(tmpDir, "{{not json}}");
+    expect(code).toBe(1);
+  });
+
+  test("missing required fields returns exit code 1", async () => {
+    const code = await runStatus(tmpDir, JSON.stringify({ session_id: "s1" }));
+    expect(code).toBe(1);
+  });
+
+  test("empty cwd returns exit code 1", async () => {
+    const code = await runStatus(
+      tmpDir,
+      JSON.stringify({ session_id: "s1", cwd: "", hook_event_name: "Stop" }),
+    );
+    expect(code).toBe(1);
+  });
+
+  test("relative cwd returns exit code 1", async () => {
+    const code = await runStatus(
+      tmpDir,
+      JSON.stringify({
+        session_id: "s1",
+        cwd: "relative/path",
+        hook_event_name: "Stop",
+      }),
+    );
+    expect(code).toBe(1);
+  });
+
+  test("unknown cwd creates only the encoded fallback dir", async () => {
+    const unknownCwd = "/tmp/brand-new-proj";
+    const payload = JSON.stringify({
+      session_id: "sess-new",
+      cwd: unknownCwd,
+      hook_event_name: "Stop",
+    });
+
+    const code = await runStatus(tmpDir, payload);
+    expect(code).toBe(0);
+
+    const expectedDir = join(tmpDir, unknownCwd.replace(/\//g, "-"));
+    const raw = await readFile(join(expectedDir, "ccmon-status.jsonl"), "utf8");
+    expect(raw.trim().length).toBeGreaterThan(0);
+  });
+});
 
 // ─── dump ─────────────────────────────────────────────────────────────────────
 
@@ -902,5 +1107,46 @@ describe("sub", () => {
 
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("--port requires a valid number");
+  });
+
+  test("--port -1 (out-of-range) → non-zero exit", async () => {
+    const result = await spawnCli(["sub", "--port", "-1"], {
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("--port requires a valid number");
+  });
+});
+
+// ─── dump --max-age strict parse ──────────────────────────────────────────────
+
+describe("dump --max-age strict parse", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await makeTempDir("ccmon-cli-maxage-strict");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test("--max-age 3.5abc (trailing garbage) → non-zero exit", async () => {
+    const result = await spawnCli(["dump", "--max-age", "3.5abc"], {
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("--max-age requires a valid number");
+  });
+
+  test("--max-age 8080abc (trailing garbage) → non-zero exit", async () => {
+    const result = await spawnCli(["dump", "--max-age", "8080abc"], {
+      env: { CLAUDE_PROJECTS_DIR: tmpDir },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("--max-age requires a valid number");
   });
 });
