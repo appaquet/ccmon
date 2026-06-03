@@ -175,7 +175,8 @@ export async function ccmonPlugin(context: PluginContext) {
             }
             break;
           }
-          case "permission.asked": {
+          case "permission.asked":
+          case "question.asked": {
             const sid = extractSessionId(ctx);
             if (sid)
               await writeStatus(
@@ -185,7 +186,9 @@ export async function ccmonPlugin(context: PluginContext) {
               );
             break;
           }
-          case "permission.replied": {
+          case "permission.replied":
+          case "question.replied":
+          case "question.rejected": {
             const sid = extractSessionId(ctx);
             if (sid) await writeStatus(sid, "running", "UserPromptSubmit");
             break;

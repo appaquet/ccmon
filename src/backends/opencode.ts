@@ -566,6 +566,7 @@ function normalizeOpencodeStatusEvent(event: StatusEvent): StatusEvent {
   if (
     event.event === "permission.ask" ||
     event.event === "permission.asked" ||
+    event.event === "question.asked" ||
     event.state === "waiting_for_permission"
   ) {
     return {
@@ -575,7 +576,11 @@ function normalizeOpencodeStatusEvent(event: StatusEvent): StatusEvent {
     };
   }
 
-  if (event.event === "permission.replied") {
+  if (
+    event.event === "permission.replied" ||
+    event.event === "question.replied" ||
+    event.event === "question.rejected"
+  ) {
     return { ...event, event: "UserPromptSubmit", state: "running" };
   }
 

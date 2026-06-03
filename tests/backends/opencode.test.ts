@@ -1747,6 +1747,69 @@ describe("OpencodeBackend — status log", () => {
     await expect(backend.resolveState(projects[0])).resolves.toBe("running");
   });
 
+  test("question asked status resolves like permission waiting state", async () => {
+    const now = Date.now();
+    setupProject(
+      "proj-question-asked",
+      "questionasked",
+      "/home/user/questionasked",
+      "ses_question_asked",
+      now,
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        "ses_question_asked",
+        "running",
+        new Date(now - 1_000).toISOString(),
+        "question.asked",
+      ),
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    await expect(backend.resolveState(projects[0])).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
+  test.each([
+    "question.replied",
+    "question.rejected",
+  ])("%s status clears waiting_for_permission immediately", async (replyEvent) => {
+    const now = Date.now();
+    setupProject(
+      `proj-${replyEvent}`,
+      replyEvent,
+      `/home/user/${replyEvent}`,
+      `ses_${replyEvent}`,
+      now,
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        `ses_${replyEvent}`,
+        "waiting_for_permission",
+        new Date(now - 10_000).toISOString(),
+        "question.asked",
+      ) +
+        makeStatusEvent(
+          `ses_${replyEvent}`,
+          "running",
+          new Date(now - 9_000).toISOString(),
+          replyEvent,
+        ),
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    await expect(backend.resolveState(projects[0])).resolves.toBe("running");
+  });
+
   test("stale permission asked status does not leave session waiting", async () => {
     const now = Date.now();
     setupProject(

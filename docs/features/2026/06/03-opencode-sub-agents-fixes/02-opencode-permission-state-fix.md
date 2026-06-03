@@ -26,6 +26,14 @@ This phase covers the second reported issue: OpenCode permission questions are n
   * Uncertainty: Review found a possible gap where normalizing replies to a generic running event may still trigger the permission resolve delay logic.
   * Tried: Compared the normalized reply event against the shared permission-resolution rules and added a fast-reply regression test.
   * Result: No at first; reply normalization was changed so explicit permission replies clear waiting state immediately.
+* [x] Q: What event family does a real main-agent AskUserQuestion prompt use?
+  * Uncertainty: The remaining live repro stayed `running` even after the `permission.*` fix landed.
+  * Tried: Inspected the actual OpenCode runtime log and matching `opencode-status.jsonl` lines for the failing session.
+  * Result: The main-agent prompt uses `question.asked`, `question.replied`, and `question.rejected`; the plugin currently ignores those events, so no `waiting_for_permission` line is emitted.
+* [x] Q: Can the installed plugin copy be updated directly from this environment?
+  * Uncertainty: The repo plugin fix does not help the live repro until `~/.config/opencode/plugins/ccmon.ts` is updated and reloaded.
+  * Tried: Attempted to copy the fixed repo plugin into the installed plugin path.
+  * Result: No — the target path is currently mounted read-only in this environment, so live deployment/retest requires user/manual sync and OpenCode reload.
 
 ## Tasks
 
@@ -42,11 +50,26 @@ This phase covers the second reported issue: OpenCode permission questions are n
   - AC: ccmon output reflects the intended waiting state while a question is pending.
 - [x] Make `permission.replied` resolve pending permission state immediately if the review finding is confirmed (senior-dev) (R2.B, R2.C)
   - AC: a replied permission request no longer remains `waiting_for_permission` because of the generic permission resolve gap.
+- [x] Investigate the failing main-agent AskUserQuestion repro against live logs (staff-dev) (R2.A)
+  - AC: identifies the exact emitted event names, session id, and whether `opencode-status.jsonl` received a waiting-state line.
+- [x] Add `question.*` event handling for main-agent prompts (senior-dev) (R2.A-R2.C)
+  - AC: `question.asked` writes a waiting-state event for the main OpenCode session.
+  - AC: `question.replied` and `question.rejected` clear the waiting state immediately.
+  - AC: a real main-agent Question tool prompt no longer leaves ccmon showing `running` during the pending window.
+- [x] Add regression coverage for `question.asked` / `question.replied` / `question.rejected` (senior-dev or junior-dev) (R2.A-R2.C)
+  - AC: tests fail before the fix and pass after it.
+  - AC: tests prove the question-tool path is distinct from, but aligned with, the permission-tool path.
+- [~] Sync the updated plugin copy into the live OpenCode config and re-verify the main-agent repro (senior-dev, may need user restart/retest) (R2.A-R2.C)
+  - AC: `~/.config/opencode/plugins/ccmon.ts` contains the `question.*` mapping.
+  - AC: after plugin reload/restart, a real main-agent Question tool prompt produces `waiting_for_permission` in ccmon during the pending window.
 
 ## Files
 
 - **src/backends/opencode.ts**: OpenCode state resolution path that needs the permission-state fix. Changes: permission events are normalized through shared waiting/running resolution behavior, and explicit replies clear waiting state immediately.
-- **resources/opencode-plugin/ccmon.ts**: Permission-event writer that may need event-name alignment. Changes: listens to `permission.asked` / `permission.replied`, with replies recorded as an immediate resolver event.
+- **resources/opencode-plugin/ccmon.ts**: Permission-event writer that may need event-name alignment. Changes: listens to `permission.asked` / `permission.replied` and now `question.asked` / `question.replied` / `question.rejected`, with replies recorded as immediate resolver events.
+- **~/.config/opencode/plugins/ccmon.ts**: Installed plugin copy used by live OpenCode sessions. Pending manual sync because this environment could not write the file.
+- **~/.local/share/opencode/log/**: Live OpenCode runtime logs used to identify `question.*` as the real event family for the failing repro.
+- **~/.local/state/ccmon/opencode-status.jsonl**: Live status log used to confirm the failing prompt never wrote a waiting-state line.
 - **src/session-core.ts**: Reference behavior for permission / waiting-state resolution.
-- **tests/backends/opencode.test.ts**: Backend regression coverage for permission state. Changes: asked/replied/stale permission flows covered, including fast replies inside the permission resolve gap.
+- **tests/backends/opencode.test.ts**: Backend regression coverage for permission state. Changes: asked/replied/stale permission flows covered, including fast replies inside the permission resolve gap and the main-agent `question.*` path.
 - **tests/session-core.test.ts**: Permission-state reference behavior and timing rules.
