@@ -1021,6 +1021,41 @@ describe("OpencodeBackend — sub-agents", () => {
     expect(state.lastUpdated).toBe(new Date(childUpdated).toISOString());
   });
 
+  test("buildProjectState lastUpdated uses same-directory unlinked active child time_updated", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+
+    const parentUpdated = now - 120_000;
+    run(db, "UPDATE session SET time_updated = ? WHERE id = ?", [
+      parentUpdated,
+      parentId,
+    ]);
+
+    const childUpdated = now - 10_000;
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "ses_unlinked_child_lastupdated",
+        "Unlinked Child Recent",
+        "/home/user/parentproj",
+        now - 30_000,
+        childUpdated,
+        "proj-parent",
+      ],
+    );
+
+    const project = {
+      cwd: "/home/user/parentproj",
+      projectName: "parentproj",
+      sessionId: parentId,
+      source: "opencode" as const,
+    };
+    const state = await buildProjectState(backend, project);
+    expect(state.state).toBe("running");
+    expect(state.lastUpdated).toBe(new Date(childUpdated).toISOString());
+  });
+
   test("buildProjectState lastUpdated uses parent time_updated when parent is more recent", async () => {
     const now = Date.now();
     const parentId = setupParent();
@@ -1283,9 +1318,10 @@ describe("OpencodeBackend — status log", () => {
     sessionId: string,
     state: string,
     timestamp: string,
+    event = "SessionStart",
   ): string {
     return `${JSON.stringify({
-      event: "SessionStart",
+      event,
       state,
       timestamp,
       session_id: sessionId,
@@ -1533,6 +1569,208 @@ describe("OpencodeBackend — status log", () => {
 
     const state2 = await backend.resolveState(projects[0]);
     expect(state2).toBe("stopped");
+  });
+
+  test("active linked child keeps parent running after parent idle status", async () => {
+    const now = Date.now();
+    setupProject(
+      "proj-linked-child-status",
+      "linkedchild",
+      "/home/user/linkedchild",
+      "ses_parent_idle_linked",
+      now - 120_000,
+    );
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_active_linked_child",
+        "Active child",
+        "/home/user/linkedchild",
+        now - 10_000,
+        now,
+        "ses_parent_idle_linked",
+        "proj-linked-child-status",
+      ],
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        "ses_parent_idle_linked",
+        "stopped",
+        new Date(now - 1_000).toISOString(),
+        "session.idle",
+      ),
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    await expect(backend.resolveState(projects[0])).resolves.toBe("running");
+  });
+
+  test("active same-directory unlinked child keeps parent running after parent idle status", async () => {
+    const now = Date.now();
+    setupProject(
+      "proj-unlinked-child-status",
+      "unlinkedchild",
+      "/home/user/unlinkedchild",
+      "ses_parent_idle_unlinked",
+      now - 120_000,
+    );
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "ses_active_unlinked_child",
+        "Active unlinked child",
+        "/home/user/unlinkedchild",
+        now - 10_000,
+        now,
+        "proj-unlinked-child-status",
+      ],
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        "ses_parent_idle_unlinked",
+        "stopped",
+        new Date(now - 1_000).toISOString(),
+        "session.idle",
+      ),
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    await expect(backend.resolveState(projects[0])).resolves.toBe("running");
+  });
+
+  test("child stopped status does not keep stale parent running", async () => {
+    const now = Date.now();
+    setupProject(
+      "proj-stopped-child-status",
+      "stoppedchild",
+      "/home/user/stoppedchild",
+      "ses_parent_stopped_child",
+      now - 120_000,
+    );
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_recent_but_stopped_child",
+        "Stopped child",
+        "/home/user/stoppedchild",
+        now - 10_000,
+        now,
+        "ses_parent_stopped_child",
+        "proj-stopped-child-status",
+      ],
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        "ses_recent_but_stopped_child",
+        "stopped",
+        new Date(now - 1_000).toISOString(),
+        "session.idle",
+      ),
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    await expect(backend.resolveState(projects[0])).resolves.toBe("stopped");
+  });
+
+  test("permission asked status resolves to waiting_for_permission", async () => {
+    const now = Date.now();
+    setupProject(
+      "proj-perm-asked",
+      "permasked",
+      "/home/user/permasked",
+      "ses_perm_asked",
+      now,
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        "ses_perm_asked",
+        "waiting_for_permission",
+        new Date(now - 1_000).toISOString(),
+        "permission.asked",
+      ),
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    await expect(backend.resolveState(projects[0])).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
+  test("permission replied status clears waiting_for_permission", async () => {
+    const now = Date.now();
+    setupProject(
+      "proj-perm-replied",
+      "permreplied",
+      "/home/user/permreplied",
+      "ses_perm_replied",
+      now,
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        "ses_perm_replied",
+        "waiting_for_permission",
+        new Date(now - 10_000).toISOString(),
+        "permission.asked",
+      ) +
+        makeStatusEvent(
+          "ses_perm_replied",
+          "running",
+          new Date(now - 9_000).toISOString(),
+          "permission.replied",
+        ),
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    await expect(backend.resolveState(projects[0])).resolves.toBe("running");
+  });
+
+  test("stale permission asked status does not leave session waiting", async () => {
+    const now = Date.now();
+    setupProject(
+      "proj-perm-stale",
+      "permstale",
+      "/home/user/permstale",
+      "ses_perm_stale",
+      now - 120_000,
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        "ses_perm_stale",
+        "waiting_for_permission",
+        new Date(now - 10 * 60_000).toISOString(),
+        "permission.asked",
+      ),
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    await expect(backend.resolveState(projects[0])).resolves.toBe("stopped");
   });
 });
 

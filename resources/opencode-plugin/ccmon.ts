@@ -2,7 +2,12 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-type SessionState = "running" | "waiting_for_permission" | "stopped" | "closed" | "error";
+type SessionState =
+  | "running"
+  | "waiting_for_permission"
+  | "stopped"
+  | "closed"
+  | "error";
 
 interface SessionInfo {
   id: string;
@@ -12,6 +17,7 @@ interface SessionInfo {
 
 interface EventProperties {
   sessionID?: string;
+  sessionId?: string;
   info?: SessionInfo;
   error?: unknown;
 }
@@ -55,19 +61,23 @@ export async function ccmonPlugin(context: PluginContext) {
   const sessionCwdMap = new Map<string, string>();
   const lastWrittenState = new Map<string, SessionState>();
 
-  const stateHome = process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
+  const stateHome =
+    process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
   const logDir = join(stateHome, "ccmon");
   const logPath = join(logDir, "opencode-status.jsonl");
 
   await mkdir(logDir, { recursive: true }).catch(() => {});
 
-  function extractSessionId(ctx: EventHandlerContext | HookHandlerContext): string | undefined {
+  function extractSessionId(
+    ctx: EventHandlerContext | HookHandlerContext,
+  ): string | undefined {
     const c = ctx as Record<string, unknown>;
     const evt = c.event as Record<string, unknown> | undefined;
     const props = evt?.properties as Record<string, unknown> | undefined;
     const info = props?.info as Record<string, unknown> | undefined;
 
     if (typeof props?.sessionID === "string") return props.sessionID;
+    if (typeof props?.sessionId === "string") return props.sessionId;
     if (typeof info?.id === "string") return info.id;
     if (typeof c.sessionID === "string") return c.sessionID;
     return undefined;
@@ -105,7 +115,9 @@ export async function ccmonPlugin(context: PluginContext) {
     }
   }
 
-  async function onSessionCreated(props: EventProperties | undefined): Promise<void> {
+  async function onSessionCreated(
+    props: EventProperties | undefined,
+  ): Promise<void> {
     const info = props?.info;
     if (!info?.id) return;
 
@@ -163,6 +175,21 @@ export async function ccmonPlugin(context: PluginContext) {
             }
             break;
           }
+          case "permission.asked": {
+            const sid = extractSessionId(ctx);
+            if (sid)
+              await writeStatus(
+                sid,
+                "waiting_for_permission",
+                "PermissionRequest",
+              );
+            break;
+          }
+          case "permission.replied": {
+            const sid = extractSessionId(ctx);
+            if (sid) await writeStatus(sid, "running", "UserPromptSubmit");
+            break;
+          }
         }
       } catch (err) {
         client.app.log({
@@ -208,7 +235,12 @@ export async function ccmonPlugin(context: PluginContext) {
         if (!sid) return;
 
         const cwd = sessionCwdMap.get(sid) ?? directory;
-        await writeStatus(sid, "waiting_for_permission", "permission.ask", cwd);
+        await writeStatus(
+          sid,
+          "waiting_for_permission",
+          "PermissionRequest",
+          cwd,
+        );
       } catch (err) {
         client.app.log({
           level: "error",

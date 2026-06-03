@@ -7,6 +7,7 @@ import { log } from "../log.ts";
 import { parseMessageData, parsePartData } from "../parsers/opencode-db.ts";
 import {
   parseStatusLines,
+  resolveState as resolveStatusLogState,
   type SessionState,
   type StatusEvent,
 } from "../session-core.ts";
@@ -98,6 +99,14 @@ export class OpencodeBackend implements SessionBackend {
   }
 
   async computeLastUpdated(projectInfo: ProjectInfo): Promise<string | null> {
+    const row = this.db
+      .prepare("SELECT time_updated, directory FROM session WHERE id = ?")
+      .get(projectInfo.sessionId) as
+      | { time_updated: number; directory: string }
+      | undefined;
+
+    if (!row) return null;
+
     const maxRow = this.db
       .prepare(
         "SELECT MAX(time_updated) AS max_updated FROM session WHERE id = ? OR parent_id = ?",
@@ -106,15 +115,28 @@ export class OpencodeBackend implements SessionBackend {
       | { max_updated: number | null }
       | undefined;
 
-    return maxRow?.max_updated != null
-      ? new Date(maxRow.max_updated).toISOString()
-      : null;
+    let maxUpdated = maxRow?.max_updated ?? row.time_updated;
+    for (const child of this.getActiveChildActivityRows(
+      projectInfo,
+      row.directory,
+    )) {
+      maxUpdated = Math.max(maxUpdated, child.time_updated);
+    }
+
+    return new Date(maxUpdated).toISOString();
   }
 
   async resolveState(projectInfo: ProjectInfo): Promise<SessionState> {
-    const statusEvent = this.resolveStateFromStatusLog(projectInfo.sessionId);
+    const statusState = this.resolveStatusLogState(projectInfo.sessionId);
 
-    if (statusEvent) return statusEvent.state;
+    if (
+      statusState === "running" ||
+      statusState === "waiting_for_permission" ||
+      statusState === "closed" ||
+      statusState === "error"
+    ) {
+      return statusState;
+    }
 
     const row = this.db
       .prepare(
@@ -132,39 +154,17 @@ export class OpencodeBackend implements SessionBackend {
 
     if (row.time_archived !== null) return "stopped";
 
+    if (statusState === "stopped") {
+      return this.hasActiveChildActivity(projectInfo, row.directory)
+        ? "running"
+        : "stopped";
+    }
+
     const age = Date.now() - row.time_updated;
     if (age < OPENCODE_ACTIVE_THRESHOLD_MS) return "running";
 
-    const cutoff = Date.now() - OPENCODE_ACTIVE_THRESHOLD_MS;
-
-    // Primary: check for active children via parent_id linkage.
-    const activeChild = this.db
-      .prepare(
-        "SELECT 1 FROM session WHERE parent_id = ? AND time_archived IS NULL AND time_updated > ? LIMIT 1",
-      )
-      .get(projectInfo.sessionId, cutoff);
-
-    if (activeChild != null) return "running";
-
-    // Fallback: check for any recent non-parent session in the same directory.
-    // Catches sub-agents where parent_id linkage may be absent.
-    const siblingActive = this.db
-      .prepare(
-        `SELECT 1 FROM session
-         WHERE directory = ?
-           AND id != ?
-           AND time_archived IS NULL
-           AND time_updated > ?
-         LIMIT 1`,
-      )
-      .get(row.directory, projectInfo.sessionId, cutoff);
-
-    if (siblingActive != null) {
-      log.info("resolveState fallback triggered", {
-        project: projectInfo.projectName,
-      });
+    if (this.hasActiveChildActivity(projectInfo, row.directory))
       return "running";
-    }
 
     return "stopped";
   }
@@ -296,7 +296,7 @@ export class OpencodeBackend implements SessionBackend {
     return partsByMsg;
   }
 
-  private resolveStateFromStatusLog(sessionId: string): StatusEvent | null {
+  private loadStatusLogEvents(): StatusEvent[] | null {
     try {
       const s = statSync(this.statusLogPath);
       if (
@@ -322,13 +322,93 @@ export class OpencodeBackend implements SessionBackend {
       return null;
     }
 
-    const matching = (this.statusLogEvents ?? []).filter(
-      (e) => e.session_id === sessionId,
-    );
+    return this.statusLogEvents ?? [];
+  }
+
+  private resolveStatusLogState(sessionId: string): SessionState | null {
+    const matching = this.getStatusLogEventsForSession(sessionId);
     if (matching.length === 0) return null;
 
+    const normalized = matching.map((event) =>
+      normalizeOpencodeStatusEvent(event),
+    );
+    const state = resolveStatusLogState(null, normalized);
+    const latest = normalized[normalized.length - 1];
+
+    if (state === "stopped" && latest.event !== "Stop") return null;
+
+    return state;
+  }
+
+  private resolveStateFromStatusLog(sessionId: string): StatusEvent | null {
+    const matching = this.getStatusLogEventsForSession(sessionId);
+    if (matching.length === 0) return null;
+
+    return {
+      ...matching[matching.length - 1],
+      state:
+        this.resolveStatusLogState(sessionId) ??
+        matching[matching.length - 1].state,
+    };
+  }
+
+  private getStatusLogEventsForSession(sessionId: string): StatusEvent[] {
+    const events = this.loadStatusLogEvents();
+    if (events === null) return [];
+
+    const matching = events.filter((e) => e.session_id === sessionId);
     matching.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    return matching[matching.length - 1];
+    return matching;
+  }
+
+  private hasActiveChildActivity(
+    projectInfo: ProjectInfo,
+    directory: string,
+  ): boolean {
+    return this.getActiveChildActivityRows(projectInfo, directory).length > 0;
+  }
+
+  private getActiveChildActivityRows(
+    projectInfo: ProjectInfo,
+    directory: string,
+  ): { id: string; parent_id: string | null; time_updated: number }[] {
+    const cutoff = Date.now() - OPENCODE_ACTIVE_THRESHOLD_MS;
+    const rows = this.db
+      .prepare(
+        `SELECT id, parent_id, time_updated FROM session
+         WHERE time_archived IS NULL
+           AND time_updated > ?
+           AND (
+             parent_id = ?
+             OR (directory = ? AND id != ?)
+           )`,
+      )
+      .all(cutoff, projectInfo.sessionId, directory, projectInfo.sessionId) as {
+      id: string;
+      parent_id: string | null;
+      time_updated: number;
+    }[];
+
+    const activeRows: typeof rows = [];
+
+    for (const row of rows) {
+      const statusState = this.resolveStatusLogState(row.id);
+      if (
+        statusState === "stopped" ||
+        statusState === "closed" ||
+        statusState === "error"
+      ) {
+        continue;
+      }
+      if (row.parent_id !== projectInfo.sessionId) {
+        log.info("resolveState fallback triggered", {
+          project: projectInfo.projectName,
+        });
+      }
+      activeRows.push(row);
+    }
+
+    return activeRows;
   }
 
   async getSubagents(projectInfo: ProjectInfo): Promise<SubagentInfo[]> {
@@ -480,6 +560,42 @@ export class OpencodeBackend implements SessionBackend {
   projectKey(project: ProjectInfo): string {
     return `opencode::${project.sessionId}`;
   }
+}
+
+function normalizeOpencodeStatusEvent(event: StatusEvent): StatusEvent {
+  if (
+    event.event === "permission.ask" ||
+    event.event === "permission.asked" ||
+    event.state === "waiting_for_permission"
+  ) {
+    return {
+      ...event,
+      event: "PermissionRequest",
+      state: "waiting_for_permission",
+    };
+  }
+
+  if (event.event === "permission.replied") {
+    return { ...event, event: "UserPromptSubmit", state: "running" };
+  }
+
+  if (event.state === "running") {
+    return { ...event, event: "PostToolUse", state: "running" };
+  }
+
+  if (event.state === "closed") {
+    return { ...event, event: "SessionEnd", state: "closed" };
+  }
+
+  if (event.state === "error") {
+    return { ...event, event: "StopFailure", state: "error" };
+  }
+
+  if (event.state === "stopped") {
+    return { ...event, event: "Stop", state: "stopped" };
+  }
+
+  return event;
 }
 
 /**
