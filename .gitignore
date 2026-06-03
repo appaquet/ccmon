@@ -11,6 +11,7 @@ node_modules/
 
 # Local-only files (not committed, machine-specific)
 *.local.*
+proj
 
 # Nix build output
 result
