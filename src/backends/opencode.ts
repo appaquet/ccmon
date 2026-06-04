@@ -17,8 +17,8 @@ import {
   DEFAULT_STATUS_POLL_INTERVAL_MS,
   OPENCODE_ACTIVE_THRESHOLD_MS,
   STATUS_LOG_TAIL_BYTES,
-  SUBAGENT_ACTIVE_THRESHOLD_MS,
   SUBAGENT_EXPIRY_MS,
+  SUBAGENT_LIFECYCLE_TIMEOUT_MS,
 } from "../timing.ts";
 import type {
   NotificationMeta,
@@ -155,7 +155,8 @@ export class OpencodeBackend implements SessionBackend {
     if (row.time_archived !== null) return "stopped";
 
     if (statusState === "stopped") {
-      return this.hasActiveChildActivity(projectInfo, row.directory)
+      return this.hasLiveLinkedChild(projectInfo) ||
+        this.hasActiveChildActivity(projectInfo, row.directory)
         ? "running"
         : "stopped";
     }
@@ -163,7 +164,10 @@ export class OpencodeBackend implements SessionBackend {
     const age = Date.now() - row.time_updated;
     if (age < OPENCODE_ACTIVE_THRESHOLD_MS) return "running";
 
-    if (this.hasActiveChildActivity(projectInfo, row.directory))
+    if (
+      this.hasLiveLinkedChild(projectInfo) ||
+      this.hasActiveChildActivity(projectInfo, row.directory)
+    )
       return "running";
 
     return "stopped";
@@ -340,18 +344,6 @@ export class OpencodeBackend implements SessionBackend {
     return state;
   }
 
-  private resolveStateFromStatusLog(sessionId: string): StatusEvent | null {
-    const matching = this.getStatusLogEventsForSession(sessionId);
-    if (matching.length === 0) return null;
-
-    return {
-      ...matching[matching.length - 1],
-      state:
-        this.resolveStatusLogState(sessionId) ??
-        matching[matching.length - 1].state,
-    };
-  }
-
   private getStatusLogEventsForSession(sessionId: string): StatusEvent[] {
     const events = this.loadStatusLogEvents();
     if (events === null) return [];
@@ -377,13 +369,12 @@ export class OpencodeBackend implements SessionBackend {
       .prepare(
         `SELECT id, parent_id, time_updated FROM session
          WHERE time_archived IS NULL
-           AND time_updated > ?
-           AND (
-             parent_id = ?
-             OR (directory = ? AND id != ?)
-           )`,
+            AND time_updated > ?
+            AND directory = ?
+            AND id != ?
+            AND (parent_id IS NULL OR parent_id != ?)`,
       )
-      .all(cutoff, projectInfo.sessionId, directory, projectInfo.sessionId) as {
+      .all(cutoff, directory, projectInfo.sessionId, projectInfo.sessionId) as {
       id: string;
       parent_id: string | null;
       time_updated: number;
@@ -411,6 +402,60 @@ export class OpencodeBackend implements SessionBackend {
     return activeRows;
   }
 
+  private hasLiveLinkedChild(projectInfo: ProjectInfo): boolean {
+    return this.getLiveLinkedChildRows(projectInfo.sessionId).length > 0;
+  }
+
+  private getLiveLinkedChildRows(parentSessionId: string): Array<{
+    id: string;
+    time_created: number;
+    time_updated: number;
+  }> {
+    const now = Date.now();
+    const fallbackCutoff = now - SUBAGENT_LIFECYCLE_TIMEOUT_MS;
+    const rows = this.db
+      .prepare(
+        `SELECT id, time_created, time_updated FROM session
+         WHERE time_archived IS NULL
+           AND parent_id = ?`,
+      )
+      .all(parentSessionId) as Array<{
+      id: string;
+      time_created: number;
+      time_updated: number;
+    }>;
+
+    return rows.filter((row) => {
+      if (this.getTerminalStatusEvent(row.id) !== null) return false;
+      return Math.max(row.time_created, row.time_updated) > fallbackCutoff;
+    });
+  }
+
+  private getTerminalStatusEvent(sessionId: string): StatusEvent | null {
+    const events = this.getStatusLogEventsForSession(sessionId);
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      const normalized = normalizeOpencodeStatusEvent(event);
+      if (
+        normalized.event === "Stop" ||
+        normalized.event === "SessionEnd" ||
+        normalized.event === "StopFailure"
+      ) {
+        return normalized;
+      }
+    }
+
+    return null;
+  }
+
+  private getTerminalStatusTime(sessionId: string): number | null {
+    const terminalEvent = this.getTerminalStatusEvent(sessionId);
+    if (!terminalEvent) return null;
+
+    const time = new Date(terminalEvent.timestamp).getTime();
+    return Number.isNaN(time) ? null : time;
+  }
+
   async getSubagents(projectInfo: ProjectInfo): Promise<SubagentInfo[]> {
     const rows = this.db
       .prepare(
@@ -424,33 +469,28 @@ export class OpencodeBackend implements SessionBackend {
     }[];
 
     const now = Date.now();
-    const activeCutoff = now - SUBAGENT_ACTIVE_THRESHOLD_MS;
     const expiryCutoff = now - SUBAGENT_EXPIRY_MS;
+    const fallbackCutoff = now - SUBAGENT_LIFECYCLE_TIMEOUT_MS;
 
     return rows
       .filter((row) => {
-        const isActive = row.time_updated > activeCutoff;
-        return isActive || row.time_updated > expiryCutoff;
+        const terminalTime = this.getTerminalStatusTime(row.id);
+        if (terminalTime !== null) {
+          return terminalTime > expiryCutoff;
+        }
+        return Math.max(row.time_created, row.time_updated) > fallbackCutoff;
       })
       .map((row) => {
-        let isActive = row.time_updated > activeCutoff;
-        if (isActive) {
-          const statusEvent = this.resolveStateFromStatusLog(row.id);
-          if (
-            statusEvent &&
-            (statusEvent.state === "stopped" ||
-              statusEvent.state === "closed" ||
-              statusEvent.state === "error")
-          ) {
-            isActive = false;
-          }
-        }
+        const terminalTime = this.getTerminalStatusTime(row.id);
+        const isActive = terminalTime === null;
         return {
           agentId: row.id,
           slug: undefined,
           description: undefined,
           isActive,
-          lastMessageTime: new Date(row.time_updated).toISOString(),
+          lastMessageTime: new Date(
+            terminalTime ?? row.time_updated,
+          ).toISOString(),
           launchTime: new Date(row.time_created).toISOString(),
         };
       })

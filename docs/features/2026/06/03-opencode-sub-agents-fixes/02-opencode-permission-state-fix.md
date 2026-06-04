@@ -8,9 +8,9 @@ This phase covers the second reported issue: OpenCode permission questions are n
 
 ## Requirements
 
-* R2.A: ⬜ Map the current OpenCode permission events and determine the canonical pending-approval signal for ccmon.
-* R2.B: ⬜ Ensure pending OpenCode permission requests are classified as `waiting_for_permission` rather than `running`.
-* R2.C: ⬜ Ensure the state returns to the correct running/stopped behavior after the request is answered or expires.
+* R2.A: ✅ Map the current OpenCode permission events and determine the canonical pending-approval signal for ccmon.
+* R2.B: ✅ Ensure pending OpenCode permission requests are classified as `waiting_for_permission` rather than `running`.
+* R2.C: ✅ Ensure the state returns to the correct running/stopped behavior after the request is answered or expires.
 
 ## Questions & Investigations
 
@@ -34,6 +34,10 @@ This phase covers the second reported issue: OpenCode permission questions are n
   * Uncertainty: The repo plugin fix does not help the live repro until `~/.config/opencode/plugins/ccmon.ts` is updated and reloaded.
   * Tried: Attempted to copy the fixed repo plugin into the installed plugin path.
   * Result: No — the target path is currently mounted read-only in this environment, so live deployment/retest requires user/manual sync and OpenCode reload.
+* [x] Q: Did the live question prompt work after the repo fix and subsequent plugin reload/sync?
+  * Uncertainty: Automated tests covered the status-log path, but the real OpenCode session still needed a live end-to-end check.
+  * Tried: Re-ran a real Question tool prompt in the live session after the plugin/runtime changes.
+  * Result: Yes — the user confirmed the question flow worked correctly.
 
 ## Tasks
 
@@ -59,7 +63,7 @@ This phase covers the second reported issue: OpenCode permission questions are n
 - [x] Add regression coverage for `question.asked` / `question.replied` / `question.rejected` (senior-dev or junior-dev) (R2.A-R2.C)
   - AC: tests fail before the fix and pass after it.
   - AC: tests prove the question-tool path is distinct from, but aligned with, the permission-tool path.
-- [~] Sync the updated plugin copy into the live OpenCode config and re-verify the main-agent repro (senior-dev, may need user restart/retest) (R2.A-R2.C)
+- [x] Sync the updated plugin copy into the live OpenCode config and re-verify the main-agent repro (senior-dev, may need user restart/retest) (R2.A-R2.C)
   - AC: `~/.config/opencode/plugins/ccmon.ts` contains the `question.*` mapping.
   - AC: after plugin reload/restart, a real main-agent Question tool prompt produces `waiting_for_permission` in ccmon during the pending window.
 
@@ -67,7 +71,7 @@ This phase covers the second reported issue: OpenCode permission questions are n
 
 - **src/backends/opencode.ts**: OpenCode state resolution path that needs the permission-state fix. Changes: permission events are normalized through shared waiting/running resolution behavior, and explicit replies clear waiting state immediately.
 - **resources/opencode-plugin/ccmon.ts**: Permission-event writer that may need event-name alignment. Changes: listens to `permission.asked` / `permission.replied` and now `question.asked` / `question.replied` / `question.rejected`, with replies recorded as immediate resolver events.
-- **~/.config/opencode/plugins/ccmon.ts**: Installed plugin copy used by live OpenCode sessions. Pending manual sync because this environment could not write the file.
+- **~/.config/opencode/plugins/ccmon.ts**: Installed plugin copy used by live OpenCode sessions. Synced/reloaded outside this environment, with the live `question.*` flow now verified working.
 - **~/.local/share/opencode/log/**: Live OpenCode runtime logs used to identify `question.*` as the real event family for the failing repro.
 - **~/.local/state/ccmon/opencode-status.jsonl**: Live status log used to confirm the failing prompt never wrote a waiting-state line.
 - **src/session-core.ts**: Reference behavior for permission / waiting-state resolution.

@@ -11,7 +11,10 @@ import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, test } from "vitest";
 import { buildProjectState } from "../../src/backends/build-project-state.ts";
 import { OpencodeBackend } from "../../src/backends/opencode.ts";
-import { STATUS_LOG_TAIL_BYTES } from "../../src/timing.ts";
+import {
+  STATUS_LOG_TAIL_BYTES,
+  SUBAGENT_LIFECYCLE_TIMEOUT_MS,
+} from "../../src/timing.ts";
 
 type DB = DatabaseSync;
 
@@ -720,7 +723,7 @@ describe("OpencodeBackend — sub-agents", () => {
         "proj-parent",
       ],
     );
-    // Stale child (time_updated = 20s ago → isActive = false, but within 30s expiry)
+    // Quiet child remains active while no terminal event has been observed.
     run(
       db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -742,7 +745,7 @@ describe("OpencodeBackend — sub-agents", () => {
     const active = subagents.find((s) => s.agentId === "ses_child_active");
     const stale = subagents.find((s) => s.agentId === "ses_child_stale");
     expect(active?.isActive).toBe(true);
-    expect(stale?.isActive).toBe(false);
+    expect(stale?.isActive).toBe(true);
   });
 
   test("getSubagents fields: agentId, launchTime (ISO 8601), lastMessageTime (ISO 8601)", async () => {
@@ -774,11 +777,11 @@ describe("OpencodeBackend — sub-agents", () => {
     expect(subagents[0].lastMessageTime).toBe(new Date(updated).toISOString());
   });
 
-  test("excludes stale sub-agents older than 30s that are not active", async () => {
+  test("excludes linked sub-agents beyond lifecycle fallback timeout", async () => {
     const now = Date.now();
     const parentId = setupParent();
 
-    // Very old child (>30s, not active → should be excluded)
+    const expired = now - SUBAGENT_LIFECYCLE_TIMEOUT_MS - 1_000;
     run(
       db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -786,8 +789,8 @@ describe("OpencodeBackend — sub-agents", () => {
         "ses_child_expired",
         "Expired",
         "/home/user/parentproj",
-        now - 60000,
-        now - 60000,
+        expired,
+        expired,
         parentId,
         "proj-parent",
       ],
@@ -827,6 +830,121 @@ describe("OpencodeBackend — sub-agents", () => {
     expect(state.subagentCount).toBe(1);
   });
 
+  test("quiet linked sub-agent older than old expiry window remains visible and active", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+    const quietTime = now - 120_000;
+
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_quiet_linked_child",
+        "Quiet linked child",
+        "/home/user/parentproj",
+        quietTime,
+        quietTime,
+        parentId,
+        "proj-parent",
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const subagents = await backend.getSubagents(project);
+
+    expect(subagents).toHaveLength(1);
+    expect(subagents[0].agentId).toBe("ses_quiet_linked_child");
+    expect(subagents[0].isActive).toBe(true);
+  });
+
+  test.each([
+    ["session.idle", "stopped"],
+    ["session.error", "error"],
+  ])("quiet linked sub-agent remains briefly visible as inactive after %s", async (event, state) => {
+    const now = Date.now();
+    const parentId = setupParent();
+    const quietTime = now - 120_000;
+    const terminalTime = now - 1_000;
+
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        `ses_quiet_terminal_${state}`,
+        "Quiet terminal child",
+        "/home/user/parentproj",
+        quietTime,
+        quietTime,
+        parentId,
+        "proj-parent",
+      ],
+    );
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "ccmon-quiet-terminal-"));
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      `${JSON.stringify({
+        event,
+        state,
+        timestamp: new Date(terminalTime).toISOString(),
+        session_id: `ses_quiet_terminal_${state}`,
+        working_dir: "/home/user/parentproj",
+      })}\n`,
+    );
+
+    const backendWithStatus = new OpencodeBackend(db, 5000, statusPath);
+    const project = (await backendWithStatus.scanProjects())[0];
+    const subagents = await backendWithStatus.getSubagents(project);
+
+    expect(subagents).toHaveLength(1);
+    expect(subagents[0].agentId).toBe(`ses_quiet_terminal_${state}`);
+    expect(subagents[0].isActive).toBe(false);
+    expect(subagents[0].lastMessageTime).toBe(
+      new Date(terminalTime).toISOString(),
+    );
+  });
+
+  test("quiet linked sub-agent drops after terminal retention window uses terminal time", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+    const quietTime = now - 120_000;
+    const terminalTime = now - 31_000;
+
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_quiet_terminal_expired",
+        "Quiet terminal expired child",
+        "/home/user/parentproj",
+        quietTime,
+        quietTime,
+        parentId,
+        "proj-parent",
+      ],
+    );
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "ccmon-quiet-terminal-expired-"));
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      `${JSON.stringify({
+        event: "session.idle",
+        state: "stopped",
+        timestamp: new Date(terminalTime).toISOString(),
+        session_id: "ses_quiet_terminal_expired",
+        working_dir: "/home/user/parentproj",
+      })}\n`,
+    );
+
+    const backendWithStatus = new OpencodeBackend(db, 5000, statusPath);
+    const project = (await backendWithStatus.scanProjects())[0];
+    const subagents = await backendWithStatus.getSubagents(project);
+
+    expect(subagents).toHaveLength(0);
+  });
+
   test("resolveState returns running when parent is stale but child is active", async () => {
     const now = Date.now();
     const parentId = setupParent();
@@ -855,12 +973,74 @@ describe("OpencodeBackend — sub-agents", () => {
     expect(state).toBe("running");
   });
 
-  test("resolveState returns stopped when parent and all children are stale", async () => {
+  test("resolveState returns running when parent is stale but linked child is quiet and non-terminal", async () => {
     const now = Date.now();
     const parentId = setupParent();
+    const quietTime = now - 120_000;
 
     run(db, "UPDATE session SET time_updated = ? WHERE id = ?", [
-      now - 60000,
+      quietTime,
+      parentId,
+    ]);
+
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_quiet_child_keeps_parent_running",
+        "Quiet Child",
+        "/home/user/parentproj",
+        quietTime,
+        quietTime,
+        parentId,
+        "proj-parent",
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const state = await backend.resolveState(project);
+    expect(state).toBe("running");
+  });
+
+  test("resolveState returns stopped when quiet linked child exceeds lifecycle fallback timeout", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+    const expired = now - SUBAGENT_LIFECYCLE_TIMEOUT_MS - 1_000;
+
+    run(db, "UPDATE session SET time_updated = ? WHERE id = ?", [
+      expired,
+      parentId,
+    ]);
+
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_expired_quiet_child",
+        "Expired Quiet Child",
+        "/home/user/parentproj",
+        expired,
+        expired,
+        parentId,
+        "proj-parent",
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const state = await backend.resolveState(project);
+    const subagents = await backend.getSubagents(project);
+
+    expect(state).toBe("stopped");
+    expect(subagents).toHaveLength(0);
+  });
+
+  test("resolveState returns stopped when parent and all linked children exceed lifecycle timeout", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+    const expired = now - SUBAGENT_LIFECYCLE_TIMEOUT_MS - 1_000;
+
+    run(db, "UPDATE session SET time_updated = ? WHERE id = ?", [
+      expired,
       parentId,
     ]);
 
@@ -871,8 +1051,8 @@ describe("OpencodeBackend — sub-agents", () => {
         "ses_child_stale_state",
         "Stale Child",
         "/home/user/parentproj",
-        now - 120000,
-        now - 60000,
+        expired,
+        expired,
         parentId,
         "proj-parent",
       ],
@@ -1608,6 +1788,86 @@ describe("OpencodeBackend — status log", () => {
     const backend = new OpencodeBackend(db, 5000, statusPath);
     const projects = await backend.scanProjects();
     await expect(backend.resolveState(projects[0])).resolves.toBe("running");
+  });
+
+  test("quiet non-terminal linked child keeps parent running after parent idle status", async () => {
+    const now = Date.now();
+    const quietTime = now - 120_000;
+    setupProject(
+      "proj-quiet-linked-child-status",
+      "quietlinkedchild",
+      "/home/user/quietlinkedchild",
+      "ses_parent_idle_quiet_linked",
+      quietTime,
+    );
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_quiet_linked_child_status",
+        "Quiet linked child",
+        "/home/user/quietlinkedchild",
+        quietTime,
+        quietTime,
+        "ses_parent_idle_quiet_linked",
+        "proj-quiet-linked-child-status",
+      ],
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        "ses_parent_idle_quiet_linked",
+        "stopped",
+        new Date(now - 1_000).toISOString(),
+        "session.idle",
+      ),
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    await expect(backend.resolveState(projects[0])).resolves.toBe("running");
+  });
+
+  test("quiet terminal linked child does not keep parent running", async () => {
+    const now = Date.now();
+    const quietTime = now - 120_000;
+    setupProject(
+      "proj-quiet-terminal-child-status",
+      "quietterminalchild",
+      "/home/user/quietterminalchild",
+      "ses_parent_quiet_terminal_linked",
+      quietTime,
+    );
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_quiet_terminal_child_status",
+        "Quiet terminal child",
+        "/home/user/quietterminalchild",
+        quietTime,
+        quietTime,
+        "ses_parent_quiet_terminal_linked",
+        "proj-quiet-terminal-child-status",
+      ],
+    );
+
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      makeStatusEvent(
+        "ses_quiet_terminal_child_status",
+        "stopped",
+        new Date(now - 1_000).toISOString(),
+        "session.idle",
+      ),
+    );
+
+    const backend = new OpencodeBackend(db, 5000, statusPath);
+    const projects = await backend.scanProjects();
+    await expect(backend.resolveState(projects[0])).resolves.toBe("stopped");
   });
 
   test("active same-directory unlinked child keeps parent running after parent idle status", async () => {

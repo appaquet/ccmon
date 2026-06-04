@@ -6,14 +6,14 @@ Project scaffold for a workstream focused on OpenCode sub-agent and permission-s
 
 ## Checkpoint
 
-Implementation completed for the original sub-agent activity and permission-event fixes, including the follow-up `lastUpdated` and fast-reply corrections. Live investigation then found a remaining main-agent gap: OpenCode emits `question.asked`, `question.replied`, and `question.rejected` for the Question tool, while the installed `ccmon` plugin only mapped `permission.asked` / `permission.replied`. The repo plugin and backend are now updated so the question-tool path writes and resolves `waiting_for_permission` the same way as the permission path, with regression tests covering `question.asked`, `question.replied`, and `question.rejected`.
+Implementation completed for the original sub-agent activity and permission-event fixes, including the follow-up `lastUpdated`, fast-reply, and main-agent `question.*` corrections. The linked-subagent lifecycle work is now also implemented in-repo: linked OpenCode child sessions stay visible and keep the parent project `running` until a terminal signal arrives, instead of disappearing after the old 15s/30s activity windows. A 10-minute fallback timeout now handles missing terminal signals for zombie linked children, while same-directory/unlinked fallback behavior remains non-sticky and activity-based. A follow-up review found one more gap for quiet long-running children that only emitted a late terminal event; that was also fixed by retaining terminal children briefly based on the terminal event timestamp rather than stale launch-time `time_updated`.
 
-Concrete evidence came from the live OpenCode logs and status log for session `ses_1720118f1ffeL4CCrIke5YE6ek`: OpenCode published `question.asked` at `2026-06-03T18:25:28Z` and `question.replied`/`question.rejected` on later attempts, but `~/.local/state/ccmon/opencode-status.jsonl` only recorded `chat.message` → `running` and later `session.idle` → `stopped`, with no waiting event in between. The code fix is complete and test-passing, but live verification is still blocked because this environment could not overwrite `~/.config/opencode/plugins/ccmon.ts` (`read-only file system`). Next step: manually sync the installed plugin copy, reload/restart OpenCode, and re-run the main-agent question repro.
+Verification reported by the implementation sub-agent: `npm test -- tests/backends/opencode.test.ts` passed first with 74 tests and then with 78 tests after the terminal-retention follow-up, plus `npm run typecheck` and `npm run lint` passed. `session.status` was investigated but intentionally not used, because the existing terminal status events were sufficient for the lifecycle fix. Live follow-up also passed: the user confirmed that a real 60-second sleeping sub-agent stayed visible correctly and that a real Question tool prompt behaved correctly after the plugin/runtime updates. Next step: project state can be closed out and resumed later if any regressions appear.
 
 ## Requirements
 
-* R1: ⬜ OpenCode sessions must stay classified as running while associated sub-agent activity is still active, so a parent session is not marked stopped prematurely. (Phase: OpenCode subagent state fix, see R1.A-C in the phase doc)
-* R2: ⬜ OpenCode permission prompts/questions must surface in ccmon as `waiting_for_permission` instead of remaining `running`. (Phase: OpenCode permission state fix, see R2.A-C in the phase doc)
+* R1: ✅ OpenCode sessions must stay classified as running while associated linked sub-agent activity is still active, so a parent session is not marked stopped prematurely and a quiet long-running child does not disappear before it terminates. (Phase: OpenCode subagent state fix, see R1.A-D in the phase doc)
+* R2: ✅ OpenCode permission prompts/questions must surface in ccmon as `waiting_for_permission` instead of remaining `running`. (Phase: OpenCode permission state fix, see R2.A-C in the phase doc)
 
 ## Questions & Investigations
 
@@ -41,14 +41,22 @@ Concrete evidence came from the live OpenCode logs and status log for session `s
   * Uncertainty: The recent fix assumed the user-facing blocked state would flow through `permission.*` events.
   * Tried: Inspected the real OpenCode runtime log and the live `opencode-status.jsonl` entries for the failing session.
   * Result: The main-agent repro emits `question.asked`, `question.replied`, and `question.rejected`; the plugin does not currently map them, so no waiting state is written.
+* [x] Q: Why does a 120s sleeping OpenCode sub-agent disappear from the UI?
+  * Uncertainty: The sub-agent was still alive, but ccmon eventually hid it and could mark the project stopped.
+  * Tried: Traced the recent sleep child session in SQLite and the shared OpenCode status log, then compared it against the current thresholds in `src/timing.ts` and the OpenCode backend heuristics.
+  * Result: The child session was quiet after launch, `time_updated` never advanced during the sleep, and ccmon expired it through 15s/30s activity windows. The parent can also stop once the child-activity and parent-running grace windows expire.
+* [x] Q: What UX should quiet linked sub-agents use?
+  * Uncertainty: A long-running child may be silent for a long time without being done.
+  * Tried: Confirmed the intended behavior with the user.
+  * Result: Keep linked sub-agents visible/active until an explicit terminal event, keep the parent running too, and use only a much longer fallback timeout for missing terminal signals.
 
 ## Phases 
 
-### 🔄 01 Phase: OpenCode subagent state fix
+### ✅ 01 Phase: OpenCode subagent state fix
 [01-opencode-subagent-state-fix](01-opencode-subagent-state-fix.md)
 Make OpenCode state resolution aware of active sub-agent work so a parent session is not classified as stopped while child work continues.
 
-### 🔄 02 Phase: OpenCode permission state fix
+### ✅ 02 Phase: OpenCode permission state fix
 [02-opencode-permission-state-fix](02-opencode-permission-state-fix.md)
 Normalize OpenCode permission-question handling so ccmon shows the session as waiting for permission while approval is pending.
 
@@ -61,6 +69,7 @@ Normalize OpenCode permission-question handling so ccmon shows the session as wa
 - **~/.config/opencode/plugins/ccmon.ts**: Installed plugin copy used by live OpenCode sessions. Pending manual sync so the live environment picks up the new `question.*` mapping.
 - **~/.local/share/opencode/log/**: Runtime evidence used to confirm the main-agent question repro emits `question.*` events.
 - **~/.local/state/ccmon/opencode-status.jsonl**: Live status log used to prove no waiting event was written for the failing question prompt.
+- **opencode.db / session table**: Runtime evidence used to confirm the quiet 120s sleep child session stopped updating `time_updated` while still alive.
 - **src/session-core.ts**: Shared state-resolution logic and permission-state reference behavior.
 - **src/timing.ts**: State freshness thresholds used by OpenCode backend heuristics.
 - **tests/backends/opencode.test.ts**: OpenCode backend regression coverage. Changes: child-activity, permission-state, and `question.*` regressions covered.

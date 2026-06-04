@@ -10,6 +10,9 @@ export const SUBAGENT_ACTIVE_THRESHOLD_MS = 15_000;
 /** Sub-agents older than this since last JSONL mtime are pruned. */
 export const SUBAGENT_EXPIRY_MS = 30_000;
 
+/** Linked OpenCode sub-agents without a terminal signal are retained for this long. */
+export const SUBAGENT_LIFECYCLE_TIMEOUT_MS = 10 * 60 * 1000;
+
 /** Grace period after a sub-agent's Stop event before its JSONL mtime is checked. */
 export const SUBAGENT_STOP_GRACE_MS = 5_000;
 
