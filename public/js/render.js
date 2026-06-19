@@ -57,6 +57,10 @@ function renderAgentRow(opts) {
   `;
 }
 
+function subagentLabel(agent) {
+  return 'Sub: ' + (agent.description || agent.sessionName || agent.slug || agent.agentId);
+}
+
 function createCard(proj, flashStopped, flashNotification, displayName, key) {
   var card = document.createElement('div');
   var s = proj.state || 'stopped';
@@ -126,9 +130,8 @@ function createCard(proj, flashStopped, flashNotification, displayName, key) {
   if (proj.subagents && proj.subagents.length > 0) {
     for (var i = 0; i < proj.subagents.length; i++) {
       var agent = proj.subagents[i];
-      var agentLabel = 'Sub: ' + (agent.description || agent.slug || agent.agentId);
       agentsHtml += renderAgentRow({
-        label: agentLabel,
+        label: subagentLabel(agent),
         model: agent.model,
         userActivity: agent.latestUserActivity,
         assistantActivity: agent.latestAssistantActivity,

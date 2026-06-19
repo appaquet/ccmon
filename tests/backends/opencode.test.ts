@@ -777,6 +777,57 @@ describe("OpencodeBackend — sub-agents", () => {
     expect(subagents[0].lastMessageTime).toBe(new Date(updated).toISOString());
   });
 
+  test("getSubagents propagates child session title as sessionName without formatting", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+    const title = "Investigate subagent naming (@senior-dev subagent)";
+
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_child_named",
+        title,
+        "/home/user/parentproj",
+        now - 30000,
+        now,
+        parentId,
+        "proj-parent",
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const subagents = await backend.getSubagents(project);
+
+    expect(subagents).toHaveLength(1);
+    expect(subagents[0].sessionName).toBe(title);
+  });
+
+  test("getSubagents leaves sessionName undefined when child title is missing", async () => {
+    const now = Date.now();
+    const parentId = setupParent();
+
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_child_unnamed",
+        null,
+        "/home/user/parentproj",
+        now - 30000,
+        now,
+        parentId,
+        "proj-parent",
+      ],
+    );
+
+    const project = (await backend.scanProjects())[0];
+    const subagents = await backend.getSubagents(project);
+
+    expect(subagents).toHaveLength(1);
+    expect(subagents[0].sessionName).toBeUndefined();
+  });
+
   test("excludes linked sub-agents beyond lifecycle fallback timeout", async () => {
     const now = Date.now();
     const parentId = setupParent();

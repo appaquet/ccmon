@@ -459,11 +459,12 @@ export class OpencodeBackend implements SessionBackend {
   async getSubagents(projectInfo: ProjectInfo): Promise<SubagentInfo[]> {
     const rows = this.db
       .prepare(
-        `SELECT id, time_created, time_updated FROM session
+        `SELECT id, title, time_created, time_updated FROM session
          WHERE parent_id = ?`,
       )
       .all(projectInfo.sessionId) as {
       id: string;
+      title: string | null;
       time_created: number;
       time_updated: number;
     }[];
@@ -487,6 +488,7 @@ export class OpencodeBackend implements SessionBackend {
           agentId: row.id,
           slug: undefined,
           description: undefined,
+          sessionName: row.title || undefined,
           isActive,
           lastMessageTime: new Date(
             terminalTime ?? row.time_updated,
