@@ -93,6 +93,9 @@ Backend is responsible for exposing raw semantic data. Frontend remains responsi
   - AC: a project-state payload path (`dump`, server payload, or equivalent targeted check) shows `subagents[*].sessionName` for an OpenCode child.
   - AC: the dashboard shows `Sub: <child title>` instead of `Sub: ses_*` for the same case.
   - AC: lint/typecheck/tests used by the implementation phase are identified in advance and executed before completion.
+- [ ] Reconcile Phase 03 requirement/phase status markers with the completed implementation record (Priority: Medium, Effort: Quick Win, junior-dev or main agent) (R3.A, R3.B, R3.C)
+  - AC: project requirement `R3`, Phase 03 status, and phase requirement markers all reflect the same completion state.
+  - AC: if any validation is still intentionally outstanding, it is represented as an unchecked task with explicit ACs rather than stale status markers.
 
 Implementation verification recorded by sub-agent:
 

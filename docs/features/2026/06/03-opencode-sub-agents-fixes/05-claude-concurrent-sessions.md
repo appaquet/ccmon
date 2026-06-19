@@ -96,6 +96,10 @@ Unlike OpenCode, the main risk here is not only cardinality but also state owner
   - AC: tests reproduce the current latest-only and shared-status ambiguity before the fix.
   - AC: tests cover multiple same-project Claude sessions with different states and one sibling ending while another continues.
   - AC: targeted tests plus `npm run typecheck`, `npm run lint`, and the full test suite pass before completion is proposed.
+- [ ] Bundle the deferred Claude REVIEW comments into one approved architecture track before any code change resumes (Priority: High if revived, Effort: Extensive, staff-dev) (R5.A, R5.B, R5.C, R5.D, R5.F)
+  - AC: the `latestJSONL` discovery collapse, repo-log notification/state bleed, and destructive `SessionEnd` truncation comments are treated as one coordinated design problem rather than isolated fixes.
+  - AC: a revived Claude plan explicitly sequences session-scoped discovery, session-scoped event resolution, and sibling-safe status-log lifecycle handling.
+  - AC: no Claude sibling-visibility implementation starts until the grouped design is reviewed and approved.
 
 ## Files
 

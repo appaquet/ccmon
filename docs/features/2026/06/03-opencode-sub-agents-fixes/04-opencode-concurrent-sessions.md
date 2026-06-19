@@ -156,6 +156,21 @@ Additional follow-up verification recorded by sub-agent:
 - `npx vitest run tests/backends/opencode.test.ts` ✅ (`81` tests passed after updating one stale legacy expectation)
 - `npm run typecheck` ✅
 
+Prioritized review follow-up tasks:
+
+- [ ] Fix the `dump --watch` NDJSON contract regression found in review comments (Priority: High, Effort: Moderate, senior-dev) (R4.E, R4.G)
+  - AC: `dump --watch` emits one compact JSON object/array per line instead of pretty multi-line snapshots.
+  - AC: empty-array reconciliation snapshots still emit as a single NDJSON line.
+  - AC: CLI watch tests assert line-delimited output directly instead of compensating for pretty-printed block output.
+- [ ] Stop mutating canonical `ProjectState.projectName` during disambiguation in server/CLI output paths (Priority: Medium, Effort: Moderate, senior-dev) (R4.B, R4.E, R4.F)
+  - AC: server and CLI output disambiguation operates on cloned/output-only data or a separate display field.
+  - AC: when name collisions disappear on later rescans, surviving sessions revert to their canonical non-expanded names.
+  - AC: regression coverage exists for both server and CLI/watch paths.
+- [ ] Clean up OpenCode Phase 04/adjacent test readability issues raised by review comments (Priority: Low, Effort: Quick Win, junior-dev) (R4.G)
+  - AC: stale test names in `tests/backends/opencode.test.ts` describe the current same-directory peer-session behavior.
+  - AC: brittle/magic fixture conventions in `tests/server.test.ts` and `tests/cli.test.ts` are made explicit enough that ordering/data-shape intent is clear.
+  - AC: any test-only cleanup stays behavior-neutral and leaves existing coverage intact.
+
 ## Files
 
 - **src/backends/opencode.ts**: OpenCode session discovery, state resolution, and sibling/subagent classification. Changes: emits all visible top-level same-directory sessions, preserves per-session `lastUpdated`, and keeps `parent_id` children as subagents.

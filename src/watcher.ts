@@ -62,6 +62,7 @@ export function watchForChanges(
         watchers.delete(key);
 
         if (stopped) return;
+        scheduleUpdate(projectDir);
         const attempt = restartAttempts.get(key) ?? 0;
         if (attempt >= MAX_RETRIES) return;
         const delay = backoffDelay(attempt);
@@ -92,7 +93,7 @@ export function watchForChanges(
         watchProjectDir(projectDir);
       }
     } catch {
-      // Directory doesn't exist yet — will be picked up by claudeDir watcher
+      if (!stopped) scheduleUpdate(projectDir);
     }
   }
 
@@ -104,9 +105,7 @@ export function watchForChanges(
       const watcher = watch(claudeDir, (_eventType, filename) => {
         if (!filename || stopped) return;
         const newProjectDir = join(claudeDir, filename);
-        watchProject(newProjectDir).catch((err) =>
-          log.error("failed to watch new project dir", err),
-        );
+        watchProject(newProjectDir);
       });
       watcher.on("error", () => {
         watcher.close();

@@ -16,6 +16,8 @@ Planning has now resumed for a larger follow-up in the same workstream: ccmon cu
 
 That OpenCode-first implementation is now complete and user-validated in a live smoke check. OpenCode no longer collapses same-directory top-level sessions to only the newest one, `dump --project` returns all matching visible sibling sessions, watch-mode filtered output emits explicit empty arrays for sibling removal reconciliation, and the dashboard now keys OpenCode cards by `sessionId` while showing a visible session-level differentiator (`sessionName` first, short session id fallback). Follow-up correctness and staff reviews also closed the watch-reconciliation, incremental ordering, and peer-state-bleed gaps. Claude same-repo concurrent sessions were researched afterward, but the user explicitly deprioritized/dropped that follow-up for now because Claude multi-session monitoring is not used often enough to justify the architecture work.
 
+Review comments were then researched across the implemented OpenCode work and the deferred Claude path. The active prioritized follow-up plan is: first restore the documented NDJSON contract for `dump --watch`, then stop server/CLI disambiguation from mutating canonical `ProjectState` names across rescans, then clean up the stale Phase 03/R3 status markers, and only after that consider low-priority test readability cleanup. The Claude review comments remain grouped as deferred Phase 05 architecture notes rather than active implementation work.
+
 ## Requirements
 
 * R1: ✅ OpenCode sessions must stay classified as running while associated linked sub-agent activity is still active, so a parent session is not marked stopped prematurely and a quiet long-running child does not disappear before it terminates. (Phase: OpenCode subagent state fix, see R1.A-D in the phase doc)
@@ -122,6 +124,10 @@ That OpenCode-first implementation is now complete and user-validated in a live 
   * Uncertainty: Claude research showed a viable direction, but the work is larger because Claude needs session-scoped status ownership rather than just wider discovery.
   * Tried: Checked with the user after the OpenCode phase was validated live.
   * Result: No for now — explicitly defer/drop the Claude follow-up from active scope because the user does not use multi-session Claude often enough.
+* [x] Q: Which REVIEW comments should be prioritized now that the OpenCode implementation is done?
+  * Uncertainty: Review agents left a mix of active OpenCode follow-ups, deferred Claude architecture items, stale doc markers, and test-only cleanup comments.
+  * Tried: Researched each REVIEW comment, grouped duplicates, checked them against the existing requirements, and ranked them by impact/effort/dependency.
+  * Result: Prioritize the active `dump --watch` NDJSON contract fix first, then the shared sticky-name mutation fix in server/CLI, then the Phase 03/R3 status-marker cleanup, then low-priority test readability cleanup. Keep the Claude review comments grouped as deferred Phase 05 work only.
 
 ## Phases 
 
