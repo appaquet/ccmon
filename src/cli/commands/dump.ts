@@ -1,12 +1,67 @@
 import { basename } from "node:path";
 import { collectBackendStates } from "../../backends/collect-states.ts";
 import { createBackends } from "../../backends/index.ts";
+import type { SessionBackend } from "../../backends/types.ts";
 import type { CcmonConfig } from "../../config.ts";
 import {
   disambiguateProjectNames,
   filterStaleProjects,
+  sortProjectsByRecency,
 } from "../../project-utils.ts";
 import type { ProjectState } from "../../types.ts";
+
+export function filterProjectsByName(
+  projects: ProjectState[],
+  projectFilter: string | null,
+): ProjectState[] {
+  if (projectFilter === null) return projects;
+  return projects.filter(
+    (p) => p.projectName === projectFilter || basename(p.cwd) === projectFilter,
+  );
+}
+
+export function replaceBackendStates(
+  projectMap: Map<string, ProjectState>,
+  backendProjectKeys: Map<SessionBackend, Set<string>>,
+  backend: SessionBackend,
+  backendStates: Map<string, ProjectState>,
+): void {
+  const previousKeys = backendProjectKeys.get(backend) ?? new Set<string>();
+  for (const key of previousKeys) {
+    if (!backendStates.has(key)) {
+      projectMap.delete(key);
+    }
+  }
+
+  for (const [key, value] of backendStates) {
+    projectMap.set(key, value);
+  }
+
+  backendProjectKeys.set(backend, new Set(backendStates.keys()));
+}
+
+export function buildOutput(
+  projects: Iterable<ProjectState>,
+  maxInactivityHours: number,
+  projectFilter: string | null,
+  emitEmptyFilteredSnapshot = false,
+): string {
+  const allProjects = [...projects];
+  disambiguateProjectNames(allProjects);
+  const state = sortProjectsByRecency(
+    filterStaleProjects(allProjects, maxInactivityHours),
+  );
+  const matches = filterProjectsByName(state, projectFilter);
+
+  if (projectFilter !== null) {
+    if (matches.length > 0 || emitEmptyFilteredSnapshot) {
+      return JSON.stringify(matches, null, 2);
+    }
+    return "";
+  }
+
+  return JSON.stringify(state, null, 2);
+}
 
 export async function runDump(
   config: CcmonConfig,
@@ -15,24 +70,13 @@ export async function runDump(
   try {
     const { backends, close } = createBackends(config);
     const projectMap = await collectBackendStates(backends);
-
-    const allProjects = [...projectMap.values()];
-    disambiguateProjectNames(allProjects);
-    const state = filterStaleProjects(allProjects, config.maxInactivityHours);
-
-    if (projectFilter !== null) {
-      const match =
-        state.find(
-          (p) =>
-            p.projectName === projectFilter ||
-            basename(p.cwd) === projectFilter,
-        ) ?? null;
-      if (match !== null) {
-        console.log(JSON.stringify(match, null, 2));
-      }
-    } else {
-      console.log(JSON.stringify(state, null, 2));
-    }
+    const output = buildOutput(
+      projectMap.values(),
+      config.maxInactivityHours,
+      projectFilter,
+      false,
+    );
+    if (output) console.log(output);
     close();
     process.exit(0);
   } catch (err) {
@@ -48,26 +92,22 @@ export async function runDumpWatch(
 ): Promise<void> {
   const { backends, close } = createBackends(config);
   const projectMap = new Map<string, ProjectState>();
+  const backendProjectKeys = new Map<SessionBackend, Set<string>>();
 
   function formatWatchOutput(): string {
-    const allProjects = [...projectMap.values()];
-    disambiguateProjectNames(allProjects);
-    const state = filterStaleProjects(allProjects, config.maxInactivityHours);
-    if (projectFilter !== null) {
-      const match =
-        state.find(
-          (p) =>
-            p.projectName === projectFilter ||
-            basename(p.cwd) === projectFilter,
-        ) ?? null;
-      return match !== null ? JSON.stringify(match, null, 2) : "";
-    }
-    return JSON.stringify(state, null, 2);
+    return buildOutput(
+      projectMap.values(),
+      config.maxInactivityHours,
+      projectFilter,
+      true,
+    );
   }
 
   try {
-    const initial = await collectBackendStates(backends);
-    for (const [k, v] of initial) projectMap.set(k, v);
+    for (const backend of backends) {
+      const initial = await collectBackendStates([backend]);
+      replaceBackendStates(projectMap, backendProjectKeys, backend, initial);
+    }
     const output = formatWatchOutput();
     if (output) console.log(output);
   } catch (err) {
@@ -81,7 +121,12 @@ export async function runDumpWatch(
     const watcher = backend.watchForChanges(async () => {
       try {
         const backendStates = await collectBackendStates([backend]);
-        for (const [k, v] of backendStates) projectMap.set(k, v);
+        replaceBackendStates(
+          projectMap,
+          backendProjectKeys,
+          backend,
+          backendStates,
+        );
         const output = formatWatchOutput();
         if (output) console.log(output);
       } catch (err) {

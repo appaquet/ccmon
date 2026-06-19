@@ -1,8 +1,15 @@
 import { execSync, spawn } from "node:child_process";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import type { SessionBackend } from "../src/backends/types.ts";
+import {
+  buildOutput,
+  filterProjectsByName,
+  replaceBackendStates,
+} from "../src/cli/commands/dump.ts";
 import { resolveProjectDir, runStatus } from "../src/cli/commands/status.ts";
 import { parseNumberFlag, parsePortFlag } from "../src/cli/helpers.ts";
 import { makeTempDir } from "./_helpers.ts";
@@ -57,6 +64,110 @@ function makeStatusEvent(event = "PostToolUse", state = "running"): string {
     session_id: "test-session",
     working_dir: "/home/user/proj",
   });
+}
+
+function createOpencodeSchema(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE project (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      root TEXT
+    );
+    CREATE TABLE session (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      directory TEXT,
+      time_created INTEGER,
+      time_updated INTEGER,
+      time_archived INTEGER,
+      parent_id TEXT,
+      project_id TEXT REFERENCES project(id)
+    );
+    CREATE TABLE message (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+    CREATE TABLE part (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+    CREATE TABLE todo (
+      session_id TEXT,
+      content TEXT,
+      status TEXT,
+      priority TEXT,
+      position INTEGER,
+      time_created INTEGER,
+      time_updated INTEGER
+    );
+  `);
+}
+
+function seedOpencodeSiblings(dbPath: string): void {
+  const db = new DatabaseSync(dbPath);
+  const now = Date.now();
+  createOpencodeSchema(db);
+  db.prepare("INSERT INTO project (id, name, root) VALUES (?, ?, ?)").run(
+    "proj1",
+    "repo",
+    "/home/user/repo",
+  );
+  db.prepare(
+    "INSERT INTO session (id, title, directory, time_created, time_updated, time_archived, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(
+    "ses_peer_a",
+    null,
+    "/home/user/repo",
+    now - 2_000,
+    now - 2_000,
+    null,
+    null,
+    "proj1",
+  );
+  db.prepare(
+    "INSERT INTO session (id, title, directory, time_created, time_updated, time_archived, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(
+    "ses_peer_b",
+    "Feature branch",
+    "/home/user/repo",
+    now - 1_000,
+    now - 1_000,
+    null,
+    null,
+    "proj1",
+  );
+  db.close();
+}
+
+class TestBackend implements SessionBackend {
+  async scanProjects() {
+    return [];
+  }
+  watchForChanges() {
+    return { stop() {} };
+  }
+  async resolveState() {
+    return "running" as const;
+  }
+  async computeLastUpdated() {
+    return new Date(0).toISOString();
+  }
+  async enrichProject() {
+    return {};
+  }
+  async getSubagents() {
+    return [];
+  }
+  projectKey(project: { source: string; sessionId: string }): string {
+    return `${project.source}::${project.sessionId}`;
+  }
 }
 
 interface SpawnResult {
@@ -349,7 +460,7 @@ describe("dump --project", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test("outputs single JSON object matching the given projectName", async () => {
+  test("outputs array of matching project states for the given projectName", async () => {
     const projDir = join(tmpDir, "-home-user-myapp");
     await mkdir(projDir, { recursive: true });
     await writeFile(
@@ -371,11 +482,42 @@ describe("dump --project", () => {
 
     expect(result.exitCode).toBe(0);
     const parsed = JSON.parse(result.stdout);
-    // Single object, not an array
-    expect(Array.isArray(parsed)).toBe(false);
-    expect(typeof parsed).toBe("object");
-    expect(parsed.projectName).toBe("myapp");
-    expect(parsed.cwd).toBe("/home/user/myapp");
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].projectName).toBe("myapp");
+    expect(parsed[0].cwd).toBe("/home/user/myapp");
+  });
+
+  test("returns all matching visible opencode sibling sessions for the same repo", async () => {
+    const dbPath = join(tmpDir, "opencode.db");
+    seedOpencodeSiblings(dbPath);
+
+    const configPath = join(tmpDir, "ccmon-config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        backends: [
+          {
+            type: "opencode",
+            enabled: true,
+            databasePath: dbPath,
+            statusLogPath: join(tmpDir, "missing-status.jsonl"),
+          },
+        ],
+        maxInactivityHours: 1,
+      }),
+    );
+
+    const result = await spawnCli(["dump", "--project", "repo"], {
+      env: { CCMON_CONFIG: configPath },
+    });
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(
+      parsed.map((entry: { sessionId: string }) => entry.sessionId),
+    ).toEqual(["ses_peer_b", "ses_peer_a"]);
   });
 
   test("outputs nothing when project name does not exist", async () => {
@@ -449,7 +591,7 @@ describe("dump --watch --project", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test("initial output is a single JSON object for the given project", async () => {
+  test("initial output is a JSON array for the given project filter", async () => {
     const projDir = join(tmpDir, "-home-user-watchapp");
     await mkdir(projDir, { recursive: true });
     await writeFile(
@@ -478,13 +620,12 @@ describe("dump --watch --project", () => {
     const blocks = splitJsonBlocks(stdout);
     expect(blocks.length).toBeGreaterThanOrEqual(1);
     const parsed = JSON.parse(blocks[0]);
-    // Single object, not array
-    expect(Array.isArray(parsed)).toBe(false);
-    expect(parsed.projectName).toBe("watchapp");
-    expect(parsed.cwd).toBe("/home/user/watchapp");
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed[0].projectName).toBe("watchapp");
+    expect(parsed[0].cwd).toBe("/home/user/watchapp");
   }, 5000);
 
-  test("each update is a single JSON object after status file changes", async () => {
+  test("each update remains a JSON array after status file changes", async () => {
     const projDir = join(tmpDir, "-home-user-watchapp2");
     await mkdir(projDir, { recursive: true });
     await writeFile(
@@ -525,10 +666,146 @@ describe("dump --watch --project", () => {
     expect(blocks.length).toBeGreaterThanOrEqual(2);
     for (const block of blocks) {
       const parsed = JSON.parse(block);
-      expect(Array.isArray(parsed)).toBe(false);
-      expect(parsed.projectName).toBe("watchapp2");
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed[0].projectName).toBe("watchapp2");
     }
   }, 5000);
+
+  test("emits an explicit empty array when the last filtered match disappears", async () => {
+    const projDir = join(tmpDir, "-home-user-watchgone");
+    await mkdir(projDir, { recursive: true });
+    await writeFile(
+      join(projDir, "session.jsonl"),
+      `${makeFirstLine("/home/user/watchgone", "sess-gone")}
+`,
+    );
+
+    const proc = spawn(
+      NODE,
+      [CLI_PATH, "dump", "--watch", "--project", "watchgone"],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, CLAUDE_PROJECTS_DIR: tmpDir },
+      },
+    );
+
+    const stdoutChunks: Buffer[] = [];
+    proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await rm(projDir, { recursive: true, force: true });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    proc.kill("SIGINT");
+    const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+    await new Promise((resolve) => proc.once("close", resolve));
+
+    const blocks = splitJsonBlocks(stdout);
+    expect(blocks.length).toBeGreaterThanOrEqual(2);
+    expect(JSON.parse(blocks[0])).toHaveLength(1);
+    expect(JSON.parse(blocks[blocks.length - 1])).toEqual([]);
+  }, 5000);
+});
+
+describe("dump helpers", () => {
+  test("filterProjectsByName returns all matching siblings instead of the first match", () => {
+    const projects = [
+      {
+        cwd: "/repo",
+        projectName: "repo",
+        sessionId: "ses_a",
+        source: "opencode" as const,
+        state: "running" as const,
+        lastUpdated: new Date(1_000).toISOString(),
+      },
+      {
+        cwd: "/repo",
+        projectName: "repo",
+        sessionId: "ses_b",
+        source: "opencode" as const,
+        state: "stopped" as const,
+        lastUpdated: new Date(2_000).toISOString(),
+      },
+    ];
+
+    expect(
+      filterProjectsByName(projects, "repo").map(
+        (project) => project.sessionId,
+      ),
+    ).toEqual(["ses_a", "ses_b"]);
+  });
+
+  test("replaceBackendStates removes disappeared sibling sessions from the watch map", () => {
+    const backend = new TestBackend();
+    const projectMap = new Map();
+    const backendProjectKeys = new Map<SessionBackend, Set<string>>();
+
+    replaceBackendStates(
+      projectMap,
+      backendProjectKeys,
+      backend,
+      new Map([
+        [
+          "opencode::ses_a",
+          {
+            cwd: "/repo",
+            projectName: "repo",
+            sessionId: "ses_a",
+            source: "opencode",
+            state: "running",
+            lastUpdated: new Date(1_000).toISOString(),
+          },
+        ],
+        [
+          "opencode::ses_b",
+          {
+            cwd: "/repo",
+            projectName: "repo",
+            sessionId: "ses_b",
+            source: "opencode",
+            state: "running",
+            lastUpdated: new Date(2_000).toISOString(),
+          },
+        ],
+      ]),
+    );
+    replaceBackendStates(
+      projectMap,
+      backendProjectKeys,
+      backend,
+      new Map([
+        [
+          "opencode::ses_b",
+          {
+            cwd: "/repo",
+            projectName: "repo",
+            sessionId: "ses_b",
+            source: "opencode",
+            state: "running",
+            lastUpdated: new Date(2_000).toISOString(),
+          },
+        ],
+      ]),
+    );
+
+    expect([...projectMap.keys()]).toEqual(["opencode::ses_b"]);
+  });
+
+  test("buildOutput keeps one-shot filtered no-match silent but watch snapshots explicit", () => {
+    const projects = [
+      {
+        cwd: "/repo",
+        projectName: "repo",
+        sessionId: "ses_a",
+        source: "opencode" as const,
+        state: "running" as const,
+        lastUpdated: new Date(1_000).toISOString(),
+      },
+    ];
+
+    expect(buildOutput(projects, 1, "missing", false)).toBe("");
+    expect(buildOutput(projects, 1, "missing", true)).toBe("[]");
+  });
 });
 
 // ─── status ───────────────────────────────────────────────────────────────────

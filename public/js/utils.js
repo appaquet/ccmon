@@ -46,7 +46,7 @@ function shortModel(model) {
 
 function projKey(p) {
   var dir = p.source === 'claude' ? p.projectDir
-    : p.source === 'opencode' ? p.cwd
+    : p.source === 'opencode' ? p.sessionId
     : null;
   return p._backendKey + '::' + (dir || p.projectName);
 }

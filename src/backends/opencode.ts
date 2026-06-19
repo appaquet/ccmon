@@ -71,16 +71,11 @@ export class OpencodeBackend implements SessionBackend {
            p.name AS projectName,
            s.time_created,
            s.time_updated
-         FROM session s
-         JOIN project p ON s.project_id = p.id
-         JOIN (
-           SELECT directory, MAX(time_updated) AS max_updated
-           FROM session
-           WHERE time_archived IS NULL AND parent_id IS NULL
-           GROUP BY directory
-         ) latest ON s.directory = latest.directory AND s.time_updated = latest.max_updated
-         WHERE s.time_archived IS NULL
-           AND s.parent_id IS NULL`,
+          FROM session s
+          JOIN project p ON s.project_id = p.id
+          WHERE s.time_archived IS NULL
+            AND s.parent_id IS NULL
+          ORDER BY s.time_updated DESC, s.time_created DESC, s.id DESC`,
       )
       .all() as {
       sessionId: string;
@@ -115,13 +110,7 @@ export class OpencodeBackend implements SessionBackend {
       | { max_updated: number | null }
       | undefined;
 
-    let maxUpdated = maxRow?.max_updated ?? row.time_updated;
-    for (const child of this.getActiveChildActivityRows(
-      projectInfo,
-      row.directory,
-    )) {
-      maxUpdated = Math.max(maxUpdated, child.time_updated);
-    }
+    const maxUpdated = maxRow?.max_updated ?? row.time_updated;
 
     return new Date(maxUpdated).toISOString();
   }
@@ -155,20 +144,13 @@ export class OpencodeBackend implements SessionBackend {
     if (row.time_archived !== null) return "stopped";
 
     if (statusState === "stopped") {
-      return this.hasLiveLinkedChild(projectInfo) ||
-        this.hasActiveChildActivity(projectInfo, row.directory)
-        ? "running"
-        : "stopped";
+      return this.hasLiveLinkedChild(projectInfo) ? "running" : "stopped";
     }
 
     const age = Date.now() - row.time_updated;
     if (age < OPENCODE_ACTIVE_THRESHOLD_MS) return "running";
 
-    if (
-      this.hasLiveLinkedChild(projectInfo) ||
-      this.hasActiveChildActivity(projectInfo, row.directory)
-    )
-      return "running";
+    if (this.hasLiveLinkedChild(projectInfo)) return "running";
 
     return "stopped";
   }
@@ -351,55 +333,6 @@ export class OpencodeBackend implements SessionBackend {
     const matching = events.filter((e) => e.session_id === sessionId);
     matching.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     return matching;
-  }
-
-  private hasActiveChildActivity(
-    projectInfo: ProjectInfo,
-    directory: string,
-  ): boolean {
-    return this.getActiveChildActivityRows(projectInfo, directory).length > 0;
-  }
-
-  private getActiveChildActivityRows(
-    projectInfo: ProjectInfo,
-    directory: string,
-  ): { id: string; parent_id: string | null; time_updated: number }[] {
-    const cutoff = Date.now() - OPENCODE_ACTIVE_THRESHOLD_MS;
-    const rows = this.db
-      .prepare(
-        `SELECT id, parent_id, time_updated FROM session
-         WHERE time_archived IS NULL
-            AND time_updated > ?
-            AND directory = ?
-            AND id != ?
-            AND (parent_id IS NULL OR parent_id != ?)`,
-      )
-      .all(cutoff, directory, projectInfo.sessionId, projectInfo.sessionId) as {
-      id: string;
-      parent_id: string | null;
-      time_updated: number;
-    }[];
-
-    const activeRows: typeof rows = [];
-
-    for (const row of rows) {
-      const statusState = this.resolveStatusLogState(row.id);
-      if (
-        statusState === "stopped" ||
-        statusState === "closed" ||
-        statusState === "error"
-      ) {
-        continue;
-      }
-      if (row.parent_id !== projectInfo.sessionId) {
-        log.info("resolveState fallback triggered", {
-          project: projectInfo.projectName,
-        });
-      }
-      activeRows.push(row);
-    }
-
-    return activeRows;
   }
 
   private hasLiveLinkedChild(projectInfo: ProjectInfo): boolean {

@@ -11,6 +11,7 @@ import { log } from "./log.ts";
 import {
   disambiguateProjectNames,
   filterStaleProjects,
+  sortProjectsByRecency,
 } from "./project-utils.ts";
 import { BROADCAST_INTERVAL_MS } from "./timing.ts";
 import type { ProjectState } from "./types.ts";
@@ -59,7 +60,7 @@ export function startServer(options: ServerOptions): {
 
   function currentFilteredState(): ProjectState[] {
     const filtered = filterStaleProjects(allStates(), maxInactivityHours);
-    const cloned = filtered.map((p) => ({ ...p }));
+    const cloned = sortProjectsByRecency(filtered).map((p) => ({ ...p }));
     disambiguateProjectNames(cloned);
     return cloned;
   }

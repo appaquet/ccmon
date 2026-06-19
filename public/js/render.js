@@ -61,6 +61,19 @@ function subagentLabel(agent) {
   return 'Sub: ' + (agent.description || agent.sessionName || agent.slug || agent.agentId);
 }
 
+function shortSessionId(sessionId) {
+  if (!sessionId) return '';
+  return sessionId.length > 10 ? sessionId.slice(0, 10) : sessionId;
+}
+
+function sessionIdentityLabel(proj) {
+  if (proj.sessionName) return proj.sessionName;
+  if (proj.source === 'opencode' && proj.sessionId) {
+    return shortSessionId(proj.sessionId);
+  }
+  return '';
+}
+
 function createCard(proj, flashStopped, flashNotification, displayName, key) {
   var card = document.createElement('div');
   var s = proj.state || 'stopped';
@@ -99,11 +112,12 @@ function createCard(proj, flashStopped, flashNotification, displayName, key) {
   }
 
   var cardName = displayName || proj.projectName;
-  var sessionSuffix = proj.sessionName
-    ? ' <span style="font-weight:normal;color:var(--muted)">(' + esc(proj.sessionName) + ')</span>'
+  var identityLabel = sessionIdentityLabel(proj);
+  var sessionSuffix = identityLabel
+    ? ' <span style="font-weight:normal;color:var(--muted)">(' + esc(identityLabel) + ')</span>'
     : '';
   var sourceLabel = (proj.source === 'opencode') ? 'OC' : 'CC';
-  var cardTitle = proj.sessionName ? cardName + ' (' + proj.sessionName + ')' : cardName;
+  var cardTitle = identityLabel ? cardName + ' (' + identityLabel + ')' : cardName;
   var html = `
     <div class="card-header">
       <span class="card-name" title="${esc(cardTitle)}">${esc(cardName)}${sessionSuffix}</span>
@@ -170,14 +184,17 @@ function pruneStale(collection, currentKeys, predicate) {
 var lastSortOrder = [];
 var lastSortTime = 0;
 
+function compareProjectsByRecency(a, b) {
+  var ta = a.lastUpdated ? new Date(a.lastUpdated).getTime() : 0;
+  var tb = b.lastUpdated ? new Date(b.lastUpdated).getTime() : 0;
+  if (tb !== ta) return tb - ta;
+  return String(a.sessionId || '').localeCompare(String(b.sessionId || ''));
+}
+
 function getSortedProjects(projects) {
   var now = Date.now();
   if (now - lastSortTime >= 30000) {
-    var sorted = projects.slice().sort(function (a, b) {
-      var ta = a.lastUpdated ? new Date(a.lastUpdated).getTime() : 0;
-      var tb = b.lastUpdated ? new Date(b.lastUpdated).getTime() : 0;
-      return tb - ta;
-    });
+    var sorted = projects.slice().sort(compareProjectsByRecency);
     lastSortOrder = sorted.map(function (p) { return projKey(p); });
     lastSortTime = now;
     return sorted;
@@ -200,7 +217,7 @@ function getSortedProjects(projects) {
   for (var i = 0; i < projects.length; i++) {
     if (!knownKeys[projKey(projects[i])]) newProjects.push(projects[i]);
   }
-  var result = newProjects.concat(known);
+  var result = known.concat(newProjects).sort(compareProjectsByRecency);
   lastSortOrder = result.map(function (p) { return projKey(p); });
   return result;
 }

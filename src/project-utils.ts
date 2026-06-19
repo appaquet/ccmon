@@ -112,6 +112,18 @@ export function filterStaleProjects(
   });
 }
 
+export function sortProjectsByRecency(
+  projects: ProjectState[],
+): ProjectState[] {
+  return projects.toSorted((a, b) => {
+    const updatedA = a.lastUpdated ? new Date(a.lastUpdated).getTime() : 0;
+    const updatedB = b.lastUpdated ? new Date(b.lastUpdated).getTime() : 0;
+    if (updatedB !== updatedA) return updatedB - updatedA;
+
+    return a.sessionId.localeCompare(b.sessionId);
+  });
+}
+
 export async function readProjectInfo(
   fullPath: string,
   dirName: string,

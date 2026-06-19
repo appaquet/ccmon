@@ -47,6 +47,60 @@ class NoWatchBackend implements SessionBackend {
   }
 }
 
+class MutableBackend implements SessionBackend {
+  private projects: ProjectInfo[];
+  private onUpdate: (() => void) | null = null;
+
+  constructor(projects: ProjectInfo[]) {
+    this.projects = projects;
+  }
+
+  setProjects(projects: ProjectInfo[]): void {
+    this.projects = projects;
+  }
+
+  triggerUpdate(): void {
+    this.onUpdate?.();
+  }
+
+  async scanProjects(): Promise<ProjectInfo[]> {
+    return this.projects;
+  }
+
+  watchForChanges(onUpdate: () => void): { stop: () => void } {
+    this.onUpdate = onUpdate;
+    return {
+      stop: () => {
+        this.onUpdate = null;
+      },
+    };
+  }
+
+  async resolveState(): Promise<SessionState> {
+    return "running";
+  }
+
+  async computeLastUpdated(info: ProjectInfo): Promise<string | null> {
+    return info.source === "opencode"
+      ? new Date(info.sessionId.endsWith("b") ? 2_000 : 1_000).toISOString()
+      : new Date(1_000).toISOString();
+  }
+
+  async enrichProject(info: ProjectInfo): Promise<SessionEnrichment> {
+    return {
+      sessionName: info.sessionId === "ses_peer_b" ? "Peer B" : "Peer A",
+    };
+  }
+
+  async getSubagents(): Promise<SubagentInfo[]> {
+    return [];
+  }
+
+  projectKey(project: ProjectInfo): string {
+    return `${project.source}::${project.sessionId}`;
+  }
+}
+
 describe("HTTP server", () => {
   let tmpDir: string;
   let stop: (() => void) | null = null;
@@ -461,6 +515,68 @@ describe("server-side state map (R31)", () => {
     expect(body.length).toBe(1);
     const entry = body[0] as Record<string, unknown>;
     expect(entry.projectName).toBe("r31apiproj");
+  });
+});
+
+describe("same-repo sibling reconciliation", () => {
+  let stop: (() => void) | null = null;
+
+  afterEach(() => {
+    if (stop) {
+      stop();
+      stop = null;
+    }
+  });
+
+  test("watch updates remove disappeared opencode sibling sessions from /api/state", async () => {
+    const backend = new MutableBackend([
+      {
+        cwd: "/home/user/repo",
+        projectName: "repo",
+        sessionId: "ses_peer_a",
+        source: "opencode",
+      },
+      {
+        cwd: "/home/user/repo",
+        projectName: "repo",
+        sessionId: "ses_peer_b",
+        source: "opencode",
+      },
+    ]);
+
+    const srv = startServer({
+      port: 0,
+      backends: [backend],
+      maxInactivityHours: Infinity,
+    });
+    stop = srv.stop;
+    await srv.ready;
+
+    let res = await fetch(`http://localhost:${srv.port}/api/state`);
+    let body = (await res.json()) as Array<Record<string, unknown>>;
+    expect(body.map((entry) => entry.sessionId)).toEqual([
+      "ses_peer_b",
+      "ses_peer_a",
+    ]);
+
+    backend.setProjects([
+      {
+        cwd: "/home/user/repo",
+        projectName: "repo",
+        sessionId: "ses_peer_b",
+        source: "opencode",
+      },
+    ]);
+    backend.triggerUpdate();
+
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      res = await fetch(`http://localhost:${srv.port}/api/state`);
+      body = (await res.json()) as Array<Record<string, unknown>>;
+      if (body.length === 1) break;
+    }
+
+    expect(body.map((entry) => entry.sessionId)).toEqual(["ses_peer_b"]);
   });
 });
 

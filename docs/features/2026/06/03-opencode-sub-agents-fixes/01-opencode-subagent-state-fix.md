@@ -22,11 +22,11 @@ This phase covers the first reported issue: OpenCode sessions can be marked stop
 * [x] Q: How should same-directory unlinked child-like sessions be treated?
   * Uncertainty: Some OpenCode activity can appear without a clean `parent_id` linkage.
   * Tried: Followed the existing same-directory fallback pattern and validated it against the reported stopped-while-busy failure mode.
-  * Result: Same-directory unlinked active sessions continue to act as a running fallback heuristic.
+  * Result: At the time of this phase, same-directory unlinked active sessions continued to act as a running fallback heuristic. Later Phase 04 same-repo concurrent-session work narrowed that rule: top-level `parent_id IS NULL` peer sessions no longer act as fallback child activity for each other, because they are now visible peers rather than hidden child-like evidence.
 * [x] Q: Does `computeLastUpdated()` use the same same-directory fallback heuristic as running-state resolution?
   * Uncertainty: Review found a possible mismatch where a project can resolve to `running` via an unlinked child while `lastUpdated` still looks stale.
   * Tried: Compared the `computeLastUpdated()` query against the running-state fallback path and added regression coverage for same-directory child freshness.
-  * Result: No at first; updated `computeLastUpdated()` to include the same same-directory active-child path, so running state and freshness now agree.
+  * Result: No at first; updated `computeLastUpdated()` to include the same same-directory active-child path, so running state and freshness agreed for the scope of this phase. Later Phase 04 same-repo concurrent-session work narrowed that same-directory fallback so visible top-level peer sessions no longer share freshness or running-state keepalive.
 * [x] Q: Why did the recent 120s sleep child disappear even though it was still alive?
   * Uncertainty: The repro looked like a missed status update or bad child-parent linkage.
   * Tried: Inspected the real child session timestamps and current child inclusion logic.
@@ -84,7 +84,7 @@ This phase covers the first reported issue: OpenCode sessions can be marked stop
 
 ## Files
 
-- **src/backends/opencode.ts**: Primary state-resolution and sub-agent discovery logic. Changes: linked children now use lifecycle-based retention until terminal or a long fallback timeout; terminal child retention is keyed from terminal event time rather than stale launch-time timestamps; parent running state follows linked non-terminal children.
+- **src/backends/opencode.ts**: Primary state-resolution and sub-agent discovery logic. Changes: linked children now use lifecycle-based retention until terminal or a long fallback timeout; terminal child retention is keyed from terminal event time rather than stale launch-time timestamps; parent running state follows linked non-terminal children. Later Phase 04 narrowed same-directory fallback so visible top-level peers no longer count as fallback child activity.
 - **src/backends/build-project-state.ts**: Controls whether sub-agents are surfaced for a project.
 - **src/backends/types.ts**: Backend contract and state-model boundaries.
 - **src/timing.ts**: Active/stale thresholds used by the OpenCode heuristics. Changes: adds long linked-child lifecycle fallback timeout.

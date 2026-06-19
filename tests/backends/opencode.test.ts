@@ -255,7 +255,7 @@ describe("OpencodeBackend — core", () => {
     expect(projects[0].source).toBe("opencode");
   });
 
-  test("scanProjects returns only the latest session per directory", async () => {
+  test("scanProjects returns all top-level sessions in the same directory ordered by recency", async () => {
     const now = Date.now();
     const projId = "proj-dedup";
     run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
@@ -285,8 +285,11 @@ describe("OpencodeBackend — core", () => {
     );
 
     const projects = await backend.scanProjects();
-    expect(projects).toHaveLength(1);
-    expect(projects[0].sessionId).toBe("ses_new");
+    expect(projects).toHaveLength(2);
+    expect(projects.map((project) => project.sessionId)).toEqual([
+      "ses_new",
+      "ses_old",
+    ]);
   });
 
   test("scanProjects returns one session per directory when multiple directories exist", async () => {
@@ -317,11 +320,65 @@ describe("OpencodeBackend — core", () => {
     );
 
     const projects = await backend.scanProjects();
-    expect(projects).toHaveLength(2);
+    expect(projects).toHaveLength(3);
     const ids = projects.map((p) => p.sessionId);
     expect(ids).toContain("ses_a2");
+    expect(ids).toContain("ses_a1");
     expect(ids).toContain("ses_b");
-    expect(ids).not.toContain("ses_a1");
+  });
+
+  test("scanProjects keeps parent_id children hidden even when same-directory siblings are visible", async () => {
+    const now = Date.now();
+    const projId = "proj-peer-boundary";
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+      projId,
+      "peerboundary",
+      "/home/user/peerboundary",
+    ]);
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "ses_parent_a",
+        "Parent A",
+        "/home/user/peerboundary",
+        now - 120000,
+        now - 2000,
+        projId,
+      ],
+    );
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "ses_parent_b",
+        "Parent B",
+        "/home/user/peerboundary",
+        now - 60000,
+        now - 1000,
+        projId,
+      ],
+    );
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        "ses_child_hidden",
+        "Child",
+        "/home/user/peerboundary",
+        now - 50000,
+        now,
+        "ses_parent_a",
+        projId,
+      ],
+    );
+
+    const projects = await backend.scanProjects();
+
+    expect(projects.map((project) => project.sessionId)).toEqual([
+      "ses_parent_b",
+      "ses_parent_a",
+    ]);
   });
 
   test("resolveState returns running when time_updated < 30s ago", async () => {
@@ -1166,7 +1223,7 @@ describe("OpencodeBackend — sub-agents", () => {
     expect(state).toBe("stopped");
   });
 
-  test("resolveState returns running via fallback directory scan when parent_id linkage is absent", async () => {
+  test("resolveState keeps same-directory top-level peers independent when one peer is active", async () => {
     const now = Date.now();
     const parentId = setupParent();
 
@@ -1175,13 +1232,12 @@ describe("OpencodeBackend — sub-agents", () => {
       parentId,
     ]);
 
-    // Child session without parent_id — simulates missing linkage
     run(
       db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
-        "ses_unlinked_child",
-        "Unlinked Child",
+        "ses_top_level_peer",
+        "Top-level Peer",
         "/home/user/parentproj",
         now - 10000,
         now,
@@ -1189,9 +1245,24 @@ describe("OpencodeBackend — sub-agents", () => {
       ],
     );
 
-    const project = (await backend.scanProjects())[0];
-    const state = await backend.resolveState(project);
-    expect(state).toBe("running");
+    const projects = await backend.scanProjects();
+    const staleParent = projects.find(
+      (project) => project.sessionId === parentId,
+    );
+    const activePeer = projects.find(
+      (project) => project.sessionId === "ses_top_level_peer",
+    );
+
+    expect(staleParent).toBeDefined();
+    expect(activePeer).toBeDefined();
+    if (!staleParent || !activePeer) {
+      throw new Error(
+        "expected both same-directory peer sessions to be visible",
+      );
+    }
+
+    await expect(backend.resolveState(staleParent)).resolves.toBe("stopped");
+    await expect(backend.resolveState(activePeer)).resolves.toBe("running");
   });
 
   test("resolveState returns stopped when fallback directory scan also finds nothing active", async () => {
@@ -1252,7 +1323,7 @@ describe("OpencodeBackend — sub-agents", () => {
     expect(state.lastUpdated).toBe(new Date(childUpdated).toISOString());
   });
 
-  test("buildProjectState lastUpdated uses same-directory unlinked active child time_updated", async () => {
+  test("buildProjectState keeps stale top-level peer state and lastUpdated session-scoped when same-directory peer activity exists", async () => {
     const now = Date.now();
     const parentId = setupParent();
 
@@ -1283,8 +1354,8 @@ describe("OpencodeBackend — sub-agents", () => {
       source: "opencode" as const,
     };
     const state = await buildProjectState(backend, project);
-    expect(state.state).toBe("running");
-    expect(state.lastUpdated).toBe(new Date(childUpdated).toISOString());
+    expect(state.state).toBe("stopped");
+    expect(state.lastUpdated).toBe(new Date(parentUpdated).toISOString());
   });
 
   test("buildProjectState lastUpdated uses parent time_updated when parent is more recent", async () => {
@@ -1921,7 +1992,7 @@ describe("OpencodeBackend — status log", () => {
     await expect(backend.resolveState(projects[0])).resolves.toBe("stopped");
   });
 
-  test("active same-directory unlinked child keeps parent running after parent idle status", async () => {
+  test("active same-directory top-level peer does not keep sibling running after parent idle status", async () => {
     const now = Date.now();
     setupProject(
       "proj-unlinked-child-status",
@@ -1934,8 +2005,8 @@ describe("OpencodeBackend — status log", () => {
       db,
       "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
       [
-        "ses_active_unlinked_child",
-        "Active unlinked child",
+        "ses_active_same_dir_peer",
+        "Active same-dir peer",
         "/home/user/unlinkedchild",
         now - 10_000,
         now,
@@ -1956,7 +2027,23 @@ describe("OpencodeBackend — status log", () => {
 
     const backend = new OpencodeBackend(db, 5000, statusPath);
     const projects = await backend.scanProjects();
-    await expect(backend.resolveState(projects[0])).resolves.toBe("running");
+    const stoppedPeer = projects.find(
+      (project) => project.sessionId === "ses_parent_idle_unlinked",
+    );
+    const activePeer = projects.find(
+      (project) => project.sessionId === "ses_active_same_dir_peer",
+    );
+
+    expect(stoppedPeer).toBeDefined();
+    expect(activePeer).toBeDefined();
+    if (!stoppedPeer || !activePeer) {
+      throw new Error(
+        "expected both same-directory peer sessions to be visible",
+      );
+    }
+
+    await expect(backend.resolveState(stoppedPeer)).resolves.toBe("stopped");
+    await expect(backend.resolveState(activePeer)).resolves.toBe("running");
   });
 
   test("child stopped status does not keep stale parent running", async () => {
