@@ -21,7 +21,7 @@
           name = "ccmon";
           src = ./.;
           nodejs = pkgs.nodejs_22;
-          npmDepsHash = "sha256-aMqw3o68F5ftYFm8BK0QNwWhR7PBmM0It+ftnYqX2jU=";
+          npmDepsHash = "sha256-1e6O8LR30AQtPaXNlMqAgc9YheaHDr5FgB/IU4H3kWQ=";
           dontNpmBuild = true;
 
           # Node refuses to type-strip files under node_modules/. Move source
