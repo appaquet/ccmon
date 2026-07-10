@@ -224,9 +224,9 @@ Phase 60 (Review Fixes 5) implemented May 2026 — all 33 REVIEW comments from a
 
 ### Project Name Disambiguation
 
-- R63: ✅ Projects with duplicate leaf names get `projectName` expanded with parent path segments until unique (Phase: Project Name Disambiguation, Review Fixes 4)
-  - R63.1: `disambiguateProjectNames()` groups by basename, expands `projectName` with parent segments until unique
-  - R63.2: Unique basenames keep their short name; no separate `displayName` field needed
+- R63: 🔄 Projects with duplicate leaf names receive reversible display labels expanded with parent path segments until unique, while canonical `projectName` remains immutable (Phase: Project Name Disambiguation, Review Fixes 4, Project and Session Identity)
+  - R63.1: A pure output/display projection groups by basename and expands only its display labels with parent segments until unique; it never mutates canonical `projectName`.
+  - R63.2: Unique basenames keep their short display labels, and a label returns to its canonical name when collisions disappear.
 
 - R64: ✅ `StopFailure` hook event detection — sessions that fail due to API errors get `error` state with persistent attention flash (Phase: StopFailure Hook)
   - R64.1: ✅ `resolveState()` treats StopFailure like a terminal state; JSONL mtime activity overrides to `running` (session recovered); resolves pending PermissionRequests
@@ -251,7 +251,7 @@ Phase 60 (Review Fixes 5) implemented May 2026 — all 33 REVIEW comments from a
   - R69.1: `scanProjects()`, `buildProjectState()`, `watchForChanges()`, `resolveState()`, `enrichProject()`, `getSubagents()`, `projectKey()` methods
 - R70: ✅ Claude Code backend as thin wrapper around existing functions, zero behavior change (Phase: Claude Backend Extraction)
 - R71: ✅ OpenCode backend reads SQLite database read-only via `better-sqlite3` (Phase: OpenCode Backend)
-  - R71.1: ✅ Project discovery from `session` + `project` tables; returns only latest session per `directory` via `MAX(time_updated)` grouping (Phase: OpenCode Session Deduplication)
+  - R71.1: ✅ Project discovery from `session` + `project` tables returns every visible non-archived top-level session (`parent_id IS NULL`) as a stable session-identified peer; linked child sessions remain subagents. Phase: OpenCode Concurrent Sessions; the latest-session-per-directory behavior from OpenCode Session Deduplication is superseded historical behavior.
   - R71.2: ✅ State inferred from `time_updated` recency; also considers child session activity so active sub-agents keep the parent project "running" (Phase: OpenCode State Detection Fix)
   - R71.3: Enrichment from `message.data` + `part.data` JSON blobs (model, messages, tokens)
   - R71.4: Sub-agents via `parent_id` linking

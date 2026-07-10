@@ -4,34 +4,26 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CcmonConfig } from "../config.ts";
 import { log } from "../log.ts";
+import { DEFAULT_CLAUDE_DIR } from "../project-utils.ts";
 import {
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_STATUS_POLL_INTERVAL_MS,
 } from "../timing.ts";
 import { ClaudeBackend } from "./claude.ts";
 import { OpencodeBackend } from "./opencode.ts";
-import type { SessionBackend } from "./types.ts";
+import type { AnySessionBackend, BackendConfigEntry } from "./types.ts";
 
-function createClaudeBackend(entry: {
-  type: "claude";
-  enabled: boolean;
-  projectsDir?: string;
-}): SessionBackend {
+function createClaudeBackend(
+  entry: Extract<BackendConfigEntry, { type: "claude" }>,
+): AnySessionBackend {
   const projectsDir =
-    entry.projectsDir ??
-    process.env.CLAUDE_PROJECTS_DIR ??
-    join(homedir(), ".claude", "projects");
+    entry.projectsDir ?? process.env.CLAUDE_PROJECTS_DIR ?? DEFAULT_CLAUDE_DIR;
   return new ClaudeBackend(projectsDir);
 }
 
-function createOpencodeBackend(entry: {
-  type: "opencode";
-  enabled: boolean;
-  databasePath?: string;
-  pollIntervalMs?: number;
-  statusLogPath?: string;
-  statusPollIntervalMs?: number;
-}): { backend: SessionBackend; db: DatabaseSync } | null {
+function createOpencodeBackend(
+  entry: Extract<BackendConfigEntry, { type: "opencode" }>,
+): { backend: AnySessionBackend; db: DatabaseSync } | null {
   const databasePath =
     entry.databasePath ??
     join(homedir(), ".local", "share", "opencode", "opencode.db");
@@ -76,10 +68,10 @@ function createOpencodeBackend(entry: {
  * CLI callers must call close() after scanning completes; the server calls close() on shutdown.
  */
 export function createBackends(config: CcmonConfig): {
-  backends: SessionBackend[];
+  backends: AnySessionBackend[];
   close: () => void;
 } {
-  const backends: SessionBackend[] = [];
+  const backends: AnySessionBackend[] = [];
   const dbs: DatabaseSync[] = [];
 
   for (const entry of config.backends) {

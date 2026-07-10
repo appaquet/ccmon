@@ -1,9 +1,13 @@
 import { utimesSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { createConnection } from "node:net";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { WebSocket as NodeWebSocket } from "ws";
 import { ClaudeBackend } from "../src/backends/claude.ts";
 import type { SessionBackend } from "../src/backends/types.ts";
+import type { ClaudeProjectInfo } from "../src/project-utils.ts";
 import { startServer } from "../src/server.ts";
 import type { SessionState } from "../src/session-core.ts";
 import type {
@@ -17,10 +21,13 @@ import { makeTempDir } from "./_helpers.ts";
  * Wraps a SessionBackend so watchForChanges is a no-op.
  * Used to test the periodic rescan path independently of watchers.
  */
-class NoWatchBackend implements SessionBackend {
-  private inner: SessionBackend;
+type OpencodeProjectInfo = Extract<ProjectInfo, { source: "opencode" }>;
 
-  constructor(inner: SessionBackend) {
+class NoWatchBackend implements SessionBackend<ClaudeProjectInfo> {
+  readonly source = "claude" as const;
+  private inner: SessionBackend<ClaudeProjectInfo>;
+
+  constructor(inner: SessionBackend<ClaudeProjectInfo>) {
     this.inner = inner;
   }
 
@@ -30,32 +37,33 @@ class NoWatchBackend implements SessionBackend {
   watchForChanges(_onUpdate: () => void): { stop: () => void } {
     return { stop() {} };
   }
-  resolveState(info: ProjectInfo): Promise<SessionState> {
+  resolveState(info: ClaudeProjectInfo): Promise<SessionState> {
     return this.inner.resolveState(info);
   }
-  computeLastUpdated(info: ProjectInfo): Promise<string | null> {
+  computeLastUpdated(info: ClaudeProjectInfo): Promise<string | null> {
     return this.inner.computeLastUpdated(info);
   }
-  enrichProject(info: ProjectInfo): Promise<SessionEnrichment> {
+  enrichProject(info: ClaudeProjectInfo): Promise<SessionEnrichment> {
     return this.inner.enrichProject(info);
   }
-  getSubagents(info: ProjectInfo): Promise<SubagentInfo[]> {
+  getSubagents(info: ClaudeProjectInfo): Promise<SubagentInfo[]> {
     return this.inner.getSubagents(info);
   }
-  projectKey(project: ProjectInfo): string {
+  projectKey(project: ClaudeProjectInfo): string {
     return this.inner.projectKey(project);
   }
 }
 
-class MutableBackend implements SessionBackend {
-  private projects: ProjectInfo[];
+class MutableBackend implements SessionBackend<OpencodeProjectInfo> {
+  readonly source = "opencode" as const;
+  private projects: OpencodeProjectInfo[];
   private onUpdate: (() => void) | null = null;
 
-  constructor(projects: ProjectInfo[]) {
+  constructor(projects: OpencodeProjectInfo[]) {
     this.projects = projects;
   }
 
-  setProjects(projects: ProjectInfo[]): void {
+  setProjects(projects: OpencodeProjectInfo[]): void {
     this.projects = projects;
   }
 
@@ -63,7 +71,7 @@ class MutableBackend implements SessionBackend {
     this.onUpdate?.();
   }
 
-  async scanProjects(): Promise<ProjectInfo[]> {
+  async scanProjects(): Promise<OpencodeProjectInfo[]> {
     return this.projects;
   }
 
@@ -80,13 +88,11 @@ class MutableBackend implements SessionBackend {
     return "running";
   }
 
-  async computeLastUpdated(info: ProjectInfo): Promise<string | null> {
-    return info.source === "opencode"
-      ? new Date(info.sessionId.endsWith("b") ? 2_000 : 1_000).toISOString()
-      : new Date(1_000).toISOString();
+  async computeLastUpdated(info: OpencodeProjectInfo): Promise<string | null> {
+    return new Date(info.sessionId.endsWith("b") ? 2_000 : 1_000).toISOString();
   }
 
-  async enrichProject(info: ProjectInfo): Promise<SessionEnrichment> {
+  async enrichProject(info: OpencodeProjectInfo): Promise<SessionEnrichment> {
     return {
       sessionName: info.sessionId === "ses_peer_b" ? "Peer B" : "Peer A",
     };
@@ -96,8 +102,22 @@ class MutableBackend implements SessionBackend {
     return [];
   }
 
-  projectKey(project: ProjectInfo): string {
+  projectKey(project: OpencodeProjectInfo): string {
     return `${project.source}::${project.sessionId}`;
+  }
+}
+
+class TrackingBackend extends MutableBackend {
+  stopCalls = 0;
+
+  override watchForChanges(onUpdate: () => void): { stop: () => void } {
+    const watcher = super.watchForChanges(onUpdate);
+    return {
+      stop: () => {
+        this.stopCalls++;
+        watcher.stop();
+      },
+    };
   }
 }
 
@@ -164,6 +184,26 @@ describe("HTTP server", () => {
 
     const res = await fetch(`http://localhost:${srv.port}/unknown`);
     expect(res.status).toBe(404);
+  });
+
+  test("malformed Host header does not terminate request handling", async () => {
+    const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
+    await srv.ready;
+    stop = srv.stop;
+
+    const rawResponse = await new Promise<string>((resolveP, rejectP) => {
+      const client = createConnection(srv.port, "127.0.0.1", () => {
+        client.write(
+          "GET /api/state HTTP/1.1\r\nHost: [\r\nConnection: close\r\n\r\n",
+        );
+      });
+      const chunks: Buffer[] = [];
+      client.on("data", (chunk: Buffer) => chunks.push(chunk));
+      client.on("end", () => resolveP(Buffer.concat(chunks).toString()));
+      client.on("error", rejectP);
+    });
+
+    expect(rawResponse).toMatch(/HTTP\/1\.1 200/);
   });
 });
 
@@ -418,6 +458,78 @@ describe("WebSocket server", () => {
     const envelope = JSON.parse(message) as Record<string, unknown>;
     expect(typeof envelope.hostname).toBe("string");
     expect((envelope.hostname as string).length).toBeGreaterThan(0);
+  });
+
+  test("accepts a WebSocket from the server origin", async () => {
+    const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
+    await srv.ready;
+    stop = srv.stop;
+
+    const message = await new Promise<string>((resolve, reject) => {
+      const ws = new NodeWebSocket(`ws://localhost:${srv.port}/ws`, {
+        headers: { Origin: `http://localhost:${srv.port}` },
+      });
+      ws.onmessage = (event) => {
+        ws.close();
+        resolve(event.data as string);
+      };
+      ws.onerror = reject;
+    });
+
+    expect(JSON.parse(message)).toHaveProperty("projects");
+  });
+
+  test("rejects a WebSocket from a different browser origin", async () => {
+    const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
+    await srv.ready;
+    stop = srv.stop;
+
+    await expect(
+      new Promise<void>((resolve, reject) => {
+        const ws = new NodeWebSocket(`ws://localhost:${srv.port}/ws`, {
+          headers: { Origin: "https://attacker.example" },
+        });
+        const timeout = setTimeout(() => {
+          ws.close();
+          reject(new Error("Cross-origin WebSocket was not rejected"));
+        }, 1000);
+        ws.onopen = () => {
+          clearTimeout(timeout);
+          ws.close();
+          reject(new Error("Cross-origin WebSocket was accepted"));
+        };
+        ws.onerror = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+      }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("server startup", () => {
+  test("bind failure rejects ready and stops started watchers", async () => {
+    const blocker = createServer();
+    await new Promise<void>((resolve) =>
+      blocker.listen(0, "127.0.0.1", resolve),
+    );
+    const address = blocker.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected TCP listener address");
+    }
+
+    const backend = new TrackingBackend([]);
+    const srv = startServer({
+      port: address.port,
+      hostname: "127.0.0.1",
+      backends: [backend],
+    });
+
+    await expect(srv.ready).rejects.toMatchObject({ code: "EADDRINUSE" });
+    expect(backend.stopCalls).toBe(1);
+    await new Promise<void>((resolve, reject) =>
+      blocker.close((err) => (err ? reject(err) : resolve())),
+    );
   });
 });
 
@@ -850,6 +962,25 @@ describe("static-file path containment (server.ts:164)", () => {
     const res = await fetch(`http://localhost:${srv.port}/js/render.js`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/javascript");
+  });
+
+  test("serves static assets from the startup cache", async () => {
+    const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
+    await srv.ready;
+    stop = srv.stop;
+
+    const assetPath = join(process.cwd(), "public", "js", "render.js");
+    const movedAssetPath = `${assetPath}.ccmon-test-backup`;
+    const expectedContent = await readFile(assetPath, "utf8");
+    await rename(assetPath, movedAssetPath);
+
+    try {
+      const res = await fetch(`http://localhost:${srv.port}/js/render.js`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(expectedContent);
+    } finally {
+      await rename(movedAssetPath, assetPath);
+    }
   });
 });
 

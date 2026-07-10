@@ -17,14 +17,23 @@ export { CLOSED_PROJECT_TTL_MS, MAX_STATUS_LOG_BYTES };
 
 export const DEFAULT_CLAUDE_DIR = join(homedir(), ".claude", "projects");
 
+/** Converts a working directory to Claude Code's project directory name. */
+export function encodeClaudeProjectPath(cwd: string): string {
+  return cwd.replace(/[._/]/g, "-");
+}
+
 const JSONL_EXT = ".jsonl";
 
+/** A project state decorated with its output-only display label. */
+export type ProjectDisplayState = ProjectState & { displayName: string };
+
 /**
- * Mutates projectName on each ProjectState in the array to disambiguate
- * projects that share the same leaf directory name. Expands with parent
- * path segments until unique within the array.
+ * Derives unique display labels for projects sharing a canonical leaf name.
+ * Canonical projectName values and input objects remain unchanged.
  */
-export function disambiguateProjectNames(projects: ProjectState[]): void {
+export function disambiguateProjectNames(
+  projects: ProjectState[],
+): ProjectDisplayState[] {
   const groups = new Map<string, ProjectState[]>();
   for (const p of projects) {
     const existing = groups.get(p.projectName);
@@ -34,6 +43,10 @@ export function disambiguateProjectNames(projects: ProjectState[]): void {
       groups.set(p.projectName, [p]);
     }
   }
+
+  const displayNames = new Map<ProjectState, string>();
+  for (const project of projects)
+    displayNames.set(project, project.projectName);
 
   for (const group of groups.values()) {
     if (group.length <= 1) continue;
@@ -59,10 +72,30 @@ export function disambiguateProjectNames(projects: ProjectState[]): void {
     if (segments <= maxParts) {
       for (const p of group) {
         const parts = p.cwd.split("/");
-        p.projectName = parts.slice(-segments).join("/");
+        displayNames.set(p, parts.slice(-segments).join("/"));
+      }
+    }
+
+    const labelGroups = new Map<string, ProjectState[]>();
+    for (const project of group) {
+      const label = displayNames.get(project) ?? project.projectName;
+      const matching = labelGroups.get(label);
+      if (matching) matching.push(project);
+      else labelGroups.set(label, [project]);
+    }
+    for (const matching of labelGroups.values()) {
+      if (matching.length <= 1) continue;
+      for (const project of matching) {
+        const label = displayNames.get(project) ?? project.projectName;
+        displayNames.set(project, `${label} (${project.sessionId})`);
       }
     }
   }
+
+  return projects.map((project) => ({
+    ...project,
+    displayName: displayNames.get(project) ?? project.projectName,
+  }));
 }
 
 export async function scanProjects(
@@ -106,7 +139,7 @@ export function filterStaleProjects(
   return projects.filter((p) => {
     if (p.lastUpdated === null) return false;
     const time = new Date(p.lastUpdated).getTime();
-    if (Number.isNaN(time)) return true;
+    if (Number.isNaN(time)) return false;
     if (p.state === "closed") return time >= closedCutoff;
     return time >= cutoff;
   });

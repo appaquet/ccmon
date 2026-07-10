@@ -13,6 +13,10 @@ export function runSub(port: number, host: string): void {
     const projects = Array.isArray(parsed)
       ? parsed
       : (parsed as Record<string, unknown>).projects;
+    if (!Array.isArray(projects)) {
+      process.stderr.write("ccmon sub: received invalid state frame\n");
+      return;
+    }
     process.stdout.write(`${JSON.stringify(projects)}\n`);
   };
 

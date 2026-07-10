@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BACKEND_TYPES, type BackendConfigEntry } from "./backends/types.ts";
+import { log } from "./log.ts";
 
 export interface CcmonConfig {
   maxInactivityHours: number;
@@ -12,7 +13,7 @@ export interface CcmonConfig {
 
 export const DEFAULT_CONFIG: CcmonConfig = {
   maxInactivityHours: 1,
-  host: "0.0.0.0",
+  host: "127.0.0.1",
   port: 8080,
   backends: [
     { type: "claude", enabled: true },
@@ -22,7 +23,7 @@ export const DEFAULT_CONFIG: CcmonConfig = {
 
 /**
  * Loads config from CCMON_CONFIG env var path, or the XDG default location.
- * Returns DEFAULT_CONFIG silently on missing file, invalid JSON, or invalid shape.
+ * Returns DEFAULT_CONFIG when the optional config file is missing.
  * Partial configs are merged with defaults.
  */
 export function loadConfig(configPath?: string): CcmonConfig {
@@ -31,18 +32,26 @@ export function loadConfig(configPath?: string): CcmonConfig {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
-  } catch {
+  } catch (error) {
+    if (isMissingFileError(error)) return { ...DEFAULT_CONFIG };
+    log.warn("Unable to read configuration; using defaults", error, { path });
     return { ...DEFAULT_CONFIG };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
+  } catch (error) {
+    log.warn("Invalid configuration JSON; using defaults", error, { path });
     return { ...DEFAULT_CONFIG };
   }
 
-  if (!isCcmonConfig(parsed)) return { ...DEFAULT_CONFIG };
+  if (!isCcmonConfig(parsed)) {
+    log.warn("Configuration must be a JSON object; using defaults", undefined, {
+      path,
+    });
+    return { ...DEFAULT_CONFIG };
+  }
 
   return mergeWithDefaults(parsed);
 }
@@ -75,10 +84,21 @@ function resolveConfigPath(): string {
 function isValidBackendEntry(v: unknown): v is BackendConfigEntry {
   if (typeof v !== "object" || v === null) return false;
   const entry = v as Record<string, unknown>;
+  if (
+    typeof entry.type !== "string" ||
+    !(BACKEND_TYPES as readonly string[]).includes(entry.type) ||
+    typeof entry.enabled !== "boolean"
+  ) {
+    return false;
+  }
+
+  if (entry.type === "claude") return isOptionalPath(entry.projectsDir);
+
   return (
-    typeof entry.type === "string" &&
-    (BACKEND_TYPES as readonly string[]).includes(entry.type) &&
-    typeof entry.enabled === "boolean"
+    isOptionalPath(entry.databasePath) &&
+    isOptionalPath(entry.statusLogPath) &&
+    isOptionalPositiveFiniteNumber(entry.pollIntervalMs) &&
+    isOptionalPositiveFiniteNumber(entry.statusPollIntervalMs)
   );
 }
 
@@ -114,8 +134,41 @@ function mergeWithDefaults(partial: Record<string, unknown>): CcmonConfig {
     maxInactivityHours,
     host: typeof partial.host === "string" ? partial.host : DEFAULT_CONFIG.host,
     port,
-    backends: Array.isArray(partial.backends)
-      ? partial.backends.filter(isValidBackendEntry)
-      : DEFAULT_CONFIG.backends,
+    backends: mergeBackends(partial.backends),
   };
+}
+
+function mergeBackends(value: unknown): BackendConfigEntry[] {
+  if (!Array.isArray(value)) return DEFAULT_CONFIG.backends;
+  const backends = value.filter(isValidBackendEntry);
+  if (backends.length === value.length) return backends;
+
+  log.warn("Ignoring invalid backend configuration entries", undefined, {
+    invalidEntries: value.length - backends.length,
+  });
+  if (value.length > 0 && backends.length === 0) {
+    log.warn("No valid backends configured; using defaults");
+    return DEFAULT_CONFIG.backends;
+  }
+  return backends;
+}
+
+function isOptionalPath(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && value.length > 0);
+}
+
+function isOptionalPositiveFiniteNumber(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (typeof value === "number" && Number.isFinite(value) && value > 0)
+  );
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ENOENT"
+  );
 }

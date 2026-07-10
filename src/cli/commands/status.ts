@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { DEFAULT_CLAUDE_DIR, scanProjects } from "../../project-utils.ts";
+import {
+  DEFAULT_CLAUDE_DIR,
+  encodeClaudeProjectPath,
+  scanProjects,
+} from "../../project-utils.ts";
 import type { StatusEvent } from "../../session-core.ts";
 import {
   mapHookEventToState,
@@ -17,19 +21,27 @@ export async function runStatus(
 ): Promise<number> {
   const dir =
     claudeDir ?? process.env.CLAUDE_PROJECTS_DIR ?? DEFAULT_CLAUDE_DIR;
+  const payload = readHookPayload(input);
+  if (payload === null) return 1;
 
+  const projectDir = await prepareProjectDir(payload.cwd, dir);
+  if (projectDir === null) return 1;
+
+  return writeHookStatus(payload, projectDir);
+}
+
+function readHookPayload(input?: string): HookPayload | null {
   let raw: string;
   try {
-    raw = input ?? (await readStdin());
+    raw = input ?? readStdin();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`Error reading stdin: ${message}\n`);
-    return 1;
+    reportError("reading stdin", err);
+    return null;
   }
 
   if (!raw.trim()) {
     process.stderr.write("Error: empty stdin — expected hook JSON payload\n");
-    return 1;
+    return null;
   }
 
   let payload: unknown;
@@ -39,102 +51,130 @@ export async function runStatus(
     process.stderr.write(
       "Error: invalid JSON on stdin — expected hook JSON payload\n",
     );
-    return 1;
+    return null;
   }
 
   if (!isHookPayload(payload)) {
     process.stderr.write(
       "Error: stdin JSON missing required fields (session_id, cwd, hook_event_name)\n",
     );
-    return 1;
+    return null;
   }
 
-  const { session_id, cwd, hook_event_name } = payload;
-
-  if (!cwd) {
+  if (!payload.cwd) {
     process.stderr.write("Error: cwd is empty; cannot resolve project dir\n");
-    return 1;
+    return null;
   }
 
-  if (!isAbsolute(cwd)) {
+  if (!isAbsolute(payload.cwd)) {
     process.stderr.write(
       "Error: cwd must be an absolute path; got a relative path\n",
     );
-    return 1;
+    return null;
   }
 
-  const projectDir = resolveProjectDir(cwd, dir, await scanProjects(dir));
+  return payload;
+}
 
+async function prepareProjectDir(
+  cwd: string,
+  claudeDir: string,
+): Promise<string | null> {
   try {
+    const projectDir = resolveProjectDir(
+      cwd,
+      claudeDir,
+      await scanProjects(claudeDir),
+    );
     await mkdir(projectDir, { recursive: true });
+    return projectDir;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`Error creating project dir: ${message}\n`);
-    return 1;
+    reportError("preparing project dir", err);
+    return null;
+  }
+}
+
+async function writeHookStatus(
+  payload: HookPayload,
+  projectDir: string,
+): Promise<number> {
+  if (payload.hook_event_name === "Notification") {
+    return writeNotification(payload, projectDir);
   }
 
-  if (hook_event_name === "Notification") {
-    try {
-      await writeNotificationStatus(
-        projectDir,
-        payload.message ?? "",
-        payload.notification_type ?? "",
-        payload.session_id,
-        payload.cwd,
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`Error writing notification status: ${message}\n`);
-      return 1;
-    }
-    process.stdout.write("{}\n");
-    return 0;
+  if (payload.hook_event_name === "SubagentStop") {
+    return writeSubagentStop(payload, projectDir);
   }
 
-  if (hook_event_name === "SubagentStop") {
-    const agentTranscriptPath = payload.agent_transcript_path;
-    if (agentTranscriptPath) {
-      const agentStatusPath = agentTranscriptPath.endsWith(".jsonl")
-        ? `${agentTranscriptPath.slice(0, -".jsonl".length)}.ccmon-status.json`
-        : `${agentTranscriptPath}.ccmon-status.json`;
-      try {
-        await writeSubagentStatus(agentStatusPath, projectDir);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`Error writing subagent status: ${message}\n`);
-        return 1;
-      }
-    }
-    process.stdout.write("{}\n");
-    return 0;
-  }
-
-  const state = mapHookEventToState(hook_event_name);
-  if (state === null) {
-    process.stdout.write("{}\n");
-    return 0;
-  }
+  const state = mapHookEventToState(payload.hook_event_name);
+  if (state === null) return writeHookResponse();
 
   const event: StatusEvent = {
-    event: hook_event_name,
+    event: payload.hook_event_name,
     state,
     timestamp: new Date().toISOString(),
-    session_id,
-    working_dir: cwd,
+    session_id: payload.session_id,
+    working_dir: payload.cwd,
   };
 
   try {
-    if (hook_event_name === "SessionEnd") {
+    if (payload.hook_event_name === "SessionEnd") {
       await writeStatusTruncate(projectDir, event);
     } else {
       await writeStatusEvent(projectDir, event);
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`Error writing status: ${message}\n`);
+    reportError("writing status", err);
     return 1;
   }
 
+  return writeHookResponse();
+}
+
+async function writeNotification(
+  payload: HookPayload,
+  projectDir: string,
+): Promise<number> {
+  try {
+    await writeNotificationStatus(
+      projectDir,
+      payload.message ?? "",
+      payload.notification_type ?? "",
+      payload.session_id,
+      payload.cwd,
+    );
+  } catch (err) {
+    reportError("writing notification status", err);
+    return 1;
+  }
+  return writeHookResponse();
+}
+
+async function writeSubagentStop(
+  payload: HookPayload,
+  projectDir: string,
+): Promise<number> {
+  const agentTranscriptPath = payload.agent_transcript_path;
+  if (agentTranscriptPath) {
+    const agentStatusPath = agentTranscriptPath.endsWith(".jsonl")
+      ? `${agentTranscriptPath.slice(0, -".jsonl".length)}.ccmon-status.json`
+      : `${agentTranscriptPath}.ccmon-status.json`;
+    try {
+      await writeSubagentStatus(agentStatusPath, projectDir);
+    } catch (err) {
+      reportError("writing subagent status", err);
+      return 1;
+    }
+  }
+  return writeHookResponse();
+}
+
+function reportError(context: string, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`Error ${context}: ${message}\n`);
+}
+
+function writeHookResponse(): number {
   process.stdout.write("{}\n");
   return 0;
 }
@@ -166,11 +206,11 @@ export function resolveProjectDir(
     return join(dir, bestMatch.projectDir);
   }
 
-  const encoded = cwd.replace(/\//g, "-");
+  const encoded = encodeClaudeProjectPath(cwd);
   return join(dir, encoded);
 }
 
-async function readStdin(): Promise<string> {
+function readStdin(): string {
   return readFileSync(process.stdin.fd, "utf-8");
 }
 
@@ -187,8 +227,19 @@ export function isHookPayload(v: unknown): v is HookPayload {
   if (typeof v !== "object" || v === null) return false;
   const obj = v as Record<string, unknown>;
   return (
-    typeof obj.session_id === "string" &&
+    isNonEmptyString(obj.session_id) &&
     typeof obj.cwd === "string" &&
-    typeof obj.hook_event_name === "string"
+    isNonEmptyString(obj.hook_event_name) &&
+    isOptionalString(obj.message) &&
+    isOptionalString(obj.notification_type) &&
+    isOptionalString(obj.agent_transcript_path)
   );
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
 }

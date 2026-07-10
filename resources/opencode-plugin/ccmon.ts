@@ -66,7 +66,7 @@ export async function ccmonPlugin(context: PluginContext) {
   const logDir = join(stateHome, "ccmon");
   const logPath = join(logDir, "opencode-status.jsonl");
 
-  await mkdir(logDir, { recursive: true }).catch(() => {});
+  await mkdir(logDir, { recursive: true }).catch(() => { });
 
   function extractSessionId(
     ctx: EventHandlerContext | HookHandlerContext,

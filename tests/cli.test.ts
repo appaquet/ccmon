@@ -1,4 +1,4 @@
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -11,7 +11,12 @@ import {
   replaceBackendStates,
 } from "../src/cli/commands/dump.ts";
 import { resolveProjectDir, runStatus } from "../src/cli/commands/status.ts";
-import { parseNumberFlag, parsePortFlag } from "../src/cli/helpers.ts";
+import {
+  parseNumberFlag,
+  parsePortFlag,
+  parseStringFlag,
+} from "../src/cli/helpers.ts";
+import type { ProjectInfo } from "../src/types.ts";
 import { makeTempDir } from "./_helpers.ts";
 
 const STATUS_LOG_FILE = "ccmon-status.jsonl";
@@ -146,7 +151,10 @@ function seedOpencodeSiblings(dbPath: string): void {
   db.close();
 }
 
-class TestBackend implements SessionBackend {
+type OpencodeProjectInfo = Extract<ProjectInfo, { source: "opencode" }>;
+
+class TestBackend implements SessionBackend<OpencodeProjectInfo> {
+  readonly source = "opencode" as const;
   async scanProjects() {
     return [];
   }
@@ -165,7 +173,7 @@ class TestBackend implements SessionBackend {
   async getSubagents() {
     return [];
   }
-  projectKey(project: { source: string; sessionId: string }): string {
+  projectKey(project: OpencodeProjectInfo): string {
     return `${project.source}::${project.sessionId}`;
   }
 }
@@ -180,26 +188,42 @@ async function spawnCli(
   args: string[],
   options: { stdin?: string; env?: Record<string, string> } = {},
 ): Promise<SpawnResult> {
-  try {
-    const stdout = execSync(`${NODE} ${CLI_PATH} ${args.join(" ")}`, {
-      encoding: "utf-8",
+  return new Promise((resolve, reject) => {
+    const proc = spawn(NODE, [CLI_PATH, ...args], {
       stdio: "pipe",
       env: { ...process.env, ...options.env },
-      input: options.stdin,
     });
-    return { stdout: stdout.toString(), stderr: "", exitCode: 0 };
-  } catch (e) {
-    const err = e as {
-      stdout?: Buffer | string;
-      stderr?: Buffer | string;
-      status?: number;
-    };
-    return {
-      stdout: err.stdout?.toString() || "",
-      stderr: err.stderr?.toString() || "",
-      exitCode: err.status || 1,
-    };
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    proc.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    proc.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    proc.once("error", reject);
+    proc.once("close", (code) => {
+      resolve({
+        stdout: Buffer.concat(stdout).toString("utf-8"),
+        stderr: Buffer.concat(stderr).toString("utf-8"),
+        exitCode: code ?? 1,
+      });
+    });
+    proc.stdin.end(options.stdin);
+  });
+}
+
+async function waitForJsonBlocks(
+  chunks: Buffer[],
+  minimum: number,
+  timeoutMs = 4_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (
+      splitJsonBlocks(Buffer.concat(chunks).toString("utf-8")).length >= minimum
+    ) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
+  throw new Error(`Timed out waiting for ${minimum} JSON output blocks`);
 }
 
 // ─── parseNumberFlag ─────────────────────────────────────────────────────────
@@ -227,6 +251,12 @@ describe("parseNumberFlag", () => {
 
   test("returns undefined when flag is absent", () => {
     expect(parseNumberFlag([], "--max-age")).toBeUndefined();
+  });
+});
+
+describe("parseStringFlag", () => {
+  test("rejects a following option as a missing value", () => {
+    expect(parseStringFlag(["--host", "--port", "9000"], "--host")).toBe(null);
   });
 });
 
@@ -300,6 +330,12 @@ describe("resolveProjectDir", () => {
   test("no match falls back to encoded cwd", () => {
     expect(resolveProjectDir("/tmp/unknown", "/base", [])).toBe(
       "/base/-tmp-unknown",
+    );
+  });
+
+  test("fallback matches Claude encoding for dots and underscores", () => {
+    expect(resolveProjectDir("/tmp/my.project_name", "/base", [])).toBe(
+      "/base/-tmp-my-project-name",
     );
   });
 
@@ -386,6 +422,28 @@ describe("runStatus (direct call)", () => {
       }),
     );
     expect(code).toBe(1);
+  });
+
+  test("rejects empty session IDs and non-string optional fields", async () => {
+    const invalidPayloads = [
+      { session_id: "", cwd: "/tmp/project", hook_event_name: "Stop" },
+      {
+        session_id: "session",
+        cwd: "/tmp/project",
+        hook_event_name: "Notification",
+        message: {},
+      },
+      {
+        session_id: "session",
+        cwd: "/tmp/project",
+        hook_event_name: "SubagentStop",
+        agent_transcript_path: {},
+      },
+    ];
+
+    for (const payload of invalidPayloads) {
+      await expect(runStatus(tmpDir, JSON.stringify(payload))).resolves.toBe(1);
+    }
   });
 
   test("unknown cwd creates only the encoded fallback dir", async () => {
@@ -611,7 +669,7 @@ describe("dump --watch --project", () => {
     const stdoutChunks: Buffer[] = [];
     proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
 
-    await new Promise((r) => setTimeout(r, 300));
+    await waitForJsonBlocks(stdoutChunks, 1);
     proc.kill("SIGINT");
 
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
@@ -645,7 +703,7 @@ describe("dump --watch --project", () => {
     const stdoutChunks: Buffer[] = [];
     proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
 
-    await new Promise((r) => setTimeout(r, 300));
+    await waitForJsonBlocks(stdoutChunks, 1);
 
     // Trigger a file change by touching the session JSONL (appending a line)
     const existingContent = await readFile(
@@ -656,7 +714,7 @@ describe("dump --watch --project", () => {
       join(projDir, "session.jsonl"),
       `${existingContent}${JSON.stringify({ type: "user", message: { role: "user", content: "hello" } })}\n`,
     );
-    await new Promise((r) => setTimeout(r, 400));
+    await waitForJsonBlocks(stdoutChunks, 2);
 
     proc.kill("SIGINT");
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
@@ -692,9 +750,9 @@ describe("dump --watch --project", () => {
     const stdoutChunks: Buffer[] = [];
     proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
 
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await waitForJsonBlocks(stdoutChunks, 1);
     await rm(projDir, { recursive: true, force: true });
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await waitForJsonBlocks(stdoutChunks, 2);
 
     proc.kill("SIGINT");
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
@@ -738,7 +796,7 @@ describe("dump helpers", () => {
   test("replaceBackendStates removes disappeared sibling sessions from the watch map", () => {
     const backend = new TestBackend();
     const projectMap = new Map();
-    const backendProjectKeys = new Map<SessionBackend, Set<string>>();
+    const backendProjectKeys = new Map<TestBackend, Set<string>>();
 
     replaceBackendStates(
       projectMap,

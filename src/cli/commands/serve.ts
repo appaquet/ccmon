@@ -7,30 +7,40 @@ export function runServe(
   config: CcmonConfig,
   port: number | undefined,
   host: string | null,
-): void {
+): Promise<void> {
   const serveConfig = mergeCliOverrides(config, {
     port,
     host: host ?? undefined,
   });
   const { backends, close } = createBackends(serveConfig);
-  const { port: resolvedPort, stop } = startServer({
+  const server = startServer({
     port: serveConfig.port,
     hostname: serveConfig.host,
     maxInactivityHours: serveConfig.maxInactivityHours,
     backends,
   });
-  process.stdout.write(
-    `ccmon server listening on http://${serveConfig.host}:${resolvedPort}\n`,
-  );
+  return server.ready
+    .then(() => {
+      process.stdout.write(
+        `ccmon server listening on http://${serveConfig.host}:${server.port}\n`,
+      );
 
-  process.on("SIGINT", () => {
-    stop();
-    close();
-    process.exit(0);
-  });
-  process.on("SIGTERM", () => {
-    stop();
-    close();
-    process.exit(0);
-  });
+      let stopped = false;
+      const shutdown = () => {
+        if (stopped) return;
+        stopped = true;
+        server.stop();
+        close();
+        process.exit(0);
+      };
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
+    })
+    .catch((error: unknown) => {
+      server.stop();
+      close();
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`ccmon server failed to start: ${message}\n`);
+      process.exitCode = 1;
+    });
 }

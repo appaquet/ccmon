@@ -16,9 +16,9 @@ import type { SessionBackend } from "./types.ts";
  * Backends that need additional fields (e.g. notification metadata from
  * status events) should call this and spread extra fields on top.
  */
-export async function buildProjectState(
-  backend: SessionBackend,
-  projectInfo: ProjectInfo,
+export async function buildProjectState<TProjectInfo extends ProjectInfo>(
+  backend: SessionBackend<TProjectInfo>,
+  projectInfo: TProjectInfo,
 ): Promise<ProjectState> {
   const state = await backend.resolveState(projectInfo);
   const lastUpdated = await backend.computeLastUpdated(projectInfo);

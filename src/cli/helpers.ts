@@ -5,7 +5,9 @@ export function exit(code: number): never {
 export function parseStringFlag(argv: string[], name: string): string | null {
   const idx = argv.indexOf(name);
   if (idx === -1) return null;
-  return argv[idx + 1] ?? null;
+  const value = argv[idx + 1];
+  if (!value || value.startsWith("--")) return null;
+  return value;
 }
 
 export function parseNumberFlag(
@@ -15,7 +17,7 @@ export function parseNumberFlag(
   const idx = argv.indexOf(name);
   if (idx === -1) return undefined;
   const raw = argv[idx + 1];
-  if (raw === undefined || raw === "") return undefined;
+  if (raw === undefined || raw === "" || raw.startsWith("--")) return undefined;
   const value = Number(raw);
   return Number.isFinite(value) ? value : undefined;
 }

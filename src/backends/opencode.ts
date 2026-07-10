@@ -28,6 +28,8 @@ import type {
 } from "../types.ts";
 import type { SessionBackend } from "./types.ts";
 
+type OpencodeProjectInfo = Extract<ProjectInfo, { source: "opencode" }>;
+
 function statSyncTerse(p: string): number | null {
   try {
     return statSync(p).mtimeMs;
@@ -42,7 +44,8 @@ function resolveDefaultStatusLogPath(): string {
   return join(stateHome, "ccmon", "opencode-status.jsonl");
 }
 
-export class OpencodeBackend implements SessionBackend {
+export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
+  readonly source = "opencode" as const;
   private lastStatusLogMtime: number | null = null;
   private statusLogEvents: StatusEvent[] | null = null;
   private db: DatabaseSync;
@@ -62,7 +65,7 @@ export class OpencodeBackend implements SessionBackend {
     this.statusPollIntervalMs = statusPollIntervalMs;
   }
 
-  async scanProjects(): Promise<ProjectInfo[]> {
+  async scanProjects(): Promise<OpencodeProjectInfo[]> {
     const rows = this.db
       .prepare(
         `SELECT
@@ -93,7 +96,9 @@ export class OpencodeBackend implements SessionBackend {
     }));
   }
 
-  async computeLastUpdated(projectInfo: ProjectInfo): Promise<string | null> {
+  async computeLastUpdated(
+    projectInfo: OpencodeProjectInfo,
+  ): Promise<string | null> {
     const row = this.db
       .prepare("SELECT time_updated, directory FROM session WHERE id = ?")
       .get(projectInfo.sessionId) as
@@ -115,7 +120,7 @@ export class OpencodeBackend implements SessionBackend {
     return new Date(maxUpdated).toISOString();
   }
 
-  async resolveState(projectInfo: ProjectInfo): Promise<SessionState> {
+  async resolveState(projectInfo: OpencodeProjectInfo): Promise<SessionState> {
     const statusState = this.resolveStatusLogState(projectInfo.sessionId);
 
     if (
@@ -155,7 +160,9 @@ export class OpencodeBackend implements SessionBackend {
     return "stopped";
   }
 
-  async enrichProject(projectInfo: ProjectInfo): Promise<SessionEnrichment> {
+  async enrichProject(
+    projectInfo: OpencodeProjectInfo,
+  ): Promise<SessionEnrichment> {
     const enrichment: SessionEnrichment = {};
 
     await this.enrichSessionName(projectInfo, enrichment);
@@ -166,7 +173,7 @@ export class OpencodeBackend implements SessionBackend {
   }
 
   private async enrichSessionName(
-    projectInfo: ProjectInfo,
+    projectInfo: OpencodeProjectInfo,
     enrichment: SessionEnrichment,
   ): Promise<void> {
     try {
@@ -182,7 +189,7 @@ export class OpencodeBackend implements SessionBackend {
   }
 
   private async enrichTasks(
-    projectInfo: ProjectInfo,
+    projectInfo: OpencodeProjectInfo,
     enrichment: SessionEnrichment,
   ): Promise<void> {
     try {
@@ -214,7 +221,7 @@ export class OpencodeBackend implements SessionBackend {
   }
 
   private async enrichMessages(
-    projectInfo: ProjectInfo,
+    projectInfo: OpencodeProjectInfo,
     enrichment: SessionEnrichment,
   ): Promise<void> {
     try {
@@ -335,7 +342,7 @@ export class OpencodeBackend implements SessionBackend {
     return matching;
   }
 
-  private hasLiveLinkedChild(projectInfo: ProjectInfo): boolean {
+  private hasLiveLinkedChild(projectInfo: OpencodeProjectInfo): boolean {
     return this.getLiveLinkedChildRows(projectInfo.sessionId).length > 0;
   }
 
@@ -389,7 +396,9 @@ export class OpencodeBackend implements SessionBackend {
     return Number.isNaN(time) ? null : time;
   }
 
-  async getSubagents(projectInfo: ProjectInfo): Promise<SubagentInfo[]> {
+  async getSubagents(
+    projectInfo: OpencodeProjectInfo,
+  ): Promise<SubagentInfo[]> {
     const rows = this.db
       .prepare(
         `SELECT id, title, time_created, time_updated FROM session
@@ -433,7 +442,7 @@ export class OpencodeBackend implements SessionBackend {
   }
 
   async getNotification(
-    _projectInfo: ProjectInfo,
+    _projectInfo: OpencodeProjectInfo,
   ): Promise<NotificationMeta | null> {
     return null;
   }
@@ -532,7 +541,7 @@ export class OpencodeBackend implements SessionBackend {
     };
   }
 
-  projectKey(project: ProjectInfo): string {
+  projectKey(project: OpencodeProjectInfo): string {
     return `opencode::${project.sessionId}`;
   }
 }

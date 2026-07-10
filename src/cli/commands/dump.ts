@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { collectBackendStates } from "../../backends/collect-states.ts";
 import { createBackends } from "../../backends/index.ts";
-import type { SessionBackend } from "../../backends/types.ts";
+import type { AnySessionBackend } from "../../backends/types.ts";
 import type { CcmonConfig } from "../../config.ts";
 import {
   disambiguateProjectNames,
@@ -22,8 +22,8 @@ export function filterProjectsByName(
 
 export function replaceBackendStates(
   projectMap: Map<string, ProjectState>,
-  backendProjectKeys: Map<SessionBackend, Set<string>>,
-  backend: SessionBackend,
+  backendProjectKeys: Map<AnySessionBackend, Set<string>>,
+  backend: AnySessionBackend,
   backendStates: Map<string, ProjectState>,
 ): void {
   const previousKeys = backendProjectKeys.get(backend) ?? new Set<string>();
@@ -46,8 +46,7 @@ export function buildOutput(
   projectFilter: string | null,
   emitEmptyFilteredSnapshot = false,
 ): string {
-  const allProjects = [...projects];
-  disambiguateProjectNames(allProjects);
+  const allProjects = disambiguateProjectNames([...projects]);
   const state = sortProjectsByRecency(
     filterStaleProjects(allProjects, maxInactivityHours),
   );
@@ -66,9 +65,9 @@ export function buildOutput(
 export async function runDump(
   config: CcmonConfig,
   projectFilter: string | null,
-): Promise<void> {
+): Promise<number> {
+  const { backends, close } = createBackends(config);
   try {
-    const { backends, close } = createBackends(config);
     const projectMap = await collectBackendStates(backends);
     const output = buildOutput(
       projectMap.values(),
@@ -77,12 +76,13 @@ export async function runDump(
       false,
     );
     if (output) console.log(output);
-    close();
-    process.exit(0);
+    return 0;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`Error: ${message}\n`);
-    process.exit(1);
+    return 1;
+  } finally {
+    close();
   }
 }
 
@@ -92,7 +92,7 @@ export async function runDumpWatch(
 ): Promise<void> {
   const { backends, close } = createBackends(config);
   const projectMap = new Map<string, ProjectState>();
-  const backendProjectKeys = new Map<SessionBackend, Set<string>>();
+  const backendProjectKeys = new Map<AnySessionBackend, Set<string>>();
 
   function formatWatchOutput(): string {
     return buildOutput(

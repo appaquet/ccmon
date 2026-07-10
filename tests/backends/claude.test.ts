@@ -26,8 +26,7 @@ async function buildAllStates(backend: ClaudeBackend): Promise<ProjectState[]> {
   const states = await Promise.all(
     projects.map((p) => buildProjectState(backend, p)),
   );
-  disambiguateProjectNames(states);
-  return states;
+  return disambiguateProjectNames(states);
 }
 
 describe("ClaudeBackend", () => {

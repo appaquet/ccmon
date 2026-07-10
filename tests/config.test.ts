@@ -1,6 +1,6 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   DEFAULT_CONFIG,
   loadConfig,
@@ -40,6 +40,10 @@ describe("loadConfig", () => {
     expect(config).toEqual(DEFAULT_CONFIG);
   });
 
+  test("defaults to a loopback host", () => {
+    expect(DEFAULT_CONFIG.host).toBe("127.0.0.1");
+  });
+
   test("valid file with maxInactivityHours: 6 returns correct value", async () => {
     const configPath = join(tmpDir, "config.json");
     await writeFile(
@@ -71,7 +75,43 @@ describe("loadConfig", () => {
     expect(config).toEqual(DEFAULT_CONFIG);
   });
 
-  test("partial config with only host and port: merges with defaults (R18)", async () => {
+  test("malformed configuration emits a structured diagnostic", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(configPath, "not valid json {{");
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    try {
+      expect(loadConfig(configPath)).toEqual(DEFAULT_CONFIG);
+      expect(JSON.parse(String(stderr.mock.calls[0][0]))).toMatchObject({
+        level: "warn",
+        msg: "Invalid configuration JSON; using defaults",
+        fields: { path: configPath },
+      });
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
+  test("unreadable configuration emits a structured diagnostic", () => {
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    try {
+      expect(loadConfig(tmpDir)).toEqual(DEFAULT_CONFIG);
+      expect(JSON.parse(String(stderr.mock.calls[0][0]))).toMatchObject({
+        level: "warn",
+        msg: "Unable to read configuration; using defaults",
+        fields: { path: tmpDir },
+      });
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
+  test("partial config with only host and port merges with defaults", async () => {
     const configPath = join(tmpDir, "config.json");
     await writeFile(
       configPath,
@@ -279,5 +319,37 @@ describe("backends config", () => {
     expect(config.backends.find((b) => b.type === "opencode")?.enabled).toBe(
       true,
     );
+  });
+
+  test("invalid backend-specific values are rejected", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        backends: [
+          { type: "claude", enabled: true, projectsDir: 42 },
+          { type: "opencode", enabled: true, pollIntervalMs: 0 },
+        ],
+      }),
+    );
+
+    expect(loadConfig(configPath).backends).toEqual(DEFAULT_CONFIG.backends);
+  });
+
+  test("retains valid entries when another configured backend is invalid", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        backends: [
+          { type: "claude", enabled: true },
+          { type: "opencode", enabled: true, databasePath: "" },
+        ],
+      }),
+    );
+
+    expect(loadConfig(configPath).backends).toEqual([
+      { type: "claude", enabled: true },
+    ]);
   });
 });

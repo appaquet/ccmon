@@ -181,31 +181,6 @@ describe("scanProjects", () => {
   });
 });
 
-// ─── filterStaleProjects NaN guard ───────────────────────────────────────────
-
-describe("filterStaleProjects NaN guard (R18)", () => {
-  function makeProject(lastUpdated: string | null): ProjectState {
-    return {
-      projectDir: "dir",
-      cwd: "/home/user/proj",
-      projectName: "proj",
-      sessionId: "sid",
-      latestJSONL: "/home/user/proj/session.jsonl",
-      source: "claude",
-      state: "stopped",
-      lastUpdated,
-    };
-  }
-
-  test("R18: invalid lastUpdated string (NaN) keeps project instead of silently dropping it", () => {
-    const projects = [makeProject("not-a-date")];
-    const result = filterStaleProjects(projects, 1);
-    expect(result).toHaveLength(1);
-  });
-});
-
-// ─── filterStaleProjects ──────────────────────────────────────────────────────
-
 describe("filterStaleProjects", () => {
   function makeProject(lastUpdated: string | null): ProjectState {
     return {
@@ -240,6 +215,11 @@ describe("filterStaleProjects", () => {
     expect(result).toHaveLength(0);
   });
 
+  test("invalid lastUpdated: project is removed", () => {
+    const result = filterStaleProjects([makeProject("not-a-date")], 1);
+    expect(result).toEqual([]);
+  });
+
   test("maxInactivityHours = 0: all projects returned (filter disabled)", () => {
     const old = new Date(Date.now() - 100 * 3600 * 1000).toISOString();
     const projects = [makeProject(null), makeProject(old)];
@@ -254,8 +234,6 @@ describe("filterStaleProjects", () => {
     expect(result).toHaveLength(2);
   });
 });
-
-// ─── closed state (Phase 35) ─────────────────────────────────────────────────
 
 describe("closed state", () => {
   function makeProject(
@@ -305,8 +283,6 @@ describe("closed state", () => {
   });
 });
 
-// ─── disambiguateProjectNames ─────────────────────────────────────────────────
-
 function makeProjectState(cwd: string): ProjectState {
   return {
     projectDir: cwd.replace(/\//g, "-"),
@@ -326,9 +302,16 @@ describe("disambiguateProjectNames", () => {
       makeProjectState("/home/user/projectA/backend"),
       makeProjectState("/home/user/projectB/backend"),
     ];
-    disambiguateProjectNames(projects);
-    expect(projects[0].projectName).toBe("projectA/backend");
-    expect(projects[1].projectName).toBe("projectB/backend");
+    const labels = disambiguateProjectNames(projects);
+    expect(labels).toMatchObject([
+      { projectName: "backend", displayName: "projectA/backend" },
+      { projectName: "backend", displayName: "projectB/backend" },
+    ]);
+    expect(labels[0]).not.toBe(projects[0]);
+    expect(projects.map((project) => project.projectName)).toEqual([
+      "backend",
+      "backend",
+    ]);
   });
 
   test("three projects sharing basename, need 3 segments to disambiguate", () => {
@@ -337,10 +320,12 @@ describe("disambiguateProjectNames", () => {
       makeProjectState("/b/x/backend"),
       makeProjectState("/c/y/backend"),
     ];
-    disambiguateProjectNames(projects);
-    expect(projects[0].projectName).toBe("a/x/backend");
-    expect(projects[1].projectName).toBe("b/x/backend");
-    expect(projects[2].projectName).toBe("c/y/backend");
+    const labels = disambiguateProjectNames(projects);
+    expect(labels.map((project) => project.displayName)).toEqual([
+      "a/x/backend",
+      "b/x/backend",
+      "c/y/backend",
+    ]);
   });
 
   test("mix of duplicate and unique basenames", () => {
@@ -349,38 +334,48 @@ describe("disambiguateProjectNames", () => {
       makeProjectState("/home/user/projectB/backend"),
       makeProjectState("/home/user/frontend"),
     ];
-    disambiguateProjectNames(projects);
-    expect(projects[0].projectName).toBe("projectA/backend");
-    expect(projects[1].projectName).toBe("projectB/backend");
-    expect(projects[2].projectName).toBe("frontend");
+    const labels = disambiguateProjectNames(projects);
+    expect(labels.map((project) => project.displayName)).toEqual([
+      "projectA/backend",
+      "projectB/backend",
+      "frontend",
+    ]);
   });
 
   test("single project: no disambiguation applied", () => {
     const projects = [makeProjectState("/home/user/myapp")];
-    disambiguateProjectNames(projects);
-    expect(projects[0].projectName).toBe("myapp");
+    const labels = disambiguateProjectNames(projects);
+    expect(labels[0].displayName).toBe("myapp");
   });
 
-  test("two projects with identical cwd do not cause infinite loop", () => {
+  test("same-cwd concurrent sessions receive deterministic session suffixes", () => {
     const A = makeProjectState("/home/user/myproject");
     const B = makeProjectState("/home/user/myproject");
+    A.sessionId = "ses_peer_a";
+    B.sessionId = "ses_peer_b";
     B.source = "opencode";
-    disambiguateProjectNames([A, B]);
-    expect(A.projectName).toBe("myproject");
-    expect(B.projectName).toBe("myproject");
+    const labels = disambiguateProjectNames([A, B]);
+    expect(labels.map((project) => project.displayName)).toEqual([
+      "myproject (ses_peer_a)",
+      "myproject (ses_peer_b)",
+    ]);
+    expect(new Set(labels.map((project) => project.displayName)).size).toBe(2);
   });
 
-  test("re-run resets stale expanded names when a collision is resolved", () => {
+  test("a survivor returns to its canonical display name when a collision disappears", () => {
     const a = makeProjectState("/home/user/projectA/backend");
     const b = makeProjectState("/home/user/projectB/backend");
 
-    disambiguateProjectNames([a, b]);
-    expect(a.projectName).toBe("projectA/backend");
-    expect(b.projectName).toBe("projectB/backend");
+    const withCollision = disambiguateProjectNames([a, b]);
+    expect(withCollision.map((project) => project.displayName)).toEqual([
+      "projectA/backend",
+      "projectB/backend",
+    ]);
 
-    a.projectName = "backend";
-
-    disambiguateProjectNames([a]);
+    const withoutCollision = disambiguateProjectNames([a]);
+    expect(withoutCollision).toMatchObject([
+      { projectName: "backend", displayName: "backend" },
+    ]);
     expect(a.projectName).toBe("backend");
   });
 });

@@ -23,13 +23,14 @@ import {
   SUBAGENT_EXPIRY_MS,
   SUBAGENT_STOP_GRACE_MS,
 } from "../timing.ts";
-import type { NotificationMeta, ProjectInfo, SubagentInfo } from "../types.ts";
+import type { NotificationMeta, SubagentInfo } from "../types.ts";
 import { watchForChanges } from "../watcher.ts";
 import type { SessionBackend } from "./types.ts";
 
 const JSONL_EXT = ".jsonl";
 
-export class ClaudeBackend implements SessionBackend {
+export class ClaudeBackend implements SessionBackend<ClaudeProjectInfo> {
+  readonly source = "claude" as const;
   sessionTailCache = new Map<string, SessionTailCache>();
   private claudeDir: string;
 
@@ -39,7 +40,7 @@ export class ClaudeBackend implements SessionBackend {
 
   // ── SessionBackend interface ───────────────────────────────────────────────
 
-  async scanProjects(): Promise<ProjectInfo[]> {
+  async scanProjects(): Promise<ClaudeProjectInfo[]> {
     return scanProjects(this.claudeDir);
   }
 
@@ -50,9 +51,8 @@ export class ClaudeBackend implements SessionBackend {
   }
 
   async getNotification(
-    projectInfo: ProjectInfo,
+    projectInfo: ClaudeProjectInfo,
   ): Promise<NotificationMeta | null> {
-    if (projectInfo.source !== "claude") return null;
     const projectDirPath = join(this.claudeDir, projectInfo.projectDir);
     const events = await readStatusLog(projectDirPath);
 
@@ -71,14 +71,14 @@ export class ClaudeBackend implements SessionBackend {
     return null;
   }
 
-  async resolveState(projectInfo: ProjectInfo): Promise<SessionState> {
-    if (projectInfo.source !== "claude") return "stopped";
+  async resolveState(projectInfo: ClaudeProjectInfo): Promise<SessionState> {
     const { state } = await this._fetchStateEvents(projectInfo);
     return state;
   }
 
-  async computeLastUpdated(projectInfo: ProjectInfo): Promise<string | null> {
-    if (projectInfo.source !== "claude") return null;
+  async computeLastUpdated(
+    projectInfo: ClaudeProjectInfo,
+  ): Promise<string | null> {
     try {
       const s = await stat(projectInfo.latestJSONL);
       return new Date(s.mtimeMs).toISOString();
@@ -87,8 +87,9 @@ export class ClaudeBackend implements SessionBackend {
     }
   }
 
-  async enrichProject(projectInfo: ProjectInfo): Promise<SessionEnrichment> {
-    if (projectInfo.source !== "claude") return {};
+  async enrichProject(
+    projectInfo: ClaudeProjectInfo,
+  ): Promise<SessionEnrichment> {
     const tail = await this.readSessionTail(projectInfo.latestJSONL);
     return {
       model: tail.model,
@@ -103,13 +104,11 @@ export class ClaudeBackend implements SessionBackend {
     };
   }
 
-  async getSubagents(projectInfo: ProjectInfo): Promise<SubagentInfo[]> {
-    if (projectInfo.source !== "claude") return [];
+  async getSubagents(projectInfo: ClaudeProjectInfo): Promise<SubagentInfo[]> {
     return this.getSubagentInfos(projectInfo.latestJSONL);
   }
 
-  projectKey(project: ProjectInfo): string {
-    if (project.source !== "claude") return project.cwd;
+  projectKey(project: ClaudeProjectInfo): string {
     return join(this.claudeDir, project.projectDir);
   }
 

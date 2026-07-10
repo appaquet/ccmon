@@ -40,21 +40,21 @@ export const log = {
     emit("info", msg, fields);
   },
   warn(msg: string, err?: unknown, fields?: Record<string, unknown>): void {
-    const meta = fields ?? {};
-    if (err instanceof Error) {
-      meta.err = err.message;
-    } else if (err !== undefined) {
-      meta.err = String(err);
-    }
+    const meta = errorMetadata(err, fields);
     emit("warn", msg, Object.keys(meta).length > 0 ? meta : undefined);
   },
   error(msg: string, err?: unknown, fields?: Record<string, unknown>): void {
-    const meta = fields ?? {};
-    if (err instanceof Error) {
-      meta.err = err.message;
-    } else if (err !== undefined) {
-      meta.err = String(err);
-    }
+    const meta = errorMetadata(err, fields);
     emit("error", msg, Object.keys(meta).length > 0 ? meta : undefined);
   },
 };
+
+function errorMetadata(
+  err: unknown,
+  fields?: Record<string, unknown>,
+): Record<string, unknown> {
+  const meta = { ...fields };
+  if (err instanceof Error) meta.err = err.message;
+  else if (err !== undefined) meta.err = String(err);
+  return meta;
+}
