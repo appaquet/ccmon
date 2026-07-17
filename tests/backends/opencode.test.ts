@@ -8,11 +8,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { buildProjectState } from "../../src/backends/build-project-state.ts";
 import { OpencodeBackend } from "../../src/backends/opencode.ts";
+import type { SessionState } from "../../src/session-core.ts";
 import {
+  PERMISSION_STALE_MS,
   STATUS_LOG_TAIL_BYTES,
+  SUBAGENT_EXPIRY_MS,
   SUBAGENT_LIFECYCLE_TIMEOUT_MS,
 } from "../../src/timing.ts";
 
@@ -1424,6 +1427,347 @@ describe("OpencodeBackend — sub-agents", () => {
 
     expect(subagents).toHaveLength(1);
     expect(subagents[0].isActive).toBe(false);
+  });
+});
+
+describe("OpencodeBackend — child lifecycle ordering", () => {
+  const now = Date.UTC(2026, 6, 16, 12, 0, 0);
+  type LifecycleFixture = {
+    name: string;
+    state: SessionState;
+  };
+
+  let db: DB;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(now));
+    db = new DatabaseSync(":memory:");
+    createSchema(db);
+    tmpDir = mkdtempSync(join(tmpdir(), "ccmon-child-lifecycle-"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function setupStaleParentAndChild(childUpdated = now - 20 * 60_000): {
+    parentId: string;
+    childId: string;
+  } {
+    const parentId = "ses_lifecycle_parent";
+    const childId = "ses_lifecycle_child";
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+      "proj-lifecycle",
+      "lifecycleproj",
+      "/home/user/lifecycleproj",
+    ]);
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        parentId,
+        "Lifecycle parent",
+        "/home/user/lifecycleproj",
+        now - 30 * 60_000,
+        now - 20 * 60_000,
+        "proj-lifecycle",
+      ],
+    );
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        childId,
+        "Lifecycle child",
+        "/home/user/lifecycleproj",
+        now - 25 * 60_000,
+        childUpdated,
+        parentId,
+        "proj-lifecycle",
+      ],
+    );
+    return { parentId, childId };
+  }
+
+  function makeLifecycleEvent(
+    sessionId: string,
+    name: string,
+    state: SessionState,
+    timestamp: number | string,
+  ): string {
+    return `${JSON.stringify({
+      event: name,
+      state,
+      timestamp:
+        typeof timestamp === "number"
+          ? new Date(timestamp).toISOString()
+          : timestamp,
+      session_id: sessionId,
+      working_dir: "/home/user/lifecycleproj",
+    })}\n`;
+  }
+
+  function backendForStatus(contents: string): OpencodeBackend {
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(statusPath, contents);
+    return new OpencodeBackend(db, 5000, statusPath);
+  }
+
+  function expectedChild(
+    childId: string,
+    isActive: boolean,
+    lastMessageTime: number,
+  ) {
+    return {
+      agentId: childId,
+      slug: undefined,
+      description: undefined,
+      sessionName: "Lifecycle child",
+      isActive,
+      lastMessageTime: new Date(lastMessageTime).toISOString(),
+      launchTime: new Date(now - 25 * 60_000).toISOString(),
+    };
+  }
+
+  test("a resumed direct child promotes its stale parent and supplies its active enrichment", async () => {
+    const { childId } = setupStaleParentAndChild();
+    const resumedAt = now - 1_000;
+    const backend = backendForStatus(
+      makeLifecycleEvent(childId, "session.idle", "stopped", now - 2_000) +
+        makeLifecycleEvent(childId, "tool.execute.after", "running", resumedAt),
+    );
+    const project = (await backend.scanProjects())[0];
+
+    const state = await buildProjectState(backend, project);
+
+    expect(state.state).toBe("running");
+    expect(state.subagentCount).toBe(1);
+    expect(state.subagents).toEqual([expectedChild(childId, true, resumedAt)]);
+  });
+
+  const reactivationFixtures: LifecycleFixture[] = [
+    { name: "session.created", state: "running" },
+    { name: "chat.message", state: "running" },
+    { name: "tool.execute.after", state: "running" },
+    { name: "PermissionRequest", state: "waiting_for_permission" },
+    { name: "UserPromptSubmit", state: "running" },
+    { name: "compatible.unknown", state: "running" },
+    { name: "permission.replied", state: "stopped" },
+    { name: "question.replied", state: "stopped" },
+  ];
+
+  test.each(
+    reactivationFixtures,
+  )("newer $name evidence reactivates a child after stopped", async ({
+    name,
+    state,
+  }) => {
+    const { childId } = setupStaleParentAndChild();
+    const activityAt = now - 1_000;
+    const backend = backendForStatus(
+      makeLifecycleEvent(childId, "session.idle", "stopped", now - 2_000) +
+        makeLifecycleEvent(childId, name, state, activityAt),
+    );
+    const project = (await backend.scanProjects())[0];
+
+    await expect(backend.resolveState(project)).resolves.toBe("running");
+    await expect(backend.getSubagents(project)).resolves.toEqual([
+      expectedChild(childId, true, activityAt),
+    ]);
+  });
+
+  const terminalFixtures: LifecycleFixture[] = [
+    { name: "session.idle", state: "stopped" },
+    { name: "session.error", state: "error" },
+    { name: "session.deleted", state: "closed" },
+  ];
+
+  test.each(
+    terminalFixtures,
+  )("newer $name evidence restores terminal child behavior", async ({
+    name,
+    state,
+  }) => {
+    const { childId } = setupStaleParentAndChild();
+    const terminalAt = now - 1_000;
+    const backend = backendForStatus(
+      makeLifecycleEvent(
+        childId,
+        "tool.execute.after",
+        "running",
+        now - 2_000,
+      ) + makeLifecycleEvent(childId, name, state, terminalAt),
+    );
+    const project = (await backend.scanProjects())[0];
+
+    await expect(backend.resolveState(project)).resolves.toBe("stopped");
+    await expect(backend.getSubagents(project)).resolves.toEqual([
+      expectedChild(childId, false, terminalAt),
+    ]);
+    const aggregate = await buildProjectState(backend, project);
+    expect(aggregate.subagents).toBeUndefined();
+    expect(aggregate.subagentCount).toBeUndefined();
+  });
+
+  const expiredEvidenceFixtures: Array<LifecycleFixture & { timeout: number }> =
+    [
+      {
+        name: "tool.execute.after",
+        state: "running",
+        timeout: SUBAGENT_LIFECYCLE_TIMEOUT_MS,
+      },
+      {
+        name: "PermissionRequest",
+        state: "waiting_for_permission",
+        timeout: PERMISSION_STALE_MS,
+      },
+    ];
+
+  test.each(
+    expiredEvidenceFixtures,
+  )("expired authoritative $name evidence does not fall back to fresh SQLite recency", async ({
+    name,
+    state,
+    timeout,
+  }) => {
+    const { childId } = setupStaleParentAndChild(now - 1_000);
+    const backend = backendForStatus(
+      makeLifecycleEvent(
+        childId,
+        "session.idle",
+        "stopped",
+        now - timeout - 2,
+      ) + makeLifecycleEvent(childId, name, state, now - timeout - 1),
+    );
+    const project = (await backend.scanProjects())[0];
+
+    await expect(backend.resolveState(project)).resolves.toBe("stopped");
+    await expect(backend.getSubagents(project)).resolves.toEqual([]);
+  });
+
+  test.each([
+    {
+      name: "tool.execute.after",
+      state: "running" as const,
+      timeout: SUBAGENT_LIFECYCLE_TIMEOUT_MS,
+    },
+    {
+      name: "PermissionRequest",
+      state: "waiting_for_permission" as const,
+      timeout: PERMISSION_STALE_MS,
+    },
+  ])("keeps $name evidence active at its exact liveness boundary", async ({
+    name,
+    state,
+    timeout,
+  }) => {
+    const { childId } = setupStaleParentAndChild();
+    const boundaryTime = now - timeout;
+    const backend = backendForStatus(
+      makeLifecycleEvent(childId, name, state, boundaryTime),
+    );
+    const project = (await backend.scanProjects())[0];
+
+    await expect(backend.resolveState(project)).resolves.toBe("running");
+    await expect(backend.getSubagents(project)).resolves.toEqual([
+      expectedChild(childId, true, boundaryTime),
+    ]);
+  });
+
+  test("retains terminal child evidence at the exact 30-second boundary", async () => {
+    const { childId } = setupStaleParentAndChild();
+    const terminalTime = now - SUBAGENT_EXPIRY_MS;
+    const backend = backendForStatus(
+      makeLifecycleEvent(childId, "session.idle", "stopped", terminalTime),
+    );
+    const project = (await backend.scanProjects())[0];
+
+    await expect(backend.resolveState(project)).resolves.toBe("stopped");
+    await expect(backend.getSubagents(project)).resolves.toEqual([
+      expectedChild(childId, false, terminalTime),
+    ]);
+  });
+
+  test("uses fresh SQLite recency when the status tail has no valid lifecycle evidence", async () => {
+    const { childId } = setupStaleParentAndChild(now - 1_000);
+    const backend = backendForStatus(
+      "not JSON\n" +
+        makeLifecycleEvent(
+          childId,
+          "tool.execute.after",
+          "running",
+          "not-a-timestamp",
+        ) +
+        makeLifecycleEvent(childId, "Notification", "running", now - 500) +
+        makeLifecycleEvent(childId, "SubagentStop", "running", now - 400) +
+        makeLifecycleEvent(
+          "ses_unrelated",
+          "tool.execute.after",
+          "running",
+          now - 300,
+        ),
+    );
+    const project = (await backend.scanProjects())[0];
+
+    await expect(backend.resolveState(project)).resolves.toBe("running");
+    await expect(backend.getSubagents(project)).resolves.toEqual([
+      expectedChild(childId, true, now - 1_000),
+    ]);
+  });
+
+  test("orders valid child evidence numerically, then by later physical line on equal timestamps", async () => {
+    const { childId } = setupStaleParentAndChild();
+    const backend = backendForStatus(
+      makeLifecycleEvent(
+        childId,
+        "tool.execute.after",
+        "running",
+        "2026-07-16T11:59:30.000Z",
+      ) +
+        makeLifecycleEvent(
+          childId,
+          "session.idle",
+          "stopped",
+          "2026-07-16T12:30:00.000+01:00",
+        ),
+    );
+    const project = (await backend.scanProjects())[0];
+
+    await expect(backend.resolveState(project)).resolves.toBe("running");
+
+    writeFileSync(
+      join(tmpDir, "opencode-status.jsonl"),
+      makeLifecycleEvent(
+        childId,
+        "tool.execute.after",
+        "running",
+        now - 1_000,
+      ) + makeLifecycleEvent(childId, "session.idle", "stopped", now - 1_000),
+    );
+    const equalTimeBackend = new OpencodeBackend(
+      db,
+      5000,
+      join(tmpDir, "opencode-status.jsonl"),
+    );
+    await expect(equalTimeBackend.resolveState(project)).resolves.toBe(
+      "stopped",
+    );
+  });
+
+  test("uses SQLite fallback when child lifecycle evidence is outside the retained status tail", async () => {
+    const { childId } = setupStaleParentAndChild(now - 1_000);
+    const backend = backendForStatus(
+      makeLifecycleEvent(childId, "session.idle", "stopped", now - 2_000) +
+        `${"x".repeat(STATUS_LOG_TAIL_BYTES + 1)}\n`,
+    );
+    const project = (await backend.scanProjects())[0];
+
+    await expect(backend.resolveState(project)).resolves.toBe("running");
+    await expect(backend.getSubagents(project)).resolves.toEqual([
+      expectedChild(childId, true, now - 1_000),
+    ]);
   });
 });
 

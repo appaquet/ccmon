@@ -16,6 +16,7 @@ import {
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_STATUS_POLL_INTERVAL_MS,
   OPENCODE_ACTIVE_THRESHOLD_MS,
+  PERMISSION_STALE_MS,
   STATUS_LOG_TAIL_BYTES,
   SUBAGENT_EXPIRY_MS,
   SUBAGENT_LIFECYCLE_TIMEOUT_MS,
@@ -29,6 +30,19 @@ import type {
 import type { SessionBackend } from "./types.ts";
 
 type OpencodeProjectInfo = Extract<ProjectInfo, { source: "opencode" }>;
+
+type ChildLifecycleEvidence = {
+  event: StatusEvent;
+  timestampMs: number;
+  isTerminal: boolean;
+};
+
+type ChildLifecycleDecision = "live" | "terminal_retained" | "excluded";
+
+type ChildLifecycleRow = {
+  time_created: number;
+  time_updated: number;
+};
 
 function statSyncTerse(p: string): number | null {
   try {
@@ -170,6 +184,150 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
     await this.enrichMessages(projectInfo, enrichment);
 
     return enrichment;
+  }
+
+  async getSubagents(
+    projectInfo: OpencodeProjectInfo,
+  ): Promise<SubagentInfo[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, title, time_created, time_updated FROM session
+         WHERE parent_id = ?`,
+      )
+      .all(projectInfo.sessionId) as {
+      id: string;
+      title: string | null;
+      time_created: number;
+      time_updated: number;
+    }[];
+
+    const now = Date.now();
+    return rows
+      .map((row) => {
+        const evidence = this.getLatestChildLifecycleEvidence(row.id);
+        return {
+          row,
+          evidence,
+          decision: this.getChildLifecycleDecision(row, evidence, now),
+        };
+      })
+      .filter(({ decision }) => decision !== "excluded")
+      .map(({ row, evidence, decision }) => ({
+        agentId: row.id,
+        slug: undefined,
+        description: undefined,
+        sessionName: row.title || undefined,
+        isActive: decision === "live",
+        lastMessageTime: new Date(
+          evidence?.timestampMs ?? row.time_updated,
+        ).toISOString(),
+        launchTime: new Date(row.time_created).toISOString(),
+      }))
+      .sort((a, b) => b.launchTime.localeCompare(a.launchTime));
+  }
+
+  async getNotification(
+    _projectInfo: OpencodeProjectInfo,
+  ): Promise<NotificationMeta | null> {
+    return null;
+  }
+
+  watchForChanges(onUpdate: () => void): {
+    stop: () => void;
+  } {
+    let stopped = false;
+    let statusWatcher: FSWatcher | null = null;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    const statusLogPath = this.statusLogPath;
+    const pollIntervalMs = this.pollIntervalMs;
+    const statusPollIntervalMs = this.statusPollIntervalMs;
+
+    function startPolling(interval: number): void {
+      pollTimer = setInterval(() => {
+        if (stopped) return;
+        onUpdate();
+      }, interval);
+    }
+
+    function startStatusWatcher(): void {
+      if (stopped) return;
+      const statusDir = dirname(statusLogPath);
+      const basenameLog = basename(statusLogPath);
+      let lastMtime = statSyncTerse(statusLogPath);
+      try {
+        statusWatcher = watch(statusDir, (_event, filename) => {
+          if (stopped) return;
+          if (filename !== null && filename !== basenameLog) return;
+          if (filename === null) {
+            const mtime = statSyncTerse(statusLogPath);
+            if (mtime === null || mtime === lastMtime) return;
+            lastMtime = mtime;
+          }
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            if (stopped) return;
+            if (existsSync(statusLogPath)) {
+              onUpdate();
+            } else {
+              if (statusWatcher) {
+                try {
+                  statusWatcher.close();
+                } catch {
+                  // ignore
+                }
+                statusWatcher = null;
+              }
+              if (pollTimer) clearInterval(pollTimer);
+              startPolling(pollIntervalMs);
+            }
+          }, DEBOUNCE_MS * 2);
+        });
+        statusWatcher.on("error", () => {
+          if (statusWatcher) {
+            try {
+              statusWatcher.close();
+            } catch {
+              // ignore
+            }
+            statusWatcher = null;
+          }
+          if (!stopped) {
+            if (pollTimer) clearInterval(pollTimer);
+            startPolling(pollIntervalMs);
+          }
+        });
+      } catch {
+        // directory doesn't exist — polling only
+      }
+    }
+
+    const fileExists = existsSync(statusLogPath);
+    if (fileExists) {
+      startStatusWatcher();
+      startPolling(statusPollIntervalMs);
+    } else {
+      startPolling(pollIntervalMs);
+    }
+
+    return {
+      stop: () => {
+        stopped = true;
+        if (pollTimer) clearInterval(pollTimer);
+        if (debounceTimer) clearTimeout(debounceTimer);
+        if (statusWatcher) {
+          try {
+            statusWatcher.close();
+          } catch {
+            // ignore
+          }
+        }
+      },
+    };
+  }
+
+  projectKey(project: OpencodeProjectInfo): string {
+    return `opencode::${project.sessionId}`;
   }
 
   private async enrichSessionName(
@@ -352,7 +510,6 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
     time_updated: number;
   }> {
     const now = Date.now();
-    const fallbackCutoff = now - SUBAGENT_LIFECYCLE_TIMEOUT_MS;
     const rows = this.db
       .prepare(
         `SELECT id, time_created, time_updated FROM session
@@ -366,183 +523,79 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
     }>;
 
     return rows.filter((row) => {
-      if (this.getTerminalStatusEvent(row.id) !== null) return false;
-      return Math.max(row.time_created, row.time_updated) > fallbackCutoff;
+      const evidence = this.getLatestChildLifecycleEvidence(row.id);
+      return this.getChildLifecycleDecision(row, evidence, now) === "live";
     });
   }
 
-  private getTerminalStatusEvent(sessionId: string): StatusEvent | null {
-    const events = this.getStatusLogEventsForSession(sessionId);
-    for (let i = events.length - 1; i >= 0; i--) {
-      const event = events[i];
-      const normalized = normalizeOpencodeStatusEvent(event);
+  private getLatestChildLifecycleEvidence(
+    sessionId: string,
+  ): ChildLifecycleEvidence | null {
+    const events = this.loadStatusLogEvents();
+    if (events === null) return null;
+
+    let latest: ChildLifecycleEvidence | null = null;
+    for (const rawEvent of events) {
       if (
-        normalized.event === "Stop" ||
-        normalized.event === "SessionEnd" ||
-        normalized.event === "StopFailure"
+        rawEvent.session_id !== sessionId ||
+        rawEvent.event === "Notification" ||
+        rawEvent.event === "SubagentStop"
       ) {
-        return normalized;
+        continue;
+      }
+
+      const timestampMs = new Date(rawEvent.timestamp).getTime();
+      if (Number.isNaN(timestampMs)) continue;
+
+      const event = normalizeOpencodeStatusEvent(rawEvent);
+      const isTerminal =
+        event.event === "Stop" ||
+        event.event === "StopFailure" ||
+        event.event === "SessionEnd";
+      const isActivity =
+        event.event === "PostToolUse" || event.event === "UserPromptSubmit";
+      const isPermissionWait = event.event === "PermissionRequest";
+      if (!isTerminal && !isActivity && !isPermissionWait) continue;
+
+      if (latest === null || timestampMs >= latest.timestampMs) {
+        latest = { event, timestampMs, isTerminal };
       }
     }
 
-    return null;
+    return latest;
   }
 
-  private getTerminalStatusTime(sessionId: string): number | null {
-    const terminalEvent = this.getTerminalStatusEvent(sessionId);
-    if (!terminalEvent) return null;
-
-    const time = new Date(terminalEvent.timestamp).getTime();
-    return Number.isNaN(time) ? null : time;
+  private isLiveChildLifecycleEvidence(
+    evidence: ChildLifecycleEvidence,
+    now: number,
+  ): boolean {
+    if (evidence.isTerminal) return false;
+    const timeout =
+      evidence.event.event === "PermissionRequest"
+        ? PERMISSION_STALE_MS
+        : SUBAGENT_LIFECYCLE_TIMEOUT_MS;
+    return evidence.timestampMs >= now - timeout;
   }
 
-  async getSubagents(
-    projectInfo: OpencodeProjectInfo,
-  ): Promise<SubagentInfo[]> {
-    const rows = this.db
-      .prepare(
-        `SELECT id, title, time_created, time_updated FROM session
-         WHERE parent_id = ?`,
-      )
-      .all(projectInfo.sessionId) as {
-      id: string;
-      title: string | null;
-      time_created: number;
-      time_updated: number;
-    }[];
-
-    const now = Date.now();
-    const expiryCutoff = now - SUBAGENT_EXPIRY_MS;
-    const fallbackCutoff = now - SUBAGENT_LIFECYCLE_TIMEOUT_MS;
-
-    return rows
-      .filter((row) => {
-        const terminalTime = this.getTerminalStatusTime(row.id);
-        if (terminalTime !== null) {
-          return terminalTime > expiryCutoff;
-        }
-        return Math.max(row.time_created, row.time_updated) > fallbackCutoff;
-      })
-      .map((row) => {
-        const terminalTime = this.getTerminalStatusTime(row.id);
-        const isActive = terminalTime === null;
-        return {
-          agentId: row.id,
-          slug: undefined,
-          description: undefined,
-          sessionName: row.title || undefined,
-          isActive,
-          lastMessageTime: new Date(
-            terminalTime ?? row.time_updated,
-          ).toISOString(),
-          launchTime: new Date(row.time_created).toISOString(),
-        };
-      })
-      .sort((a, b) => b.launchTime.localeCompare(a.launchTime));
-  }
-
-  async getNotification(
-    _projectInfo: OpencodeProjectInfo,
-  ): Promise<NotificationMeta | null> {
-    return null;
-  }
-
-  watchForChanges(onUpdate: () => void): {
-    stop: () => void;
-  } {
-    let stopped = false;
-    let statusWatcher: FSWatcher | null = null;
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    let pollTimer: ReturnType<typeof setInterval> | null = null;
-    const statusLogPath = this.statusLogPath;
-    const pollIntervalMs = this.pollIntervalMs;
-    const statusPollIntervalMs = this.statusPollIntervalMs;
-
-    function startPolling(interval: number): void {
-      pollTimer = setInterval(() => {
-        if (stopped) return;
-        onUpdate();
-      }, interval);
+  private getChildLifecycleDecision(
+    row: ChildLifecycleRow,
+    evidence: ChildLifecycleEvidence | null,
+    now: number,
+  ): ChildLifecycleDecision {
+    if (evidence === null) {
+      return Math.max(row.time_created, row.time_updated) >
+        now - SUBAGENT_LIFECYCLE_TIMEOUT_MS
+        ? "live"
+        : "excluded";
     }
-
-    function startStatusWatcher(): void {
-      if (stopped) return;
-      const statusDir = dirname(statusLogPath);
-      const basenameLog = basename(statusLogPath);
-      let lastMtime = statSyncTerse(statusLogPath);
-      try {
-        statusWatcher = watch(statusDir, (_event, filename) => {
-          if (stopped) return;
-          if (filename !== null && filename !== basenameLog) return;
-          if (filename === null) {
-            const mtime = statSyncTerse(statusLogPath);
-            if (mtime === null || mtime === lastMtime) return;
-            lastMtime = mtime;
-          }
-          if (debounceTimer) clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(() => {
-            if (stopped) return;
-            if (existsSync(statusLogPath)) {
-              onUpdate();
-            } else {
-              if (statusWatcher) {
-                try {
-                  statusWatcher.close();
-                } catch {
-                  // ignore
-                }
-                statusWatcher = null;
-              }
-              if (pollTimer) clearInterval(pollTimer);
-              startPolling(pollIntervalMs);
-            }
-          }, DEBOUNCE_MS * 2);
-        });
-        statusWatcher.on("error", () => {
-          if (statusWatcher) {
-            try {
-              statusWatcher.close();
-            } catch {
-              // ignore
-            }
-            statusWatcher = null;
-          }
-          if (!stopped) {
-            if (pollTimer) clearInterval(pollTimer);
-            startPolling(pollIntervalMs);
-          }
-        });
-      } catch {
-        // directory doesn't exist — polling only
-      }
+    if (evidence.isTerminal) {
+      return evidence.timestampMs >= now - SUBAGENT_EXPIRY_MS
+        ? "terminal_retained"
+        : "excluded";
     }
-
-    const fileExists = existsSync(statusLogPath);
-    if (fileExists) {
-      startStatusWatcher();
-      startPolling(statusPollIntervalMs);
-    } else {
-      startPolling(pollIntervalMs);
-    }
-
-    return {
-      stop: () => {
-        stopped = true;
-        if (pollTimer) clearInterval(pollTimer);
-        if (debounceTimer) clearTimeout(debounceTimer);
-        if (statusWatcher) {
-          try {
-            statusWatcher.close();
-          } catch {
-            // ignore
-          }
-        }
-      },
-    };
-  }
-
-  projectKey(project: OpencodeProjectInfo): string {
-    return `opencode::${project.sessionId}`;
+    return this.isLiveChildLifecycleEvidence(evidence, now)
+      ? "live"
+      : "excluded";
   }
 }
 
