@@ -30,6 +30,7 @@
             mkdir -p $out/share/ccmon
             cp -r $out/lib/node_modules/ccmon/src $out/share/ccmon/src
             cp -r $out/lib/node_modules/ccmon/public $out/share/ccmon/public
+            cp $out/lib/node_modules/ccmon/package.json $out/share/ccmon/package.json
             ln -s $out/lib/node_modules/ccmon/node_modules $out/share/ccmon/node_modules
             rm $out/bin/ccmon
             makeWrapper ${pkgs.nodejs_22}/bin/node $out/bin/ccmon \
