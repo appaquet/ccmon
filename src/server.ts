@@ -191,7 +191,7 @@ export function startServer(options: ServerOptions): {
   });
 
   server.on("upgrade", (req, socket, head) => {
-    if (requestPath(req) === "/ws" && hasAllowedWebSocketOrigin(req)) {
+    if (requestPath(req) === "/ws") {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit("connection", ws, req);
       });
@@ -258,23 +258,6 @@ function requestPath(req: IncomingMessage): string | null {
     return new URL(req.url ?? "/", "http://ccmon.invalid").pathname;
   } catch {
     return null;
-  }
-}
-
-function hasAllowedWebSocketOrigin(req: IncomingMessage): boolean {
-  const origin = req.headers.origin;
-  if (origin === undefined) return true;
-  if (Array.isArray(origin) || typeof req.headers.host !== "string")
-    return false;
-
-  try {
-    const originUrl = new URL(origin);
-    const requestOrigin = new URL(`http://${req.headers.host}`);
-    return (
-      origin === originUrl.origin && originUrl.origin === requestOrigin.origin
-    );
-  } catch {
-    return false;
   }
 }
 

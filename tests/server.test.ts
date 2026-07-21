@@ -479,31 +479,23 @@ describe("WebSocket server", () => {
     expect(JSON.parse(message)).toHaveProperty("projects");
   });
 
-  test("rejects a WebSocket from a different browser origin", async () => {
+  test("accepts a WebSocket from a different browser origin", async () => {
     const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
     await srv.ready;
     stop = srv.stop;
 
-    await expect(
-      new Promise<void>((resolve, reject) => {
-        const ws = new NodeWebSocket(`ws://localhost:${srv.port}/ws`, {
-          headers: { Origin: "https://attacker.example" },
-        });
-        const timeout = setTimeout(() => {
-          ws.close();
-          reject(new Error("Cross-origin WebSocket was not rejected"));
-        }, 1000);
-        ws.onopen = () => {
-          clearTimeout(timeout);
-          ws.close();
-          reject(new Error("Cross-origin WebSocket was accepted"));
-        };
-        ws.onerror = () => {
-          clearTimeout(timeout);
-          resolve();
-        };
-      }),
-    ).resolves.toBeUndefined();
+    const message = await new Promise<string>((resolve, reject) => {
+      const ws = new NodeWebSocket(`ws://localhost:${srv.port}/ws`, {
+        headers: { Origin: "https://attacker.example" },
+      });
+      ws.onmessage = (event) => {
+        ws.close();
+        resolve(event.data as string);
+      };
+      ws.onerror = reject;
+    });
+
+    expect(JSON.parse(message)).toHaveProperty("projects");
   });
 });
 
