@@ -58,6 +58,7 @@ type ForestSession = ChildLifecycleRow & {
   title: string | null;
   directory: string;
   projectName: string | null;
+  latestUserMessageMs: number | null;
 };
 
 type ForestSnapshot = {
@@ -87,7 +88,21 @@ type SessionEvidence = {
   blockers: Blocker[];
   latestActivityMs: number | null;
   lifecycle: ChildLifecycleEvidence | null;
+  terminalTimestampMs: number | null;
+  recoveredGenerationStartMs: number | null;
 };
+
+type GenerationEvidence =
+  | {
+      type: "persisted_user_message";
+      timestampMs: number;
+    }
+  | {
+      type: "status";
+      event: StatusEvent;
+      timestampMs: number;
+      order: number;
+    };
 
 type RootAggregate = {
   state: SessionState;
@@ -126,6 +141,8 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
   private lastStatusLogSize: number | null = null;
   private statusLogEvents: StatusEvent[] | null = null;
   private statusEventIndex: StatusEventIndex | null = null;
+  private messageTableAvailable: boolean | null = null;
+  private messageTableSchemaVersion: number | null = null;
   private collectionByProject = new WeakMap<
     OpencodeProjectInfo,
     CollectionSnapshot
@@ -528,10 +545,18 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
     const forest = this.loadForestSnapshot();
     const statusEventIndex = this.getStatusEventIndex();
     const evidenceBySession = new Map<string, SessionEvidence>();
-    for (const [sessionId, events] of statusEventIndex.eventsBySession) {
+    for (const session of [
+      ...forest.rootsById.values(),
+      ...[...forest.descendantsByRoot.values()].flat(),
+    ]) {
       evidenceBySession.set(
-        sessionId,
-        buildSessionEvidence(sessionId, events, now),
+        session.id,
+        buildSessionEvidence(
+          session.id,
+          statusEventIndex.eventsBySession.get(session.id) ?? [],
+          now,
+          session.parent_id === null ? session.latestUserMessageMs : null,
+        ),
       );
     }
 
@@ -540,9 +565,15 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
       const descendants = forest.descendantsByRoot.get(root.id) ?? [];
       const sessions = [root, ...descendants];
       const rootStatus = evidenceBySession.get(root.id)?.state ?? null;
+      const recoveredGenerationStartMs =
+        evidenceBySession.get(root.id)?.recoveredGenerationStartMs ?? null;
       const hasFreshBlocker = sessions.some((session) =>
         (evidenceBySession.get(session.id)?.blockers ?? []).some(
-          (blocker) => blocker.timestampMs > now - PERMISSION_STALE_MS,
+          (blocker) =>
+            blocker.timestampMs > now - PERMISSION_STALE_MS &&
+            (session.id === root.id ||
+              recoveredGenerationStartMs === null ||
+              blocker.timestampMs > recoveredGenerationStartMs),
         ),
       );
       const hasLiveDirectChild = (
@@ -554,6 +585,7 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
             child,
             evidenceBySession.get(child.id)?.lifecycle ?? null,
             now,
+            recoveredGenerationStartMs,
           ) === "live"
         );
       });
@@ -575,14 +607,20 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
         state = hasLiveDirectChild ? "running" : "stopped";
       }
 
-      const lastUpdatedMs = sessions.reduce((latest, session) => {
-        const activity = evidenceBySession.get(session.id)?.latestActivityMs;
-        return Math.max(
-          latest,
-          session.time_updated,
-          activity ?? Number.NEGATIVE_INFINITY,
-        );
-      }, root.time_updated);
+      const terminalTimestampMs =
+        state === "error" || state === "closed"
+          ? evidenceBySession.get(root.id)?.terminalTimestampMs
+          : null;
+      const lastUpdatedMs =
+        terminalTimestampMs ??
+        sessions.reduce((latest, session) => {
+          const activity = evidenceBySession.get(session.id)?.latestActivityMs;
+          return Math.max(
+            latest,
+            session.time_updated,
+            activity ?? Number.NEGATIVE_INFINITY,
+          );
+        }, root.time_updated);
       aggregatesByRoot.set(root.id, { state, lastUpdatedMs });
     }
 
@@ -621,10 +659,15 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
     row: ChildLifecycleRow,
     evidence: ChildLifecycleEvidence | null,
     now: number,
+    generationStartMs: number | null = null,
   ): ChildLifecycleDecision {
+    const latestEvidenceMs =
+      evidence?.timestampMs ?? Math.max(row.time_created, row.time_updated);
+    if (generationStartMs !== null && latestEvidenceMs <= generationStartMs) {
+      return "excluded";
+    }
     if (evidence === null) {
-      return Math.max(row.time_created, row.time_updated) >
-        now - SUBAGENT_LIFECYCLE_TIMEOUT_MS
+      return latestEvidenceMs > now - SUBAGENT_LIFECYCLE_TIMEOUT_MS
         ? "live"
         : "excluded";
     }
@@ -640,23 +683,27 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
 
   /** Captures visible roots and their descendants in one cycle-safe query. */
   private loadForestSnapshot(): ForestSnapshot {
-    const rows = this.db
-      .prepare(
-        `WITH RECURSIVE forest(root_id, session_id) AS (
-           SELECT id, id FROM session
-           WHERE time_archived IS NULL AND parent_id IS NULL
-           UNION
-            SELECT forest.root_id, child.id
-            FROM forest
-            JOIN session child ON child.parent_id = forest.session_id
-         )
-         SELECT forest.root_id, s.id, s.parent_id, s.title, s.directory,
-                p.name AS projectName, s.time_created, s.time_updated, s.time_archived
-         FROM forest
-         JOIN session s ON s.id = forest.session_id
-         JOIN project p ON p.id = s.project_id`,
-      )
-      .all() as Array<ForestSession & { root_id: string }>;
+    let rows: Array<ForestSession & { root_id: string }>;
+    const includePersistedUserMessages = this.shouldLoadPersistedUserMessages();
+    try {
+      rows = this.loadForestRows(includePersistedUserMessages);
+      if (includePersistedUserMessages) {
+        this.messageTableAvailable = true;
+        this.messageTableSchemaVersion = null;
+      }
+    } catch (error) {
+      if (!isMissingMessageTable(error)) throw error;
+      const schemaVersion = this.readSchemaVersion();
+      if (this.messageTableExists()) {
+        rows = this.loadForestRows(true);
+        this.messageTableAvailable = true;
+        this.messageTableSchemaVersion = null;
+      } else {
+        this.messageTableAvailable = false;
+        this.messageTableSchemaVersion = schemaVersion;
+        rows = this.loadForestRows(false);
+      }
+    }
 
     const rootsById = new Map<string, ForestSession>();
     const descendantsByRoot = new Map<string, ForestSession[]>();
@@ -676,6 +723,75 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
       }
     }
     return { rootsById, descendantsByRoot, directChildrenByRoot };
+  }
+
+  private shouldLoadPersistedUserMessages(): boolean {
+    if (this.messageTableAvailable !== false) return true;
+    const schemaVersion = this.readSchemaVersion();
+    if (schemaVersion === this.messageTableSchemaVersion) return false;
+    this.messageTableAvailable = null;
+    this.messageTableSchemaVersion = null;
+    return true;
+  }
+
+  private readSchemaVersion(): number {
+    const row = this.db.prepare("PRAGMA schema_version").get() as {
+      schema_version: number;
+    };
+    return row.schema_version;
+  }
+
+  private messageTableExists(): boolean {
+    return (
+      this.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'message'",
+        )
+        .get() !== undefined
+    );
+  }
+
+  private loadForestRows(
+    includePersistedUserMessages: boolean,
+  ): Array<ForestSession & { root_id: string }> {
+    const userMessageCte = includePersistedUserMessages
+      ? `, root_user_messages(session_id, latestUserMessageMs) AS (
+            SELECT m.session_id, MAX(m.time_created)
+            FROM message m
+            JOIN forest ON forest.session_id = m.session_id
+                         AND forest.root_id = forest.session_id
+            WHERE CASE WHEN json_valid(m.data)
+              THEN json_extract(m.data, '$.role')
+            END = 'user'
+            GROUP BY m.session_id
+          )`
+      : "";
+    const latestUserMessageColumn = includePersistedUserMessages
+      ? "root_user_messages.latestUserMessageMs"
+      : "NULL";
+    const userMessageJoin = includePersistedUserMessages
+      ? "LEFT JOIN root_user_messages ON root_user_messages.session_id = s.id"
+      : "";
+
+    return this.db
+      .prepare(
+        `WITH RECURSIVE forest(root_id, session_id) AS (
+            SELECT id, id FROM session
+            WHERE time_archived IS NULL AND parent_id IS NULL
+            UNION
+             SELECT forest.root_id, child.id
+             FROM forest
+             JOIN session child ON child.parent_id = forest.session_id
+          )${userMessageCte}
+          SELECT forest.root_id, s.id, s.parent_id, s.title, s.directory,
+                 p.name AS projectName, s.time_created, s.time_updated, s.time_archived,
+                 ${latestUserMessageColumn} AS latestUserMessageMs
+          FROM forest
+          JOIN session s ON s.id = forest.session_id
+          JOIN project p ON p.id = s.project_id
+          ${userMessageJoin}`,
+      )
+      .all() as Array<ForestSession & { root_id: string }>;
   }
 
   private assertParentIdIndex(): void {
@@ -721,55 +837,82 @@ function quoteSqlIdentifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
 }
 
+function isMissingMessageTable(error: unknown): boolean {
+  return error instanceof Error && /no such table: message/.test(error.message);
+}
+
 function buildSessionEvidence(
   sessionId: string,
   events: StatusEvent[],
   now: number,
+  latestUserMessageMs: number | null,
 ): SessionEvidence {
   const blockers = new Map<string, Blocker>();
   let latestActivityMs: number | null = null;
   let lifecycle: ChildLifecycleEvidence | null = null;
   let mode: LifecycleMode = "active";
   let state: SessionState | null = null;
+  let terminalTimestampMs: number | null = null;
+  let recoveredGenerationStartMs: number | null = null;
 
-  for (const rawEvent of events) {
-    if (
-      rawEvent.event === "Notification" ||
-      rawEvent.event === "SubagentStop"
-    ) {
-      continue;
-    }
-    const timestampMs = new Date(rawEvent.timestamp).getTime();
-    if (!Number.isFinite(timestampMs)) continue;
+  const timeline = buildGenerationTimeline(events, latestUserMessageMs);
+  for (const evidence of timeline) {
+    const isPersistedUserMessage = evidence.type === "persisted_user_message";
+    const rawEvent = isPersistedUserMessage ? null : evidence.event;
+    const timestampMs = evidence.timestampMs;
+    const isReactivation =
+      isPersistedUserMessage ||
+      (rawEvent !== null && isGenerationReactivation(rawEvent));
+    const isHardTerminal =
+      rawEvent !== null && isHardTerminalEvidence(rawEvent);
 
-    if (rawEvent.event === "session.created") {
-      mode = "active";
-      blockers.clear();
-    } else if (isGenerationReactivation(rawEvent)) {
-      mode = "active";
-      blockers.clear();
-    } else if (
-      mode === "hard_terminal" &&
-      !(state === "error" && rawEvent.state === "closed")
-    ) {
-      continue;
-    } else if (
-      mode === "idle" &&
-      !isGenerationReactivation(rawEvent) &&
-      !isHardTerminalEvidence(rawEvent)
-    ) {
+    if (mode === "hard_terminal") {
+      if (state === "closed") continue;
+      if (isHardTerminal) {
+        // A later Error can refresh its barrier; a later Closed supersedes it.
+      } else if (
+        !isReactivation ||
+        timestampMs <= (terminalTimestampMs ?? Number.POSITIVE_INFINITY)
+      ) {
+        continue;
+      } else {
+        mode = "active";
+        state = null;
+        blockers.clear();
+        latestActivityMs = null;
+        lifecycle = null;
+        terminalTimestampMs = null;
+        recoveredGenerationStartMs = timestampMs;
+      }
+    } else if (mode === "idle" && !isReactivation && !isHardTerminal) {
       continue;
     } else if (mode === "idle") {
       mode = "active";
+      blockers.clear();
+      latestActivityMs = null;
+      lifecycle = null;
     }
 
+    if (isReactivation) {
+      blockers.clear();
+    }
+
+    if (isPersistedUserMessage) {
+      latestActivityMs = Math.max(latestActivityMs ?? timestampMs, timestampMs);
+      state = "running";
+      continue;
+    }
+
+    if (rawEvent === null) continue;
     const event = normalizeOpencodeStatusEvent(rawEvent);
     const isTerminal =
       event.event === "Stop" ||
       event.event === "StopFailure" ||
       event.event === "SessionEnd";
     const isActivity =
-      event.event === "PostToolUse" || event.event === "UserPromptSubmit";
+      event.event === "PostToolUse" ||
+      event.event === "UserPromptSubmit" ||
+      event.event === "session.created";
     const isPermissionWait = event.event === "PermissionRequest";
 
     if (isActivity || isPermissionWait) {
@@ -789,6 +932,8 @@ function buildSessionEvidence(
             ? "closed"
             : "stopped";
       mode = event.event === "Stop" ? "idle" : "hard_terminal";
+      terminalTimestampMs = mode === "hard_terminal" ? timestampMs : null;
+      if (mode === "hard_terminal") recoveredGenerationStartMs = null;
       continue;
     }
     const blockerLifecycle = getBlockerLifecycle(rawEvent);
@@ -821,7 +966,38 @@ function buildSessionEvidence(
     ),
     latestActivityMs,
     lifecycle,
+    terminalTimestampMs,
+    recoveredGenerationStartMs,
   };
+}
+
+function buildGenerationTimeline(
+  events: StatusEvent[],
+  latestUserMessageMs: number | null,
+): GenerationEvidence[] {
+  const timeline: GenerationEvidence[] = [];
+  for (const [order, event] of events.entries()) {
+    if (event.event === "Notification" || event.event === "SubagentStop") {
+      continue;
+    }
+    const timestampMs = new Date(event.timestamp).getTime();
+    if (!Number.isFinite(timestampMs)) continue;
+    timeline.push({ type: "status", event, timestampMs, order });
+  }
+  if (latestUserMessageMs !== null && Number.isFinite(latestUserMessageMs)) {
+    timeline.push({
+      type: "persisted_user_message",
+      timestampMs: latestUserMessageMs,
+    });
+  }
+  timeline.sort((a, b) => {
+    if (a.timestampMs !== b.timestampMs) return a.timestampMs - b.timestampMs;
+    if (a.type === "status" && b.type === "status") {
+      return a.order - b.order;
+    }
+    return a.type === "status" ? -1 : b.type === "status" ? 1 : 0;
+  });
+  return timeline;
 }
 
 function blockerKey(kind: BlockerKind, requestId: string | null): string {

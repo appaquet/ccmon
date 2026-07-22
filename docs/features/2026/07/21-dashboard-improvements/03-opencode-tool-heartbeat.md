@@ -72,6 +72,8 @@ The initial scope excludes `session.status: busy`. Manual tracing must confirm `
   * Cancel its heartbeat immediately; do not wait for a timeout. Let the next actual OpenCode lifecycle event determine Running, Waiting, Stopped, or Error.
 * [x] Q: Why is production-grade retention not part of this phase?
   * ccmon is an internal tool; correctness of real-time state is prioritized over distributed compaction and long-term log growth. Retention can be a separate project if needed.
+* [x] Q: Does clearing heartbeat state on `session.error` make Error permanently terminal?
+  * No. Error immediately clears in-flight plugin heartbeat work for that generation. Phase 04 may reopen backend state only after strictly newer root-local user intent; Closed remains permanently terminal.
 * [x] Q: Can fake-timer heartbeat tests poll the native status file for eventual writes?
   * Uncertainty: `vi.advanceTimersByTimeAsync()` controls the heartbeat interval, but the plugin persists records with native `fs/promises.appendFile()`.
   * Investigation: Vitest fake timers virtualize timer APIs, while Node documents `fs/promises` operations as threadpool-backed asynchronous I/O. The existing `waitForRecordCount()` additionally awaited a timer-based five-millisecond polling delay, coupling assertions to wall-clock filesystem completion.

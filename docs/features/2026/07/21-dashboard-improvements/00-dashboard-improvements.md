@@ -20,7 +20,7 @@ The completed implementation keeps the card identity compact and explicit: a fir
 
 ## Checkpoint
 
-The ASCII proposal was reviewed and implemented as a two-row identity block. User visual validation refined the row to `state   project-name                         machine`, removed the redundant source badge, and confirmed the result. Phase 01 is complete. Phase 02 implementation and automated verification are complete; manual nested-question validation remains before marking its requirements complete. Phase 03 implementation and automated verification are complete. Its fake-timer heartbeat suites now use deterministic in-memory append sinks instead of native filesystem polling; only the real OpenCode timing trace remains.
+The ASCII proposal was reviewed and implemented as a two-row identity block. User visual validation refined the row to `state   project-name                         machine`, removed the redundant source badge, and confirmed the result. Phase 01 is complete. Phase 02 implementation and automated verification are complete; manual nested-question validation remains before marking its requirements complete. Phase 03 implementation and automated verification are complete; only the real OpenCode timing trace remains. Phase 04 implementation and automated validation are complete; review closure is the remaining step.
 
 ## Requirements
 
@@ -33,6 +33,7 @@ The ASCII proposal was reviewed and implemented as a two-row identity block. Use
 * R5: ✅ Establish and review an ASCII card layout before implementation planning begins (Phase: Session Card Layout, see R5.A in the phase doc)
 * R6: 🔄 Promote a top-level OpenCode session to Waiting when any descendant has a fresh unresolved question or permission (Phase: Sub-agent Question Blocking, see R6.1–R6.14 in the phase doc)
 * R7: 🔄 Keep OpenCode sessions Running in real time during long-running tools with pragmatic plugin heartbeats (Phase: OpenCode Tool Heartbeat, see R7.1–R7.7 in the phase doc)
+* R8: 🔄 Recover an OpenCode root from a transient Error only on strictly newer root-local user intent, while keeping Closed and genuine terminal errors authoritative (Phase: OpenCode Transient Error Recovery, see R8.A–R8.E in the phase doc)
 
 ## Design
 
@@ -72,6 +73,8 @@ The approved identity hierarchy uses two compact rows. Row one starts with the t
   * No. Validate that `tool.execute.before` covers the problematic interval; only reopen `session.status: busy` as a contingency if real tracing proves it does not.
 * [x] Q: Can a historical OpenCode error remain authoritative after later user activity?
   * No. Error barriers are generation-scoped: valid later `chat.message`, raw user prompt, or `session.created` activity reopens the session, while same-generation late tool/question evidence remains suppressed.
+* [x] Q: What if OpenCode persists later root user activity but emits no plugin recovery event?
+  * A strictly newer persisted root user message is valid generation reactivation evidence. Generic SQLite timestamps, assistant/tool activity, and descendant activity are not sufficient; Closed remains permanently authoritative.
 
 ## Phases
 
@@ -93,6 +96,12 @@ Implemented recursive descendant blocker aggregation so a fresh unresolved quest
 
 Implemented pragmatic plugin-local real-time tool liveness with immediate starts, 30-second forced heartbeats, immediate cleanup, and bounded in-process work. The heartbeat suites are hermetic against CI filesystem timing. Production-grade status-log retention is out of scope; only the real OpenCode timing trace remains before completion.
 
+### 🔄 04 Phase: OpenCode Transient Error Recovery
+
+[04-opencode-transient-error-recovery](04-opencode-transient-error-recovery.md)
+
+Implemented persisted root user-message evidence in OpenCode generation reconstruction so a transient Error can recover without a plugin follow-up event. Closed remains absolute, and generic timestamps or descendant activity cannot hide genuine errors. Automated validation is complete; review closure remains.
+
 ## Files
 
 - **public/js/render.js**: Two-row identity rendering, display-name precedence, and preserved card activity rendering (Session Card Layout).
@@ -109,3 +118,4 @@ Implemented pragmatic plugin-local real-time tool liveness with immediate starts
 - **tests/backends/opencode.test.ts**: Recursive graph, blocker ledger, precedence, stale boundary, and backend integration tests (Sub-agent Question Blocking).
 - **tests/opencode-plugin.test.ts**: Plugin request-ID and hermetic heartbeat lifecycle tests (Sub-agent Question Blocking, OpenCode Tool Heartbeat).
 - **tests/opencode-plugin-phase03-findings.test.ts**: Hermetic delayed-write, generation-ordering, blocker-pressure, and bounded-work regressions (OpenCode Tool Heartbeat).
+- **src/parsers/opencode-db.ts**: Persisted OpenCode message access relevant to collection-level recovery evidence (OpenCode Transient Error Recovery).

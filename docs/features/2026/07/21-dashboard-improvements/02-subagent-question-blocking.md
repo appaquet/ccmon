@@ -18,7 +18,7 @@ This phase plans backend/plugin evidence changes only. It does not add a new pub
 * R6.8: 🔄 Ensure generic Running activity and future heartbeat events never resolve an explicit blocker.
 * R6.9: 🔄 Reuse the existing five-minute permission freshness window, including a tested exact-boundary policy.
 * R6.10: 🔄 Support legacy ID-less records with a documented conservative session-level compatibility slot.
-* R6.11: 🔄 Preserve root `closed` and `error` precedence over descendant evidence.
+* R6.11: 🔄 Preserve root `closed` precedence absolutely and current-generation root `error` precedence over descendant evidence; only valid newer root-local reactivation can clear Error (see Phase 04).
 * R6.12: 🔄 Discover descendants once per backend collection without one SQL query per descendant.
 * R6.13: 🔄 Include fresh recursive descendant blocker activity in root `lastUpdated` so stale filtering does not hide the blocked root.
 * R6.14: 🔄 Keep the public state model, frontend fields, and sub-agent UI unchanged.
@@ -58,7 +58,8 @@ The plugin must preserve request IDs and force-write ask/reply/rejection lifecyc
 ### Root state precedence
 
 ```text
-root closed/error ───────────────► closed/error
+root closed ─────────────────────► closed
+current-generation root error ───► error
 root own fresh blocker ─────────► waiting_for_permission
 any descendant fresh blocker ───► waiting_for_permission
 root running ───────────────────► running
@@ -81,7 +82,7 @@ Any descendant blocker wins over Running siblings. Resolving one blocker does no
 * [x] Q: What happens with multiple blocked descendants?
   * Any fresh blocker keeps the root Waiting until every blocker is resolved, terminal, or stale.
 * [x] Q: What happens if the root is closed or errored while a descendant is blocked?
-  * Root `closed` or `error` remains authoritative.
+  * Root `closed` remains permanently authoritative. Root `error` remains authoritative for its generation and cannot be cleared by descendant evidence; Phase 04 defines the strictly newer root-local evidence that starts a new generation.
 * [x] Q: Why is request identity required?
   * Session-level state deduplication cannot represent two simultaneous requests; resolving one must not clear the other.
 * [x] Q: What engineering review found no remaining product blocker?
@@ -124,6 +125,7 @@ Any descendant blocker wins over Running siblings. Resolving one blocker does no
   - AC: Historical `session.error` followed by valid chat/user activity resolves as Running rather than sticky Error.
   - AC: Same-generation late tool/question events remain suppressed.
   - AC: A reactivated session can enter Waiting again on a new blocker.
+  - Follow-up: Phase 04 adds persisted SQLite root-user evidence for recovery when the plugin emits no later chat/user lifecycle record.
 - [ ] Review and validate Phase 02 (code-correctness reviewer + user)
   - AC: Tests, lint, typecheck, and both OpenCode dump integration checks pass.
   - AC: Manual nested-sub-agent question/permission scenarios show only the parent Waiting badge changing.

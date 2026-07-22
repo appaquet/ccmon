@@ -17,6 +17,7 @@ import { buildProjectState } from "../../src/backends/build-project-state.ts";
 import { OpencodeBackend } from "../../src/backends/opencode.ts";
 import type { SessionState } from "../../src/session-core.ts";
 import {
+  OPENCODE_ACTIVE_THRESHOLD_MS,
   PERMISSION_STALE_MS,
   STATUS_LOG_TAIL_BYTES,
   SUBAGENT_EXPIRY_MS,
@@ -244,6 +245,35 @@ describe("OpencodeBackend — core", () => {
   test("scanProjects returns empty array when no sessions exist", async () => {
     const projects = await backend.scanProjects();
     expect(projects).toHaveLength(0);
+  });
+
+  test("falls back to graph-only collection when the message table is absent", async () => {
+    const now = Date.now();
+    run(db, "DROP TABLE message");
+    run(db, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
+      "proj-no-messages",
+      "no-messages",
+      "/home/user/no-messages",
+    ]);
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "ses_no_messages",
+        "No messages",
+        "/home/user/no-messages",
+        now - 1_000,
+        now,
+        "proj-no-messages",
+      ],
+    );
+
+    const projects = await backend.scanProjects();
+
+    expect(projects.map((project) => project.sessionId)).toEqual([
+      "ses_no_messages",
+    ]);
+    await expect(backend.resolveState(projects[0])).resolves.toBe("running");
   });
 
   test("scanProjects falls back to basename(cwd) when project.name is null", async () => {
@@ -3319,6 +3349,20 @@ describe("OpencodeBackend — recursive blocker aggregation", () => {
     );
   }
 
+  function addMessage(
+    sessionId: string,
+    id: string,
+    role: "assistant" | "user",
+    createdAt: number,
+    updatedAt = createdAt,
+  ): void {
+    run(
+      db,
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+      [id, sessionId, createdAt, updatedAt, JSON.stringify({ role })],
+    );
+  }
+
   function status(
     sessionId: string,
     event: string,
@@ -3771,7 +3815,7 @@ describe("OpencodeBackend — recursive blocker aggregation", () => {
     );
   });
 
-  test("allows session.created to explicitly begin a generation after terminal evidence", async () => {
+  test("closed remains terminal despite a later session.created event", async () => {
     addSession("root");
     const backend = backendForStatus(
       status("root", "session.deleted", "closed", now - 3_000) +
@@ -3780,7 +3824,7 @@ describe("OpencodeBackend — recursive blocker aggregation", () => {
     );
 
     await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
-      "running",
+      "closed",
     );
   });
 
@@ -3846,6 +3890,374 @@ describe("OpencodeBackend — recursive blocker aggregation", () => {
     await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
       "running",
     );
+  });
+
+  test("a strictly newer root user message reactivates an errored generation", async () => {
+    addSession("root");
+    const errorAt = now - 4_000;
+    const userMessageAt = now - 2_000;
+    addMessage("root", "root-user", "user", userMessageAt);
+    const backend = backendForStatus(
+      status("root", "session.error", "error", errorAt),
+    );
+    const project = await projectFor(backend);
+
+    await expect(backend.resolveState(project)).resolves.toBe("running");
+    await expect(backend.computeLastUpdated(project)).resolves.toBe(
+      new Date(userMessageAt).toISOString(),
+    );
+  });
+
+  test.each([
+    ["equal", now - 4_000],
+    ["older", now - 5_000],
+  ])("a %s root user message does not reactivate an error", async (_name, userMessageAt) => {
+    addSession("root", null, false, now - 1_000);
+    const errorAt = now - 4_000;
+    addMessage("root", `root-user-${userMessageAt}`, "user", userMessageAt);
+    const backend = backendForStatus(
+      status("root", "session.error", "error", errorAt),
+    );
+    const project = await projectFor(backend);
+
+    await expect(backend.resolveState(project)).resolves.toBe("error");
+    await expect(backend.computeLastUpdated(project)).resolves.toBe(
+      new Date(errorAt).toISOString(),
+    );
+  });
+
+  test("an equal-timestamp status reactivation does not recover an error", async () => {
+    addSession("root");
+    const errorAt = now - 4_000;
+    const backend = backendForStatus(
+      status("root", "session.error", "error", errorAt) +
+        status("root", "chat.message", "running", errorAt),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "error",
+    );
+  });
+
+  test("generic root and descendant activity cannot recover or inflate an error", async () => {
+    const errorAt = now - 5_000;
+    addSession("root", null, false, now - 1_000);
+    addSession("child", "root", false, now - 500);
+    addMessage("root", "root-assistant", "assistant", now - 500);
+    addMessage("child", "child-user", "user", now - 400);
+    run(
+      db,
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "root-tool",
+        "root-assistant",
+        "root",
+        now - 500,
+        now - 300,
+        JSON.stringify({
+          type: "tool",
+          tool: "bash",
+          state: { status: "completed" },
+        }),
+      ],
+    );
+    const backend = backendForStatus(
+      status("root", "session.error", "error", errorAt) +
+        status("root", "tool.execute.heartbeat", "running", now - 200) +
+        status("child", "chat.message", "running", now - 100),
+    );
+    const project = await projectFor(backend);
+
+    await expect(backend.resolveState(project)).resolves.toBe("error");
+    await expect(backend.computeLastUpdated(project)).resolves.toBe(
+      new Date(errorAt).toISOString(),
+    );
+  });
+
+  test("closed remains authoritative despite newer root user evidence", async () => {
+    addSession("root");
+    const closedAt = now - 4_000;
+    addMessage("root", "root-user", "user", now - 2_000);
+    const backend = backendForStatus(
+      status("root", "session.deleted", "closed", closedAt),
+    );
+    const project = await projectFor(backend);
+
+    await expect(backend.resolveState(project)).resolves.toBe("closed");
+    await expect(backend.computeLastUpdated(project)).resolves.toBe(
+      new Date(closedAt).toISOString(),
+    );
+  });
+
+  test("a SQLite-recovered root accepts only later-generation blockers and errors", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const errorAt = now - 6_000;
+    const userMessageAt = now - 4_000;
+    addMessage("root", "root-user", "user", userMessageAt);
+    const waitingBackend = backendForStatus(
+      status("root", "session.error", "error", errorAt) +
+        status(
+          "root",
+          "question.asked",
+          "waiting_for_permission",
+          now - 5_000,
+          "late",
+          "question",
+        ) +
+        status(
+          "child",
+          "permission.asked",
+          "waiting_for_permission",
+          now - 2_000,
+          "fresh",
+          "permission",
+        ),
+    );
+
+    const waitingProject = await projectFor(waitingBackend);
+    await expect(waitingBackend.resolveState(waitingProject)).resolves.toBe(
+      "waiting_for_permission",
+    );
+    await expect(
+      waitingBackend.computeLastUpdated(waitingProject),
+    ).resolves.toBe(new Date(now - 2_000).toISOString());
+
+    const laterErrorAt = now - 1_000;
+    const errorBackend = backendForStatus(
+      status("root", "session.error", "error", errorAt) +
+        status("root", "session.error", "error", laterErrorAt),
+    );
+
+    await expect(
+      errorBackend.resolveState(await projectFor(errorBackend)),
+    ).resolves.toBe("error");
+    await expect(
+      errorBackend.computeLastUpdated(await projectFor(errorBackend)),
+    ).resolves.toBe(new Date(laterErrorAt).toISOString());
+  });
+
+  test("a SQLite-recovered root ignores descendant blockers from before its new generation", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const errorAt = now - 6_000;
+    const userMessageAt = now - 4_000;
+    addMessage("root", "root-user", "user", userMessageAt);
+    const oldBlocker = status(
+      "child",
+      "permission.asked",
+      "waiting_for_permission",
+      now - 5_000,
+      "old",
+      "permission",
+    );
+    const oldBlockerBackend = backendForStatus(
+      status("root", "session.error", "error", errorAt) + oldBlocker,
+    );
+
+    await expect(
+      oldBlockerBackend.resolveState(await projectFor(oldBlockerBackend)),
+    ).resolves.toBe("running");
+
+    const freshBlockerBackend = backendForStatus(
+      status("root", "session.error", "error", errorAt) +
+        oldBlocker +
+        status(
+          "child",
+          "permission.asked",
+          "waiting_for_permission",
+          now - 2_000,
+          "fresh",
+          "permission",
+        ),
+    );
+
+    await expect(
+      freshBlockerBackend.resolveState(await projectFor(freshBlockerBackend)),
+    ).resolves.toBe("waiting_for_permission");
+  });
+
+  test("a recovered root keeps its descendant cutoff after becoming idle", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const errorAt = now - 6_000;
+    const userMessageAt = now - 4_000;
+    addMessage("root", "root-user", "user", userMessageAt);
+    const backend = backendForStatus(
+      status("root", "session.error", "error", errorAt) +
+        status(
+          "child",
+          "permission.asked",
+          "waiting_for_permission",
+          now - 5_000,
+          "old",
+          "permission",
+        ) +
+        status("root", "session.idle", "stopped", now - 2_000),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "stopped",
+    );
+  });
+
+  test("a stale recovered root excludes direct-child liveness from before recovery", async () => {
+    addSession("root", null, false, now - 10 * 60_000);
+    addSession("child", "root", false, now - 10 * 60_000);
+    const errorAt = now - OPENCODE_ACTIVE_THRESHOLD_MS - 40_000;
+    const userMessageAt = now - OPENCODE_ACTIVE_THRESHOLD_MS - 30_000;
+    addMessage("root", "root-user", "user", userMessageAt);
+    const backend = backendForStatus(
+      status("root", "session.error", "error", errorAt) +
+        status(
+          "child",
+          "UserPromptSubmit",
+          "running",
+          now - OPENCODE_ACTIVE_THRESHOLD_MS - 35_000,
+        ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "stopped",
+    );
+  });
+
+  test("a root without recovered terminal state retains descendant blocker state", async () => {
+    addSession("root");
+    addSession("child", "root");
+    addMessage("root", "root-user", "user", now - 1_000);
+    const backend = backendForStatus(
+      status(
+        "child",
+        "question.asked",
+        "waiting_for_permission",
+        now - 2_000,
+        "active",
+        "question",
+      ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
+  test("retries persisted user evidence after the message table schema changes", async () => {
+    addSession("root");
+    const errorAt = now - 4_000;
+    run(db, "DROP TABLE message");
+    const backend = backendForStatus(
+      status("root", "session.error", "error", errorAt),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "error",
+    );
+
+    run(
+      db,
+      "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL)",
+    );
+    addMessage("root", "root-user", "user", now - 2_000);
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "running",
+    );
+  });
+
+  test("detects a message table created while handling a missing-table query", async () => {
+    addSession("root");
+    run(db, "DROP TABLE message");
+    const errorAt = now - 4_000;
+    const userMessageAt = now - 2_000;
+    const backend = backendForStatus(
+      status("root", "session.error", "error", errorAt),
+    );
+    const originalPrepare = db.prepare.bind(db);
+    let injectedTableCreation = false;
+    const prepareSpy = vi.spyOn(db, "prepare").mockImplementation((sql) => {
+      if (
+        !injectedTableCreation &&
+        sql.includes("WITH RECURSIVE forest") &&
+        sql.includes("root_user_messages")
+      ) {
+        injectedTableCreation = true;
+        originalPrepare(
+          "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL)",
+        ).run();
+        originalPrepare(
+          "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+        ).run(
+          "root-user",
+          "root",
+          userMessageAt,
+          userMessageAt,
+          JSON.stringify({ role: "user" }),
+        );
+        throw new Error("no such table: message");
+      }
+      return originalPrepare(sql);
+    });
+
+    try {
+      await expect(
+        backend.resolveState(await projectFor(backend)),
+      ).resolves.toBe("running");
+    } finally {
+      prepareSpy.mockRestore();
+    }
+  });
+
+  test("retries when the message table appears after the post-failure existence check", async () => {
+    addSession("root");
+    run(db, "DROP TABLE message");
+    const errorAt = now - 4_000;
+    const userMessageAt = now - 2_000;
+    const backend = backendForStatus(
+      status("root", "session.error", "error", errorAt),
+    );
+    const originalPrepare = db.prepare.bind(db);
+    let injectedTableCreation = false;
+    const prepareSpy = vi.spyOn(db, "prepare").mockImplementation((sql) => {
+      const statement = originalPrepare(sql);
+      if (
+        injectedTableCreation ||
+        !sql.includes("SELECT 1 FROM sqlite_master")
+      ) {
+        return statement;
+      }
+
+      return {
+        get: () => {
+          const result = statement.get();
+          injectedTableCreation = true;
+          originalPrepare(
+            "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL)",
+          ).run();
+          originalPrepare(
+            "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+          ).run(
+            "root-user",
+            "root",
+            userMessageAt,
+            userMessageAt,
+            JSON.stringify({ role: "user" }),
+          );
+          return result;
+        },
+      } as typeof statement;
+    });
+
+    try {
+      await expect(
+        backend.resolveState(await projectFor(backend)),
+      ).resolves.toBe("error");
+      await expect(
+        backend.resolveState(await projectFor(backend)),
+      ).resolves.toBe("running");
+    } finally {
+      prepareSpy.mockRestore();
+    }
   });
 
   test("normalizes empty request IDs to the legacy blocker slot", async () => {
@@ -4036,13 +4448,21 @@ describe("OpencodeBackend — recursive blocker aggregation", () => {
     );
   });
 
-  test("uses one collection query without per-root or per-descendant lookups", async () => {
+  test("uses one collection query for forest and persisted user evidence", async () => {
     addSession("root");
     addSession("child-a", "root");
     addSession("child-b", "child-a");
     addSession("child-c", "child-b");
     addSession("other-root");
     addSession("other-child", "other-root");
+    addMessage("root", "root-user", "user", now - 1_000);
+    addMessage("child-c", "child-user", "user", now - 1_000);
+    addMessage("other-root", "other-user", "user", now - 1_000);
+    for (let index = 0; index < 32; index += 1) {
+      const sessionId = `deep-child-${index}`;
+      addSession(sessionId, index === 0 ? "root" : `deep-child-${index - 1}`);
+      addMessage(sessionId, `deep-child-user-${index}`, "user", now - 1_000);
+    }
     const backend = backendForStatus("");
     const prepareSpy = vi.spyOn(db, "prepare");
 
