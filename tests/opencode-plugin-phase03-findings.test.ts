@@ -1,16 +1,32 @@
-import { mkdtempSync, readFileSync } from "node:fs";
-import { appendFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, test, vi } from "vitest";
+
+const { findingsSink, appendFileMock, mkdirMock } = vi.hoisted(() => ({
+  findingsSink: {
+    active: false,
+    stateHome: null as string | null,
+    statusLogs: new Map<string, string>(),
+    nativeAppendFile: null as
+      | ((path: string, data: string) => Promise<void>)
+      | null,
+    nativeMkdir: null as
+      | ((
+          path: string,
+          options?: { recursive?: boolean },
+        ) => Promise<string | undefined>)
+      | null,
+  },
+  appendFileMock: vi.fn(),
+  mkdirMock: vi.fn(),
+}));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return {
-    ...actual,
-    appendFile: vi.fn(actual.appendFile),
-  };
+  findingsSink.nativeAppendFile = (path, data) => actual.appendFile(path, data);
+  findingsSink.nativeMkdir = (path, options) => actual.mkdir(path, options);
+  appendFileMock.mockImplementation(appendToSink);
+  mkdirMock.mockImplementation(handleMkdir);
+  return { ...actual, appendFile: appendFileMock, mkdir: mkdirMock };
 });
 
 import {
@@ -18,8 +34,6 @@ import {
   MAX_PENDING_WRITES,
 } from "../resources/opencode-plugin/ccmon.ts";
 
-const appendFileMock = vi.mocked(appendFile);
-const defaultAppendFile = appendFileMock.getMockImplementation();
 const previousStateHome = process.env.XDG_STATE_HOME;
 
 type StatusRecord = {
@@ -28,18 +42,64 @@ type StatusRecord = {
   state: string;
 };
 
+function isFindingsPath(path: string): boolean {
+  return (
+    findingsSink.active &&
+    findingsSink.stateHome !== null &&
+    path.startsWith(`${findingsSink.stateHome}/`)
+  );
+}
+
+async function appendToSink(path: string, data: string): Promise<void> {
+  if (isFindingsPath(path)) {
+    findingsSink.statusLogs.set(
+      path,
+      `${findingsSink.statusLogs.get(path) ?? ""}${data}`,
+    );
+    return;
+  }
+  if (!findingsSink.nativeAppendFile) {
+    throw new Error("native appendFile fallback is not initialized");
+  }
+  await findingsSink.nativeAppendFile(path, data);
+}
+
+async function handleMkdir(
+  path: string,
+  options?: { recursive?: boolean },
+): Promise<void> {
+  if (isFindingsPath(path)) return;
+  if (!findingsSink.nativeMkdir) {
+    throw new Error("native mkdir fallback is not initialized");
+  }
+  await findingsSink.nativeMkdir(path, options);
+}
+
+function resetFindingsSink(): void {
+  findingsSink.active = false;
+  findingsSink.stateHome = null;
+  findingsSink.statusLogs.clear();
+  appendFileMock.mockImplementation(appendToSink);
+  mkdirMock.mockImplementation(handleMkdir);
+  appendFileMock.mockClear();
+  mkdirMock.mockClear();
+}
+
 describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
+  const activePlugins = new Set<{ dispose: () => Promise<void> }>();
+  let nextStateHome = 0;
+
   afterEach(() => {
-    if (defaultAppendFile) appendFileMock.mockImplementation(defaultAppendFile);
-    vi.useRealTimers();
-    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
-    else process.env.XDG_STATE_HOME = previousStateHome;
+    return cleanup();
   });
 
   async function createPlugin(
     logs: Array<{ level: string; message: string }> = [],
   ) {
-    const stateHome = mkdtempSync(join(tmpdir(), "ccmon-plugin-findings-"));
+    const stateHome = `/virtual/ccmon-plugin-findings-${nextStateHome}`;
+    nextStateHome += 1;
+    findingsSink.active = true;
+    findingsSink.stateHome = stateHome;
     process.env.XDG_STATE_HOME = stateHome;
     const plugin = await ccmonPlugin({
       client: {
@@ -50,6 +110,7 @@ describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
       worktree: "/home/user/project",
       $: {},
     });
+    activePlugins.add(plugin);
     return {
       plugin,
       statusPath: join(stateHome, "ccmon", "opencode-status.jsonl"),
@@ -57,26 +118,49 @@ describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
   }
 
   function records(statusPath: string): StatusRecord[] {
-    return readFileSync(statusPath, "utf8")
+    return (findingsSink.statusLogs.get(statusPath) ?? "")
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => JSON.parse(line) as StatusRecord);
   }
 
-  async function waitForRecord(
-    statusPath: string,
-    predicate: (record: StatusRecord) => boolean,
-  ): Promise<void> {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+  async function cleanup(): Promise<void> {
+    const cleanupErrors: unknown[] = [];
+    for (const plugin of activePlugins) {
       try {
-        if (records(statusPath).some(predicate)) return;
-      } catch {
-        // The first queued write may not have created the file yet.
+        await plugin.dispose();
+      } catch (error) {
+        cleanupErrors.push(error);
       }
-      await delay(5);
     }
-    throw new Error("expected matching status record");
+    try {
+      activePlugins.clear();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      resetFindingsSink();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      vi.useRealTimers();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = previousStateHome;
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        cleanupErrors,
+        "failed to clean up OpenCode findings test state",
+      );
+    }
   }
 
   test.each([
@@ -93,13 +177,13 @@ describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
       releaseFirstWrite = resolve;
     });
     let appendCalls = 0;
-    appendFileMock.mockImplementation(async (...args) => {
+    appendFileMock.mockImplementation(async (path: string, data: string) => {
       appendCalls += 1;
       if (appendCalls === 1) {
         firstWriteStarted();
         await writeGate;
       }
-      return defaultAppendFile?.(...args) ?? Promise.resolve();
+      await appendToSink(path, data);
     });
 
     const { plugin, statusPath } = await createPlugin(logs);
@@ -228,12 +312,6 @@ describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
     });
     expect(vi.getTimerCount()).toBe(80);
     await vi.advanceTimersByTimeAsync(30_000);
-    await waitForRecord(
-      statusPath,
-      (record) =>
-        record.session_id === pressuredSession &&
-        record.event === "tool.execute.heartbeat",
-    );
 
     pressuredRecords = records(statusPath).filter(
       (record) => record.session_id === pressuredSession,
@@ -268,13 +346,13 @@ describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
       releaseFirstWrite = resolve;
     });
     let appendCalls = 0;
-    appendFileMock.mockImplementation(async (...args) => {
+    appendFileMock.mockImplementation(async (path: string, data: string) => {
       appendCalls += 1;
       if (appendCalls === 1) {
         firstWriteStarted();
         await writeGate;
       }
-      return defaultAppendFile?.(...args) ?? Promise.resolve();
+      await appendToSink(path, data);
     });
 
     const { plugin, statusPath } = await createPlugin(logs);

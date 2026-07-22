@@ -20,7 +20,7 @@ The completed implementation keeps the card identity compact and explicit: a fir
 
 ## Checkpoint
 
-The ASCII proposal was reviewed and implemented as a two-row identity block. User visual validation refined the row to `state   project-name                         machine`, removed the redundant source badge, and confirmed the result. Phase 01 is complete. Phase 02 implementation and automated verification are complete; manual nested-question validation remains before marking its requirements complete. Phase 03 implementation and automated verification are complete; only the real OpenCode timing trace remains.
+The ASCII proposal was reviewed and implemented as a two-row identity block. User visual validation refined the row to `state   project-name                         machine`, removed the redundant source badge, and confirmed the result. Phase 01 is complete. Phase 02 implementation and automated verification are complete; manual nested-question validation remains before marking its requirements complete. Phase 03 implementation and automated verification are complete. Its fake-timer heartbeat suites now use deterministic in-memory append sinks instead of native filesystem polling; only the real OpenCode timing trace remains.
 
 ## Requirements
 
@@ -91,7 +91,7 @@ Implemented recursive descendant blocker aggregation so a fresh unresolved quest
 
 [03-opencode-tool-heartbeat](03-opencode-tool-heartbeat.md)
 
-Implemented pragmatic plugin-local real-time tool liveness with immediate starts, 30-second forced heartbeats, immediate cleanup, and bounded in-process work. Production-grade status-log retention is out of scope; only the real OpenCode timing trace remains before completion.
+Implemented pragmatic plugin-local real-time tool liveness with immediate starts, 30-second forced heartbeats, immediate cleanup, and bounded in-process work. The heartbeat suites are hermetic against CI filesystem timing. Production-grade status-log retention is out of scope; only the real OpenCode timing trace remains before completion.
 
 ## Files
 
@@ -107,4 +107,5 @@ Implemented pragmatic plugin-local real-time tool liveness with immediate starts
 - **src/timing.ts**: Existing permission/activity thresholds and heartbeat cadence relationship (Sub-agent Question Blocking, OpenCode Tool Heartbeat).
 - **resources/opencode-plugin/ccmon.ts**: Request-aware lifecycle records, in-flight tool tracking, forced heartbeats, and cleanup (Sub-agent Question Blocking, OpenCode Tool Heartbeat).
 - **tests/backends/opencode.test.ts**: Recursive graph, blocker ledger, precedence, stale boundary, and backend integration tests (Sub-agent Question Blocking).
-- **tests/opencode-plugin.test.ts**: Plugin request-ID and heartbeat lifecycle tests (Sub-agent Question Blocking, OpenCode Tool Heartbeat).
+- **tests/opencode-plugin.test.ts**: Plugin request-ID and hermetic heartbeat lifecycle tests (Sub-agent Question Blocking, OpenCode Tool Heartbeat).
+- **tests/opencode-plugin-phase03-findings.test.ts**: Hermetic delayed-write, generation-ordering, blocker-pressure, and bounded-work regressions (OpenCode Tool Heartbeat).

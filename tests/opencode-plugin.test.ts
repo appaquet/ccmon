@@ -1,16 +1,70 @@
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { ccmonPlugin } from "../resources/opencode-plugin/ccmon.ts";
+
+const { heartbeatSink, appendFileMock, mkdirMock } = vi.hoisted(() => ({
+  heartbeatSink: {
+    active: false,
+    stateHome: null as string | null,
+    statusLogs: new Map<string, string>(),
+  },
+  appendFileMock: vi.fn(),
+  mkdirMock: vi.fn(),
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  appendFileMock.mockImplementation(async (path: string, data: string) => {
+    if (isHeartbeatPath(path)) {
+      heartbeatSink.statusLogs.set(
+        path,
+        `${heartbeatSink.statusLogs.get(path) ?? ""}${data}`,
+      );
+      return;
+    }
+    await actual.appendFile(path, data);
+  });
+  mkdirMock.mockImplementation(
+    async (path: string, options?: { recursive?: boolean }) => {
+      if (isHeartbeatPath(path)) return;
+      await actual.mkdir(path, options);
+    },
+  );
+  return {
+    ...actual,
+    appendFile: appendFileMock,
+    mkdir: mkdirMock,
+  };
+});
+
+function isHeartbeatPath(path: string): boolean {
+  return (
+    heartbeatSink.active &&
+    heartbeatSink.stateHome !== null &&
+    path.startsWith(`${heartbeatSink.stateHome}/`)
+  );
+}
+
+function resetHeartbeatSink(): void {
+  heartbeatSink.active = false;
+  heartbeatSink.stateHome = null;
+  heartbeatSink.statusLogs.clear();
+  appendFileMock.mockClear();
+  mkdirMock.mockClear();
+}
 
 describe("ccmon OpenCode plugin blocker lifecycle records", () => {
   const previousStateHome = process.env.XDG_STATE_HOME;
 
   afterEach(() => {
-    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
-    else process.env.XDG_STATE_HOME = previousStateHome;
+    try {
+      resetHeartbeatSink();
+    } finally {
+      if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = previousStateHome;
+    }
   });
 
   test("force-writes request-aware ask, reply, and rejection records", async () => {
@@ -512,15 +566,52 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
 
 describe("ccmon OpenCode plugin tool heartbeats", () => {
   const previousStateHome = process.env.XDG_STATE_HOME;
+  const activePlugins = new Set<{ dispose: () => Promise<void> }>();
+  let nextStateHome = 0;
 
-  afterEach(() => {
-    vi.useRealTimers();
-    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
-    else process.env.XDG_STATE_HOME = previousStateHome;
+  afterEach(async () => {
+    const cleanupErrors: unknown[] = [];
+    for (const plugin of activePlugins) {
+      try {
+        await plugin.dispose();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    try {
+      activePlugins.clear();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      resetHeartbeatSink();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      vi.useRealTimers();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = previousStateHome;
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        cleanupErrors,
+        "failed to clean up OpenCode heartbeat test state",
+      );
+    }
   });
 
   async function createPlugin() {
-    const stateHome = mkdtempSync(join(tmpdir(), "ccmon-plugin-tool-"));
+    const stateHome = `/virtual/ccmon-plugin-tool-${nextStateHome}`;
+    nextStateHome += 1;
+    heartbeatSink.active = true;
+    heartbeatSink.stateHome = stateHome;
     process.env.XDG_STATE_HOME = stateHome;
     const plugin = await ccmonPlugin({
       client: {
@@ -531,6 +622,7 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
       worktree: "/home/user/project",
       $: {},
     });
+    activePlugins.add(plugin);
     return {
       plugin,
       statusPath: join(stateHome, "ccmon", "opencode-status.jsonl"),
@@ -538,23 +630,11 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
   }
 
   function records(statusPath: string) {
-    return readFileSync(statusPath, "utf8")
+    return (heartbeatSink.statusLogs.get(statusPath) ?? "")
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => JSON.parse(line));
-  }
-
-  async function waitForRecordCount(statusPath: string, count: number) {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      try {
-        if (records(statusPath).length >= count) return;
-      } catch {
-        // The first queued write may not have created the file yet.
-      }
-      await delay(5);
-    }
-    throw new Error(`expected ${count} status records`);
   }
 
   test("writes an immediate start, waits 30 seconds, and shares heartbeats across concurrent calls", async () => {
@@ -582,15 +662,12 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
     await vi.advanceTimersByTimeAsync(29_999);
     expect(records(statusPath)).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(1);
-    await waitForRecordCount(statusPath, 3);
     await plugin["tool.execute.after"]({
       sessionID: "tool-session",
       input: { callID: "call-a" },
     });
     await vi.advanceTimersByTimeAsync(30_000);
-    await waitForRecordCount(statusPath, 4);
     await vi.advanceTimersByTimeAsync(30_000);
-    await waitForRecordCount(statusPath, 5);
     await plugin["tool.execute.after"]({
       sessionID: "tool-session",
       input: { callID: "call-b" },
@@ -663,7 +740,6 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
       },
     });
     await vi.advanceTimersByTimeAsync(30_000);
-    await waitForRecordCount(statusPath, 7);
 
     expect(records(statusPath).map((record) => record.event)).toEqual([
       "tool.execute.before",
@@ -747,7 +823,6 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
       },
     });
     await vi.advanceTimersByTimeAsync(30_000);
-    await waitForRecordCount(statusPath, 4);
 
     expect(
       records(statusPath).filter(
