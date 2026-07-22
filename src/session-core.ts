@@ -44,6 +44,10 @@ export interface StatusEvent {
   working_dir: string;
   notificationMessage?: string;
   notificationTimestamp?: string;
+  /** Correlates an OpenCode question or permission lifecycle record. */
+  request_id?: string;
+  /** Distinguishes otherwise identical question and permission request IDs. */
+  blocker_kind?: "question" | "permission";
 }
 
 type ResolutionContext = {
@@ -73,7 +77,11 @@ export function isStatusEvent(v: unknown): v is StatusEvent {
     VALID_STATES.has(obj.state) &&
     typeof obj.timestamp === "string" &&
     typeof obj.session_id === "string" &&
-    typeof obj.working_dir === "string"
+    typeof obj.working_dir === "string" &&
+    (obj.request_id === undefined || typeof obj.request_id === "string") &&
+    (obj.blocker_kind === undefined ||
+      obj.blocker_kind === "question" ||
+      obj.blocker_kind === "permission")
   );
 }
 
@@ -91,16 +99,17 @@ function isStatusFileLegacy(v: unknown): v is StatusFileLegacy {
 
 /**
  * Parses NDJSON lines into StatusEvent[], skipping corrupt lines.
- * When slicedMidFile is true, the first line is discarded (may be partial).
+ * When slicedMidFile is true, a non-boundary first line is discarded.
  */
 export function parseStatusLines(
   raw: string,
   slicedMidFile = false,
 ): StatusEvent[] {
-  const lines = raw.split("\n").filter((l) => l.trim() !== "");
-  const startIdx = slicedMidFile && lines.length > 0 ? 1 : 0;
+  const lines = raw.split("\n");
+  const startIdx = slicedMidFile && !raw.startsWith("\n") ? 1 : 0;
   const events: StatusEvent[] = [];
   for (let i = startIdx; i < lines.length; i++) {
+    if (lines[i].trim() === "") continue;
     try {
       const parsed = JSON.parse(lines[i]);
       if (isStatusEvent(parsed)) {

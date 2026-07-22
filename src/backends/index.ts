@@ -52,13 +52,25 @@ function createOpencodeBackend(
       "ccmon",
       "opencode-status.jsonl",
     );
-  const backend = new OpencodeBackend(
-    db,
-    entry.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
-    statusLogPath,
-    entry.statusPollIntervalMs ?? DEFAULT_STATUS_POLL_INTERVAL_MS,
-  );
-  return { backend, db };
+  try {
+    const backend = new OpencodeBackend(
+      db,
+      entry.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
+      statusLogPath,
+      entry.statusPollIntervalMs ?? DEFAULT_STATUS_POLL_INTERVAL_MS,
+    );
+    return { backend, db };
+  } catch (err) {
+    try {
+      db.close();
+    } catch {
+      // ignore close failures while skipping an invalid backend
+    }
+    log.warn("invalid OpenCode database, skipping", err, {
+      path: databasePath,
+    });
+    return null;
+  }
 }
 
 /**

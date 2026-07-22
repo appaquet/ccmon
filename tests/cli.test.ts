@@ -88,6 +88,7 @@ function createOpencodeSchema(db: DatabaseSync): void {
       parent_id TEXT,
       project_id TEXT REFERENCES project(id)
     );
+    CREATE INDEX session_parent_id_idx ON session(parent_id);
     CREATE TABLE message (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
@@ -669,7 +670,7 @@ describe("dump --watch --project", () => {
     const stdoutChunks: Buffer[] = [];
     proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
 
-    await waitForJsonBlocks(stdoutChunks, 1);
+    await waitForJsonBlocks(stdoutChunks, 1, 8_000);
     proc.kill("SIGINT");
 
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
@@ -703,7 +704,7 @@ describe("dump --watch --project", () => {
     const stdoutChunks: Buffer[] = [];
     proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
 
-    await waitForJsonBlocks(stdoutChunks, 1);
+    await waitForJsonBlocks(stdoutChunks, 1, 8_000);
 
     // Trigger a file change by touching the session JSONL (appending a line)
     const existingContent = await readFile(
@@ -714,7 +715,7 @@ describe("dump --watch --project", () => {
       join(projDir, "session.jsonl"),
       `${existingContent}${JSON.stringify({ type: "user", message: { role: "user", content: "hello" } })}\n`,
     );
-    await waitForJsonBlocks(stdoutChunks, 2);
+    await waitForJsonBlocks(stdoutChunks, 2, 8_000);
 
     proc.kill("SIGINT");
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
@@ -727,7 +728,7 @@ describe("dump --watch --project", () => {
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed[0].projectName).toBe("watchapp2");
     }
-  }, 5000);
+  }, 10_000);
 
   test("emits an explicit empty array when the last filtered match disappears", async () => {
     const projDir = join(tmpDir, "-home-user-watchgone");

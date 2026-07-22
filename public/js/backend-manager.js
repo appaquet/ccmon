@@ -122,17 +122,29 @@ function mergeAndRender() {
   var merged = [];
   for (var i = 0; i < BackendManager.backends.length; i++) {
     var e = BackendManager.backends[i];
-    for (var j = 0; j < e.projects.length; j++) {
-      var p = e.projects[j];
-      var copy = {};
-      for (var k in p) {
-        if (Object.prototype.hasOwnProperty.call(p, k)) copy[k] = p[k];
-      }
-      copy._backendKey = e.hostname || e.url;
-      merged.push(copy);
-    }
+    merged = merged.concat(mergeBackendProjects(e));
   }
   render(getSortedProjects(merged));
+}
+
+function mergeBackendProjects(entry) {
+  var hostname = entry.hostname || entry.url;
+  var projects = [];
+  var i;
+  var project;
+  var copy;
+  var key;
+  for (i = 0; i < entry.projects.length; i++) {
+    project = entry.projects[i];
+    copy = {};
+    for (key in project) {
+      if (Object.prototype.hasOwnProperty.call(project, key)) copy[key] = project[key];
+    }
+    copy._backendKey = hostname;
+    copy._hostname = hostname;
+    projects.push(copy);
+  }
+  return projects;
 }
 
 function updateStatusPill() {

@@ -61,22 +61,24 @@ function subagentLabel(agent) {
   return 'Sub: ' + (agent.description || agent.sessionName || agent.slug || agent.agentId);
 }
 
-function shortSessionId(sessionId) {
-  if (!sessionId) return '';
-  return sessionId.length > 10 ? sessionId.slice(0, 10) : sessionId;
-}
-
-function sessionIdentityLabel(proj) {
-  if (proj.sessionName) return proj.sessionName;
-  if (proj.source === 'opencode' && proj.sessionId) {
-    return shortSessionId(proj.sessionId);
-  }
-  return '';
+function cardHeaderData(proj, displayName) {
+  var state = proj.state || 'stopped';
+  var sessionName = typeof proj.sessionName === 'string' && proj.sessionName.trim()
+    ? proj.sessionName
+    : '';
+  return {
+    hostname: proj._hostname || proj._backendKey || '',
+    projectName: displayName || proj.displayName || proj.projectName,
+    sessionName: sessionName,
+    state: state,
+    stateLabel: stateLabel[state] || state,
+  };
 }
 
 function createCard(proj, flashStopped, flashNotification, displayName, key) {
   var card = document.createElement('div');
-  var s = proj.state || 'stopped';
+  var header = cardHeaderData(proj, displayName);
+  var s = header.state;
   var isWaitingFlash = s === 'waiting_for_permission' && !flashWaitingDismissed.has(key);
   var isErrorFlash = s === 'error' && !flashErrorDismissed.has(key);
   var flashClasses = isWaitingFlash ? ' card-flashing-waiting'
@@ -101,7 +103,7 @@ function createCard(proj, flashStopped, flashNotification, displayName, key) {
 
   var badgeClass = stateBadgeClass[s] || 'badge-stopped';
   var dotClass = stateDotClass[s] || 'dot-stopped';
-  var label = stateLabel[s] || s;
+  var label = header.stateLabel;
 
   var tasksDone = proj.tasksDone || 0;
   var tasksTotal = proj.tasksTotal || 0;
@@ -111,23 +113,17 @@ function createCard(proj, flashStopped, flashNotification, displayName, key) {
     tasksTotal = nonDeleted.length;
   }
 
-  var cardName = displayName || proj.projectName;
-  var identityLabel = sessionIdentityLabel(proj);
-  var sessionSuffix = identityLabel
-    ? ' <span style="font-weight:normal;color:var(--muted)">(' + esc(identityLabel) + ')</span>'
-    : '';
-  var sourceLabel = (proj.source === 'opencode') ? 'OC' : 'CC';
-  var cardTitle = identityLabel ? cardName + ' (' + identityLabel + ')' : cardName;
   var html = `
-    <div class="card-header">
-      <span class="card-name" title="${esc(cardTitle)}">${esc(cardName)}${sessionSuffix}</span>
-      <div class="card-pills">
-        <span class="badge-source">${esc(sourceLabel)}</span>
+    <div class="card-identity">
+      <div class="card-header">
         <span class="badge ${badgeClass}">
           <span class="dot ${dotClass}"></span>
           ${esc(label)}
         </span>
+        <span class="card-project" title="${esc(header.projectName)}">${esc(header.projectName)}</span>
+        <span class="card-host" title="${esc(header.hostname)}">${esc(header.hostname)}</span>
       </div>
+      ${header.sessionName ? '<div class="card-session" title="' + esc(header.sessionName) + '">' + esc(header.sessionName) + '</div>' : ''}
     </div>
   `;
 

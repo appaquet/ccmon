@@ -2,7 +2,11 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
+  renameSync,
+  statSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -55,6 +59,7 @@ function createSchema(db: DB): void {
     )
   `,
   );
+  run(db, "CREATE INDEX session_parent_id_idx ON session(parent_id)");
   run(
     db,
     `
@@ -120,6 +125,15 @@ describe("OpencodeBackend — core", () => {
     expect(key).toContain("ses_abc123");
     // Same project = same key
     expect(backend.projectKey(project)).toBe(key);
+  });
+
+  test("requires a session.parent_id index for recursive traversal", () => {
+    const unindexedDb = new DatabaseSync(":memory:");
+    run(unindexedDb, "CREATE TABLE session (id TEXT, parent_id TEXT)");
+
+    expect(() => new OpencodeBackend(unindexedDb)).toThrow(
+      "requires an index on parent_id",
+    );
   });
 
   test("scanProjects returns only active sessions (time_archived IS NULL, parent_id IS NULL)", async () => {
@@ -1016,6 +1030,42 @@ describe("OpencodeBackend — sub-agents", () => {
     );
   });
 
+  test("reloads a same-size status-log replacement when its inode changes", async () => {
+    const now = Date.now();
+    setupParent();
+    const replacementDir = mkdtempSync(
+      join(tmpdir(), "ccmon-inode-replacement-"),
+    );
+    const statusPath = join(replacementDir, "opencode-status.jsonl");
+    const timestamp = now - 1_000;
+    const makeStatus = (state: SessionState) =>
+      `${JSON.stringify({
+        event: "same.event",
+        state,
+        timestamp: new Date(timestamp).toISOString(),
+        session_id: "ses_parent",
+        working_dir: "/home/user/parentproj",
+      })}\n`;
+    const running = makeStatus("running");
+    const stopped = makeStatus("stopped");
+    expect(stopped.length).toBe(running.length);
+    writeFileSync(statusPath, running);
+    const backend = new OpencodeBackend(db, 5_000, statusPath);
+    await expect(
+      backend.resolveState((await backend.scanProjects())[0]),
+    ).resolves.toBe("running");
+
+    const original = statSync(statusPath);
+    const replacementPath = join(replacementDir, "replacement-status.jsonl");
+    writeFileSync(replacementPath, stopped);
+    utimesSync(replacementPath, original.atime, original.mtime);
+    renameSync(replacementPath, statusPath);
+
+    await expect(
+      backend.resolveState((await backend.scanProjects())[0]),
+    ).resolves.toBe("stopped");
+  });
+
   test("quiet linked sub-agent drops after terminal retention window uses terminal time", async () => {
     const now = Date.now();
     const parentId = setupParent();
@@ -1536,7 +1586,7 @@ describe("OpencodeBackend — child lifecycle ordering", () => {
     const resumedAt = now - 1_000;
     const backend = backendForStatus(
       makeLifecycleEvent(childId, "session.idle", "stopped", now - 2_000) +
-        makeLifecycleEvent(childId, "tool.execute.after", "running", resumedAt),
+        makeLifecycleEvent(childId, "chat.message", "running", resumedAt),
     );
     const project = (await backend.scanProjects())[0];
 
@@ -1550,12 +1600,7 @@ describe("OpencodeBackend — child lifecycle ordering", () => {
   const reactivationFixtures: LifecycleFixture[] = [
     { name: "session.created", state: "running" },
     { name: "chat.message", state: "running" },
-    { name: "tool.execute.after", state: "running" },
-    { name: "PermissionRequest", state: "waiting_for_permission" },
     { name: "UserPromptSubmit", state: "running" },
-    { name: "compatible.unknown", state: "running" },
-    { name: "permission.replied", state: "stopped" },
-    { name: "question.replied", state: "stopped" },
   ];
 
   test.each(
@@ -1593,12 +1638,8 @@ describe("OpencodeBackend — child lifecycle ordering", () => {
     const { childId } = setupStaleParentAndChild();
     const terminalAt = now - 1_000;
     const backend = backendForStatus(
-      makeLifecycleEvent(
-        childId,
-        "tool.execute.after",
-        "running",
-        now - 2_000,
-      ) + makeLifecycleEvent(childId, name, state, terminalAt),
+      makeLifecycleEvent(childId, "chat.message", "running", now - 2_000) +
+        makeLifecycleEvent(childId, name, state, terminalAt),
     );
     const project = (await backend.scanProjects())[0];
 
@@ -1722,7 +1763,7 @@ describe("OpencodeBackend — child lifecycle ordering", () => {
     const backend = backendForStatus(
       makeLifecycleEvent(
         childId,
-        "tool.execute.after",
+        "chat.message",
         "running",
         "2026-07-16T11:59:30.000Z",
       ) +
@@ -1756,7 +1797,7 @@ describe("OpencodeBackend — child lifecycle ordering", () => {
     );
   });
 
-  test("uses SQLite fallback when child lifecycle evidence is outside the retained status tail", async () => {
+  test("retains child terminal evidence beyond the legacy status-tail length", async () => {
     const { childId } = setupStaleParentAndChild(now - 1_000);
     const backend = backendForStatus(
       makeLifecycleEvent(childId, "session.idle", "stopped", now - 2_000) +
@@ -1764,9 +1805,9 @@ describe("OpencodeBackend — child lifecycle ordering", () => {
     );
     const project = (await backend.scanProjects())[0];
 
-    await expect(backend.resolveState(project)).resolves.toBe("running");
+    await expect(backend.resolveState(project)).resolves.toBe("stopped");
     await expect(backend.getSubagents(project)).resolves.toEqual([
-      expectedChild(childId, true, now - 1_000),
+      expectedChild(childId, false, now - 2_000),
     ]);
   });
 });
@@ -2183,7 +2224,7 @@ describe("OpencodeBackend — status log", () => {
     expect(state).toBe("running");
   });
 
-  test("cache is invalidated when status file mtime changes", async () => {
+  test("keeps an existing collection snapshot stable until the next scan", async () => {
     const now = Date.now();
     const oldTime = now - 120_000;
     setupProject(
@@ -2213,8 +2254,11 @@ describe("OpencodeBackend — status log", () => {
         makeStatusEvent("ses_s9", "stopped", t2),
     );
 
-    const state2 = await backend.resolveState(projects[0]);
-    expect(state2).toBe("stopped");
+    await expect(backend.resolveState(projects[0])).resolves.toBe("running");
+    const refreshedProjects = await backend.scanProjects();
+    await expect(backend.resolveState(refreshedProjects[0])).resolves.toBe(
+      "stopped",
+    );
   });
 
   test("active linked child keeps parent running after parent idle status", async () => {
@@ -2802,7 +2846,8 @@ describe("OpencodeBackend — watchForChanges dual-mode (status log exists)", ()
     // Wait for fs.watch → debounce → onUpdate → state rebuild
     await new Promise((r) => setTimeout(r, 400));
 
-    const finalState = await backend.resolveState(projects[0]);
+    const refreshedProjects = await backend.scanProjects();
+    const finalState = await backend.resolveState(refreshedProjects[0]);
     expect(finalState).toBe("stopped");
     expect(calls.length).toBeGreaterThan(0);
 
@@ -2850,7 +2895,8 @@ describe("OpencodeBackend — watchForChanges dual-mode (status log exists)", ()
     const { stop } = backend.watchForChanges(() => {});
     await new Promise((r) => setTimeout(r, 400));
 
-    const updatedSubs = await backend.getSubagents(projects[0]);
+    const refreshedProjects = await backend.scanProjects();
+    const updatedSubs = await backend.getSubagents(refreshedProjects[0]);
     expect(updatedSubs).toHaveLength(1);
     expect(updatedSubs[0].isActive).toBe(false);
 
@@ -2946,7 +2992,7 @@ describe("OpencodeBackend — status log tail-cap", () => {
     expect(state).toBe("running");
   });
 
-  test("tail-cap falls back to timestamp inference when target session events are all outside the tail", async () => {
+  test("reads target session activity beyond the legacy tail length", async () => {
     const now = Date.now();
     const oldTime = now - 120_000;
     setupProject(
@@ -2959,8 +3005,7 @@ describe("OpencodeBackend — status log tail-cap", () => {
 
     const statusPath = join(tmpDir, "opencode-status.jsonl");
 
-    // Build a large file: target event at the beginning (before the tail window),
-    // then padding so the tail does NOT include the target event
+    // Build a file larger than the legacy tail with target activity at its start.
     const targetTs = new Date(now - 5000).toISOString();
     const targetLine = makeStatusLine("ses_tailcap2", "running", targetTs);
 
@@ -2979,8 +3024,7 @@ describe("OpencodeBackend — status log tail-cap", () => {
     const projects = await backend.scanProjects();
     const state = await backend.resolveState(projects[0]);
 
-    // Target event was before the tail — timestamp inference applies: session is stale → stopped
-    expect(state).toBe("stopped");
+    expect(state).toBe("running");
   });
 
   test("file below STATUS_LOG_TAIL_BYTES is read in full without slicing", async () => {
@@ -3228,5 +3272,811 @@ describe("OpencodeBackend — enrichMessages decomposition", () => {
     const enrichment = await backend.enrichProject(project);
 
     expect(enrichment.latestAssistantActivity?.text?.length).toBe(200);
+  });
+});
+
+describe("OpencodeBackend — recursive blocker aggregation", () => {
+  const now = Date.UTC(2026, 6, 21, 12, 0, 0);
+  let db: DB;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    db = new DatabaseSync(":memory:");
+    createSchema(db);
+    tmpDir = mkdtempSync(join(tmpdir(), "ccmon-recursive-blockers-"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function addSession(
+    id: string,
+    parentId: string | null = null,
+    archived = false,
+    updated = now - 10 * 60_000,
+  ): void {
+    run(db, "INSERT OR IGNORE INTO project (id, name, root) VALUES (?, ?, ?)", [
+      "proj-blockers",
+      "blockers",
+      "/home/user/blockers",
+    ]);
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, time_archived, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        id,
+        id,
+        "/home/user/blockers",
+        updated - 1_000,
+        updated,
+        archived ? updated : null,
+        parentId,
+        "proj-blockers",
+      ],
+    );
+  }
+
+  function status(
+    sessionId: string,
+    event: string,
+    state: SessionState,
+    timestamp = now - 1_000,
+    requestId?: string,
+    blockerKind?: "question" | "permission",
+  ): string {
+    return `${JSON.stringify({
+      event,
+      state,
+      timestamp: new Date(timestamp).toISOString(),
+      session_id: sessionId,
+      working_dir: "/home/user/blockers",
+      ...(requestId ? { request_id: requestId } : {}),
+      ...(blockerKind ? { blocker_kind: blockerKind } : {}),
+    })}\n`;
+  }
+
+  function backendForStatus(contents: string): OpencodeBackend {
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(statusPath, contents);
+    return new OpencodeBackend(db, 5_000, statusPath);
+  }
+
+  async function projectFor(backend: OpencodeBackend, sessionId = "root") {
+    const project = (await backend.scanProjects()).find(
+      (candidate) => candidate.sessionId === sessionId,
+    );
+    if (!project) throw new Error(`missing visible root ${sessionId}`);
+    return project;
+  }
+
+  test("promotes a root for arbitrary-depth blockers across branches and preserves the blocker timestamp", async () => {
+    addSession("root");
+    addSession("branch-a", "root");
+    addSession("branch-b", "root");
+    addSession("depth-three", "branch-a");
+    const askedAt = now - 2_000;
+    const backend = backendForStatus(
+      status(
+        "depth-three",
+        "question.asked",
+        "waiting_for_permission",
+        askedAt,
+        "q-1",
+        "question",
+      ),
+    );
+    const project = await projectFor(backend);
+
+    await expect(backend.resolveState(project)).resolves.toBe(
+      "waiting_for_permission",
+    );
+    await expect(backend.computeLastUpdated(project)).resolves.toBe(
+      new Date(askedAt).toISOString(),
+    );
+  });
+
+  test("keeps duplicate request IDs independent by descendant session and blocker kind", async () => {
+    addSession("root");
+    addSession("question-child", "root");
+    addSession("permission-child", "root");
+    const backend = backendForStatus(
+      status(
+        "question-child",
+        "question.asked",
+        "waiting_for_permission",
+        now - 4_000,
+        "same",
+        "question",
+      ) +
+        status(
+          "permission-child",
+          "permission.asked",
+          "waiting_for_permission",
+          now - 3_000,
+          "same",
+          "permission",
+        ) +
+        status(
+          "question-child",
+          "question.replied",
+          "running",
+          now - 2_000,
+          "same",
+          "question",
+        ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
+  test("clears only the matching request when a descendant has multiple blockers", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const backend = backendForStatus(
+      status(
+        "child",
+        "question.asked",
+        "waiting_for_permission",
+        now - 3_000,
+        "question-1",
+        "question",
+      ) +
+        status(
+          "child",
+          "question.asked",
+          "waiting_for_permission",
+          now - 2_000,
+          "question-2",
+          "question",
+        ) +
+        status(
+          "child",
+          "question.replied",
+          "running",
+          now - 1_000,
+          "question-1",
+          "question",
+        ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
+  test("uses a conservative per-session legacy slot for ID-less lifecycle records", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const backend = backendForStatus(
+      status("child", "question.asked", "waiting_for_permission", now - 3_000) +
+        status(
+          "child",
+          "question.asked",
+          "waiting_for_permission",
+          now - 2_000,
+        ) +
+        status("child", "question.replied", "running", now - 1_000),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "running",
+    );
+  });
+
+  test("traverses archived intermediates and counts archived blocked descendants", async () => {
+    addSession("root");
+    addSession("archived-middle", "root", true);
+    addSession("archived-child", "archived-middle", true);
+    const backend = backendForStatus(
+      status(
+        "archived-child",
+        "permission.asked",
+        "waiting_for_permission",
+        now - 1_000,
+        "p-1",
+        "permission",
+      ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
+  test("does not attach missing-parent sessions or disconnected cycles to a root", async () => {
+    addSession("root");
+    addSession("orphan", "missing-parent");
+    addSession("cycle-a", "cycle-b");
+    addSession("cycle-b", "cycle-a");
+    const backend = backendForStatus(
+      status(
+        "orphan",
+        "question.asked",
+        "waiting_for_permission",
+        now - 1_000,
+        "orphan",
+        "question",
+      ) +
+        status(
+          "cycle-a",
+          "permission.asked",
+          "waiting_for_permission",
+          now - 1_000,
+          "cycle",
+          "permission",
+        ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "stopped",
+    );
+  });
+
+  test("excludes a corrupted root re-entry instead of traversing it as its own descendant", async () => {
+    addSession("root");
+    addSession("child", "root");
+    run(db, "UPDATE session SET parent_id = ? WHERE id = ?", ["child", "root"]);
+    const backend = backendForStatus(
+      status(
+        "child",
+        "permission.asked",
+        "waiting_for_permission",
+        now - 1_000,
+        "blocked",
+        "permission",
+      ),
+    );
+    const corruptedRoot = {
+      cwd: "/home/user/blockers",
+      projectName: "blockers",
+      sessionId: "root",
+      source: "opencode" as const,
+    };
+
+    await expect(backend.resolveState(corruptedRoot)).resolves.toBe("stopped");
+  });
+
+  test("invalid blocker timestamps cannot block and a running event after an ask cannot clear it", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const backend = backendForStatus(
+      `${JSON.stringify({
+        event: "question.asked",
+        state: "waiting_for_permission",
+        timestamp: "not-a-timestamp",
+        session_id: "child",
+        working_dir: "/home/user/blockers",
+        request_id: "invalid",
+      })}\n` +
+        status(
+          "child",
+          "question.asked",
+          "waiting_for_permission",
+          now - 2_000,
+          "active",
+          "question",
+        ) +
+        status("child", "tool.execute.after", "running", now - 1_000),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
+  test("applies terminal evidence in order and only to the affected descendant", async () => {
+    addSession("terminal-root");
+    addSession("terminal-child", "terminal-root");
+    const terminalBackend = backendForStatus(
+      status(
+        "terminal-child",
+        "question.asked",
+        "waiting_for_permission",
+        now - 2_000,
+        "terminal",
+        "question",
+      ) + status("terminal-child", "session.idle", "stopped", now - 1_000),
+    );
+    await expect(
+      terminalBackend.resolveState(
+        await projectFor(terminalBackend, "terminal-root"),
+      ),
+    ).resolves.toBe("stopped");
+
+    addSession("root");
+    addSession("ended-child", "root");
+    addSession("blocked-child", "root");
+    const backend = backendForStatus(
+      status(
+        "ended-child",
+        "question.asked",
+        "waiting_for_permission",
+        now - 4_000,
+        "ended",
+        "question",
+      ) +
+        status("ended-child", "session.idle", "stopped", now - 3_000) +
+        status(
+          "blocked-child",
+          "permission.asked",
+          "waiting_for_permission",
+          now - 2_000,
+          "live",
+          "permission",
+        ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
+  test("treats the exact five-minute boundary as stale while a later blocker remains fresh", async () => {
+    addSession("root");
+    addSession("boundary-child", "root");
+    const boundaryBackend = backendForStatus(
+      status(
+        "boundary-child",
+        "permission.asked",
+        "waiting_for_permission",
+        now - PERMISSION_STALE_MS,
+        "boundary",
+        "permission",
+      ),
+    );
+
+    await expect(
+      boundaryBackend.resolveState(await projectFor(boundaryBackend)),
+    ).resolves.not.toBe("waiting_for_permission");
+
+    const freshBackend = backendForStatus(
+      status(
+        "boundary-child",
+        "permission.asked",
+        "waiting_for_permission",
+        now - PERMISSION_STALE_MS + 1,
+        "fresh",
+        "permission",
+      ),
+    );
+    await expect(
+      freshBackend.resolveState(await projectFor(freshBackend)),
+    ).resolves.toBe("waiting_for_permission");
+  });
+
+  test("keeps top-level roots isolated and preserves closed/error root precedence", async () => {
+    addSession("root");
+    addSession("child", "root");
+    addSession("other-root");
+    addSession("other-child", "other-root");
+    const backend = backendForStatus(
+      status(
+        "child",
+        "question.asked",
+        "waiting_for_permission",
+        now - 3_000,
+        "q",
+        "question",
+      ) +
+        status("root", "session.deleted", "closed", now - 2_000) +
+        status(
+          "other-child",
+          "permission.asked",
+          "waiting_for_permission",
+          now - 1_000,
+          "p",
+          "permission",
+        ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "closed",
+    );
+    await expect(
+      backend.resolveState(await projectFor(backend, "other-root")),
+    ).resolves.toBe("waiting_for_permission");
+
+    addSession("error-root");
+    addSession("error-child", "error-root");
+    const errorBackend = backendForStatus(
+      status(
+        "error-child",
+        "permission.asked",
+        "waiting_for_permission",
+        now - 2_000,
+        "blocked",
+        "permission",
+      ) + status("error-root", "session.error", "error", now - 1_000),
+    );
+    await expect(
+      errorBackend.resolveState(await projectFor(errorBackend, "error-root")),
+    ).resolves.toBe("error");
+  });
+
+  test("keeps reconstructed terminal barriers through late lifecycle and running evidence", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const backend = backendForStatus(
+      status("root", "session.error", "error", now - 4_000) +
+        status(
+          "root",
+          "question.asked",
+          "waiting_for_permission",
+          now - 3_000,
+          "late-question",
+          "question",
+        ) +
+        status(
+          "root",
+          "question.replied",
+          "running",
+          now - 2_000,
+          "late-question",
+          "question",
+        ) +
+        status(
+          "root",
+          "question.rejected",
+          "running",
+          now - 2_000,
+          "late-question",
+          "question",
+        ) +
+        status(
+          "root",
+          "permission.asked",
+          "waiting_for_permission",
+          now - 2_000,
+          "late-permission",
+          "permission",
+        ) +
+        status(
+          "root",
+          "permission.rejected",
+          "running",
+          now - 2_000,
+          "late-permission",
+          "permission",
+        ) +
+        status("root", "tool.execute.after", "running", now - 1_000) +
+        status(
+          "child",
+          "permission.asked",
+          "waiting_for_permission",
+          now - 1_000,
+          "child",
+          "permission",
+        ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "error",
+    );
+  });
+
+  test("advances an errored generation to a later deleted terminal state", async () => {
+    addSession("root");
+    const backend = backendForStatus(
+      status("root", "session.error", "error", now - 2_000) +
+        status("root", "session.deleted", "closed", now - 1_000),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "closed",
+    );
+  });
+
+  test("allows session.created to explicitly begin a generation after terminal evidence", async () => {
+    addSession("root");
+    const backend = backendForStatus(
+      status("root", "session.deleted", "closed", now - 3_000) +
+        status("root", "session.created", "running", now - 2_000) +
+        status("root", "tool.execute.after", "running", now - 1_000),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "running",
+    );
+  });
+
+  test("error followed by idle and chat resumes the latest generation", async () => {
+    addSession("root");
+    const backend = backendForStatus(
+      status("root", "session.error", "error", now - 4_000) +
+        status("root", "session.idle", "stopped", now - 3_000) +
+        status("root", "chat.message", "running", now - 2_000),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "running",
+    );
+  });
+
+  test("late error-generation activity stays suppressed until chat, then a new question blocks", async () => {
+    addSession("root");
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(
+      statusPath,
+      status("root", "session.error", "error", now - 5_000) +
+        status("root", "tool.execute.after", "running", now - 4_000) +
+        status(
+          "root",
+          "question.asked",
+          "waiting_for_permission",
+          now - 3_000,
+          "late",
+          "question",
+        ) +
+        status("root", "chat.message", "running", now - 2_000),
+    );
+    const backend = new OpencodeBackend(db, 5_000, statusPath);
+    const project = await projectFor(backend);
+
+    await expect(backend.resolveState(project)).resolves.toBe("running");
+
+    writeFileSync(
+      statusPath,
+      `${readFileSync(statusPath, "utf-8")}${status(
+        "root",
+        "question.asked",
+        "waiting_for_permission",
+        now - 1_000,
+        "fresh",
+        "question",
+      )}`,
+    );
+    const refreshedProject = await projectFor(backend);
+    await expect(backend.resolveState(refreshedProject)).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
+  test("raw UserPromptSubmit reactivates an errored generation", async () => {
+    addSession("root");
+    const backend = backendForStatus(
+      status("root", "session.error", "error", now - 2_000) +
+        status("root", "UserPromptSubmit", "running", now - 1_000),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "running",
+    );
+  });
+
+  test("normalizes empty request IDs to the legacy blocker slot", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const emptyIdAsk = JSON.stringify({
+      event: "permission.asked",
+      state: "waiting_for_permission",
+      timestamp: new Date(now - 2_000).toISOString(),
+      session_id: "child",
+      working_dir: "/home/user/blockers",
+      request_id: "",
+    });
+    const backend = backendForStatus(
+      `${emptyIdAsk}\n${status("child", "permission.replied", "running", now - 1_000)}`,
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "running",
+    );
+  });
+
+  test("permission.rejected resolves matching permission activity", async () => {
+    addSession("root");
+    const rejectedAt = now - 1_000;
+    const backend = backendForStatus(
+      status(
+        "root",
+        "permission.asked",
+        "waiting_for_permission",
+        now - 2_000,
+        "permission",
+        "permission",
+      ) +
+        status(
+          "root",
+          "permission.rejected",
+          "running",
+          rejectedAt,
+          "permission",
+          "permission",
+        ),
+    );
+    const project = await projectFor(backend);
+
+    await expect(backend.resolveState(project)).resolves.toBe("running");
+    await expect(backend.computeLastUpdated(project)).resolves.toBe(
+      new Date(rejectedAt).toISOString(),
+    );
+  });
+
+  test("idle ignores late tool and blocker lifecycle evidence until chat reactivates it", async () => {
+    addSession("root");
+    const backend = backendForStatus(
+      status("root", "session.idle", "stopped", now - 5_000) +
+        status("root", "tool.execute.after", "running", now - 4_000) +
+        status(
+          "root",
+          "question.asked",
+          "waiting_for_permission",
+          now - 3_000,
+          "late",
+          "question",
+        ) +
+        status("root", "chat.message", "running", now - 2_000),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "running",
+    );
+  });
+
+  test("session.created resets a reused idle child generation before a fresh blocker", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const backend = backendForStatus(
+      status("child", "session.idle", "stopped", now - 4_000) +
+        status("child", "session.created", "running", now - 3_000) +
+        status(
+          "child",
+          "permission.asked",
+          "waiting_for_permission",
+          now - 2_000,
+          "fresh",
+          "permission",
+        ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
+  test("a fresh descendant blocker promotes an idle root to waiting", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const backend = backendForStatus(
+      status("root", "session.idle", "stopped", now - 3_000) +
+        status(
+          "child",
+          "question.asked",
+          "waiting_for_permission",
+          now - 1_000,
+          "child-question",
+          "question",
+        ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
+  test.each([
+    ["session.error", "error"],
+    ["session.deleted", "closed"],
+  ] as const)("%s crosses an idle root into the hard terminal state", async (event, state) => {
+    addSession("root");
+    const backend = backendForStatus(
+      status("root", "session.idle", "stopped", now - 2_000) +
+        status("root", event, state, now - 1_000),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      state,
+    );
+  });
+
+  test("raw UserPromptSubmit starts a new blocker generation", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const backend = backendForStatus(
+      status(
+        "child",
+        "PermissionRequest",
+        "waiting_for_permission",
+        now - 4_000,
+      ) +
+        status(
+          "child",
+          "permission.asked",
+          "waiting_for_permission",
+          now - 3_000,
+          "request-aware",
+          "permission",
+        ) +
+        status(
+          "child",
+          "question.asked",
+          "waiting_for_permission",
+          now - 2_000,
+          "question-aware",
+          "question",
+        ) +
+        status("child", "UserPromptSubmit", "running", now - 1_000),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "running",
+    );
+  });
+
+  test("a reactivated generation can block only on a new ask", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const backend = backendForStatus(
+      status(
+        "child",
+        "question.asked",
+        "waiting_for_permission",
+        now - 3_000,
+        "old-question",
+        "question",
+      ) +
+        status("child", "chat.message", "running", now - 2_000) +
+        status(
+          "child",
+          "permission.asked",
+          "waiting_for_permission",
+          now - 1_000,
+          "new-permission",
+          "permission",
+        ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
+  test("uses one collection query without per-root or per-descendant lookups", async () => {
+    addSession("root");
+    addSession("child-a", "root");
+    addSession("child-b", "child-a");
+    addSession("child-c", "child-b");
+    addSession("other-root");
+    addSession("other-child", "other-root");
+    const backend = backendForStatus("");
+    const prepareSpy = vi.spyOn(db, "prepare");
+
+    const projects = await backend.scanProjects();
+    for (const project of projects) {
+      await backend.resolveState(project);
+      await backend.computeLastUpdated(project);
+      await backend.getSubagents(project);
+    }
+
+    expect(prepareSpy).toHaveBeenCalledTimes(1);
+    expect(prepareSpy.mock.calls[0][0]).toContain("WITH RECURSIVE forest");
+  });
+
+  test("uses the parent_id index for recursive child expansion", () => {
+    const plan = db
+      .prepare("EXPLAIN QUERY PLAN SELECT id FROM session WHERE parent_id = ?")
+      .all("root") as { detail: string }[];
+
+    expect(plan.map((row) => row.detail).join(" ")).toContain(
+      "session_parent_id_idx",
+    );
+  });
+
+  test("rejects an index where parent_id is not the leading key", () => {
+    const unindexedDb = new DatabaseSync(":memory:");
+    run(unindexedDb, "CREATE TABLE session (id TEXT, parent_id TEXT)");
+    run(
+      unindexedDb,
+      "CREATE INDEX session_id_parent_idx ON session(id, parent_id)",
+    );
+
+    expect(() => new OpencodeBackend(unindexedDb)).toThrow(
+      "requires an index on parent_id",
+    );
   });
 });

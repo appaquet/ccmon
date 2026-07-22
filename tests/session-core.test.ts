@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { StatusEvent } from "../src/session-core.ts";
 import {
   PERMISSION_RESOLVE_GAP_MS,
+  parseStatusLines,
   readStatusLog,
   resolveState,
   STATUS_FILE_LEGACY,
@@ -52,6 +53,26 @@ describe("readStatusLog", () => {
     expect(result[0].state).toBe("running");
     expect(result[1].event).toBe("PermissionRequest");
     expect(result[1].state).toBe("waiting_for_permission");
+  });
+
+  test("keeps the first complete record when a bounded tail starts on a newline", () => {
+    const first = makeEvent("PostToolUse", "running");
+    const second = makeEvent("Stop", "stopped");
+
+    expect(
+      parseStatusLines(
+        `\n${JSON.stringify(first)}\n${JSON.stringify(second)}\n`,
+        true,
+      ),
+    ).toEqual([first, second]);
+  });
+
+  test("drops a genuinely partial first record from a bounded tail", () => {
+    const complete = makeEvent("Stop", "stopped");
+
+    expect(
+      parseStatusLines(`partial${JSON.stringify(complete)}\n`, true),
+    ).toEqual([]);
   });
 
   test("missing file: returns empty array", async () => {

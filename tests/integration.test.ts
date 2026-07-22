@@ -67,6 +67,7 @@ describe("integration — both backends", () => {
       )
     `,
     );
+    run(opencodeDB, "CREATE INDEX session_parent_id_idx ON session(parent_id)");
     const now = Date.now();
     run(opencodeDB, "INSERT INTO project (id, name, root) VALUES (?, ?, ?)", [
       "proj-oc",

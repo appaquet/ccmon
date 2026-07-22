@@ -254,7 +254,7 @@
 
     #project-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
       gap: 14px;
     }
 
@@ -268,7 +268,8 @@
       flex-direction: column;
       gap: 8px;
       min-width: 0;
-      max-width: 360px;
+      width: 100%;
+      max-width: 480px;
     }
 
     .card-agents {
@@ -276,26 +277,45 @@
       max-height: 300px;
     }
 
-    .card-header {
+    .card-identity {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
     }
 
-    .card-name {
-      font-size: 15px;
-      font-weight: 600;
+    .card-header {
+      display: grid;
+      grid-template-columns: max-content minmax(0, 3fr) minmax(0, 2fr);
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .card-project,
+    .card-host,
+    .card-session {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      min-width: 0;
     }
 
-    .card-pills {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-shrink: 0;
+    .card-project {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .card-host {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .card-session {
+      color: var(--text);
+      font-size: 16px;
+      font-weight: 600;
     }
 
     .badge {
@@ -321,16 +341,6 @@
     .badge-stopped  { background: rgba(249,115,22,0.12); color: var(--stopped); }
     .badge-waiting  { background: rgba(239,68,68,0.12);  color: var(--waiting); }
     .badge-closed   { background: rgba(107,114,128,0.12); color: var(--closed); border: 1px solid rgba(107,114,128,0.18); }
-
-    .badge-source {
-      background: rgba(148,163,184,0.08);
-      color: #64748b;
-      font-size: 10px;
-      padding: 1px 5px;
-      border-radius: 9999px;
-      border: 1px solid rgba(148,163,184,0.12);
-      flex-shrink: 0;
-    }
 
     .dot-running  { background: var(--running); animation: pulse-dot 1.8s ease-in-out infinite; }
     .dot-stopped  { background: var(--stopped); }
