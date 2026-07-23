@@ -20,19 +20,22 @@ Use a pure server-side display helper that recognizes `.workspaces` only as a co
 
 ## Tasks
 
-- [~] Add workspace display-path regressions (R12.A–R12.D; senior-dev)
+- [x] Add workspace display-path regressions (R12.A–R12.D; senior-dev)
   - AC: Root and nested workspace cwd values produce `<root>/<workspace>` for Claude- and OpenCode-shaped projects.
   - AC: Malformed and ordinary paths retain existing labels byte-for-byte.
   - AC: Canonical fields remain unchanged.
-- [ ] Implement workspace-aware display derivation and disambiguation (R12.A–R12.E; senior-dev)
+- [x] Implement workspace-aware display derivation and disambiguation (R12.A–R12.E; senior-dev)
   - AC: `/work/repo/.workspaces/alpha` and nested paths beneath it display exactly `repo/alpha`; distinct workspace `beta` displays exactly `repo/beta` before any collision fallback.
   - AC: Identical labels expand deterministically through existing fallback behavior.
   - AC: Non-workspace collision fixtures remain unchanged.
   - AC: HTTP, WebSocket, and dump fixtures change only `displayName`; cwd, project name, session ID, source, and backend identity remain byte-for-byte unchanged.
-- [ ] Review and validate workspace identity (code-correctness reviewer + browser/manual validation)
+- [~] Review and validate workspace identity (code-correctness reviewer + browser/manual validation)
   - AC: Targeted/full tests, lint, and typecheck pass.
   - AC: Same-host and cross-host workspace examples remain distinct without overlap or horizontal scrolling at 320px and normal desktop width.
   - AC: API, WebSocket, and dump integration fixtures pass with the expected derived `displayName` values.
+  - Automated validation: Targeted project-utils/render/server/CLI-dump suites passed 100/100; full suite passed 547/547; lint, typecheck, and both dump commands passed. Independent final correctness review found no Phase 06 or baseline-compatibility defects.
+  - Scope validation: Canonical `projectName` still defines collision groups; workspace logical segments affect labels only inside those baseline groups. No state, plugin, filtering, polling, or canonical identity behavior changed.
+  - Remaining: Browser/manual checks at 320px and normal desktop width for same-host and cross-host workspace cards, overlap, horizontal scrolling, `.local` composition, and dismissal compatibility.
 
 ## Files
 

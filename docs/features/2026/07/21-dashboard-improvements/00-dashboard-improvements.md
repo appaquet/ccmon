@@ -24,7 +24,9 @@ Recovery work now proceeds from known-good commit `a2e0a344d4cf`, not from the c
 
 Phase 05 implementation is complete on separate rollback boundaries: plugin export repair, collision-safe frontend `.local` display, transient card dismissal, and the separately approved large piped-dump fix. Automated validation passes 529 tests, lint, typecheck, filtered/no-filter JSON pipes, scope review, and isolated OpenCode 1.18.4 delivery in 224ms.
 
-Phase 05 frontend validation passed: `.local` labels and the compact Hide control work without the previous layout regression. Phase 05 remains open only for the Home Manager-managed plugin activation and OpenCode restart gate. The user explicitly approved Phase 06 workspace display implementation as a separate change.
+Phase 05 frontend validation passed; only the Home Manager-managed plugin activation and OpenCode restart gate remains. Phase 06 workspace display is implemented in its own change and passes 547 tests, lint, typecheck, dump checks, and independent correctness/requirements reviews.
+
+Next validate real workspace cards at 320px and desktop width, then record the result. Phase 06 remains in progress until that browser gate passes; canonical identity and baseline disambiguation remain unchanged.
 
 ## Requirements
 
@@ -129,7 +131,7 @@ Implemented the isolated plugin repair, frontend-only `.local` display, compact 
 
 [06-workspace-display-identity](06-workspace-display-identity.md)
 
-Add lexical `.workspaces/<name>` display labels as an isolated change after Phase 05 stabilizes and receives separate approval. Preserve canonical identity while explicitly validating the changed derived `displayName` in HTTP, WebSocket, and dump output.
+Implemented lexical `.workspaces/<name>` labels across same-host, cross-host, HTTP, WebSocket, and dump presentation while preserving canonical identity and baseline grouping/fallback semantics. Automated validation passes; responsive browser validation remains.
 
 ## Files
 
