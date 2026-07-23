@@ -24,7 +24,7 @@ Recovery work now proceeds from known-good commit `a2e0a344d4cf`, not from the c
 
 Phase 05 implementation is complete on separate rollback boundaries: plugin export repair, collision-safe frontend `.local` display, transient card dismissal, and the separately approved large piped-dump fix. Automated validation passes 529 tests, lint, typecheck, filtered/no-filter JSON pipes, scope review, and isolated OpenCode 1.18.4 delivery in 224ms.
 
-Phase 05 remains in progress only for user-environment gates: install the corrected plugin and restart OpenCode processes, then browser-check hostname labels and the compact Hide control. Stop after Phase 05; deferred Phase 06 needs separate approval. Retained-Waiting, stale-filter exemptions, cancellation heuristics, SQLite/WAL watching, and runtime leases remain excluded.
+Phase 05 remains in progress only for user-environment gates: the plugin is Home Manager-managed and must not be copied directly into `~/.config`; the user will update/activate Home Manager and restart OpenCode processes, then browser-check hostname labels and the compact Hide control. Stop after Phase 05; deferred Phase 06 needs separate approval.
 
 ## Requirements
 

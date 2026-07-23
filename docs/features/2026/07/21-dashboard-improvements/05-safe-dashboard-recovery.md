@@ -68,6 +68,8 @@ Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key,
   * Tried: Compared direct Node and npm output through files, shell pipes, and subprocess capture; reproduced against both the recovery stack and `a2e0a344d4cf`.
   * Result: `src/cli/main.ts` calls `process.exit(0)` immediately after `console.log()` queues a large payload. Pipe-backed stdout is asynchronous, so the process exits after only part of the JSON is written. File-backed output completes, and replacing forced exit with `process.exitCode` drains the full payload.
   * Decision: The user approved a separate regression/fix change because both dump commands are required Phase 05 gates; baseline provenance does not make invalid piped JSON acceptable.
+* [x] Q: How is the corrected OpenCode plugin deployed on the user's machine?
+  * Result: Home Manager owns the plugin. Agents must not copy to or mutate `~/.config/opencode/plugins/ccmon.ts`. The user will update the Home Manager source/reference, activate the configuration, and restart OpenCode processes so they load the corrected plugin.
 
 ## Tasks
 
@@ -104,7 +106,7 @@ Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key,
   - AC: The fix remains isolated from plugin, frontend, backend-state, filtering, cancellation, polling, and workspace behavior.
   - Validation: Targeted regression passed 1/1, CLI suite 63/63, full suite 529/529, lint and typecheck passed. Direct and npm-silent filtered/no-filter pipes plus file capture parsed complete JSON; the 512-project regression verifies every expected identity tuple.
 - [ ] Deploy the corrected plugin and reload OpenCode runtimes (R11.C; user validation)
-  - AC: The repository plugin is copied to `~/.config/opencode/plugins/ccmon.ts` after preserving a recoverable prior copy.
+  - AC: The user updates the Home Manager-managed plugin source/reference and activates Home Manager; agents do not mutate the installed plugin path directly.
   - AC: Existing OpenCode processes are restarted so they load the corrected plugin; restarting only `ccmon serve` is explicitly insufficient.
   - AC: Runtime logs contain no `Plugin export is not a function`, and a real session transitions from Running to Stopped through plugin lifecycle evidence without waiting for SQLite fallback expiry.
 - [~] Review recovery scope and final integration (code-correctness reviewer + requirements reviewer)
