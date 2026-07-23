@@ -24,7 +24,7 @@ Recovery work now proceeds from known-good commit `a2e0a344d4cf`, not from the c
 
 Phase 05 implementation is complete on separate rollback boundaries: plugin export repair, collision-safe frontend `.local` display, transient card dismissal, and the separately approved large piped-dump fix. Automated validation passes 529 tests, lint, typecheck, filtered/no-filter JSON pipes, scope review, and isolated OpenCode 1.18.4 delivery in 224ms.
 
-Phase 05 remains in progress only for user-environment gates: the plugin is Home Manager-managed and must not be copied directly into `~/.config`; the user will update/activate Home Manager and restart OpenCode processes, then browser-check hostname labels and the compact Hide control. Stop after Phase 05; deferred Phase 06 needs separate approval.
+Phase 05 frontend validation passed: `.local` labels and the compact Hide control work without the previous layout regression. Phase 05 remains open only for the Home Manager-managed plugin activation and OpenCode restart gate. The user explicitly approved Phase 06 workspace display implementation as a separate change.
 
 ## Requirements
 
@@ -38,10 +38,10 @@ Phase 05 remains in progress only for user-environment gates: the plugin is Home
 * R6: 🔄 Promote a top-level OpenCode session to Waiting when any descendant has a fresh unresolved question or permission (Phase: Sub-agent Question Blocking, see R6.1–R6.14 in the phase doc)
 * R7: 🔄 Keep OpenCode sessions Running in real time during long-running tools with pragmatic plugin heartbeats (Phase: OpenCode Tool Heartbeat, see R7.1–R7.7 in the phase doc)
 * R8: 🔄 Recover an OpenCode root from a transient Error only on strictly newer root-local user intent, while keeping Closed and genuine terminal errors authoritative (Phase: OpenCode Transient Error Recovery, see R8.A–R8.E in the phase doc)
-* R9: 🔄 Shorten one terminal `.local` hostname suffix only in frontend display while preserving raw backend identity, URLs, protocol values, and collision distinguishability (Phase: Safe Dashboard Recovery, see R9.A–R9.D in the phase doc)
-* R10: 🔄 Allow an exact card identity/state to be dismissed in page memory with a compact hover-only control that does not change card dimensions (Phase: Safe Dashboard Recovery, see R10.A–R10.F in the phase doc)
+* R9: ✅ Shorten one terminal `.local` hostname suffix only in frontend display while preserving raw backend identity, URLs, protocol values, and collision distinguishability (Phase: Safe Dashboard Recovery, see R9.A–R9.D in the phase doc)
+* R10: ✅ Allow an exact card identity/state to be dismissed in page memory with a compact hover-only control that does not change card dimensions (Phase: Safe Dashboard Recovery, see R10.A–R10.F in the phase doc)
 * R11: 🔄 Keep the OpenCode plugin entry module loadable by exporting only callable plugin factories while preserving heartbeat backpressure behavior (Phase: Safe Dashboard Recovery, see R11.A–R11.C in the phase doc)
-* R12: ⬜ Display `.workspaces/<name>` sessions as `<filesystem-root>/<workspace>` without changing canonical project/session identity; only derived `displayName` output may change (Phase: Workspace Display Identity, see R12.A–R12.E in the phase doc)
+* R12: 🔄 Display `.workspaces/<name>` sessions as `<filesystem-root>/<workspace>` without changing canonical project/session identity; only derived `displayName` output may change (Phase: Workspace Display Identity, see R12.A–R12.E in the phase doc)
 * R13: 🔄 Emit complete parseable JSON for large one-shot dump output consumed through pipes, without abandoning buffered stdout (Phase: Safe Dashboard Recovery, see R13.A–R13.B in the phase doc)
 
 ## Design
@@ -125,7 +125,7 @@ Implemented persisted root user-message evidence in OpenCode generation reconstr
 
 Implemented the isolated plugin repair, frontend-only `.local` display, compact transient dismissal, and large piped-dump fix. All automated and isolated-runtime gates pass; installation/restart and frontend browser/manual validation remain before completion.
 
-### ⬜ 06 Phase: Workspace Display Identity
+### 🔄 06 Phase: Workspace Display Identity
 
 [06-workspace-display-identity](06-workspace-display-identity.md)
 

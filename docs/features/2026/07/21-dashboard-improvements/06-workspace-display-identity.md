@@ -8,11 +8,11 @@ Canonical cwd, project name, session ID, source, and backend identity remain unc
 
 ## Requirements
 
-* R12.A: ⬜ Detect an exact `.workspaces/<workspace>` cwd segment and display `<filesystem-root>/<workspace>`.
-* R12.B: ⬜ Preserve the workspace label when cwd points inside a workspace subdirectory.
-* R12.C: ⬜ Use workspace-aware labels in same-host and cross-host display disambiguation without changing canonical identity.
-* R12.D: ⬜ Preserve existing behavior for ordinary paths, incomplete markers, non-segment text, and empty workspace names.
-* R12.E: ⬜ Propagate only the derived workspace-aware `displayName` through HTTP, WebSocket, and dump output while preserving canonical fields byte-for-byte.
+* R12.A: 🔄 Detect an exact `.workspaces/<workspace>` cwd segment and display `<filesystem-root>/<workspace>`.
+* R12.B: 🔄 Preserve the workspace label when cwd points inside a workspace subdirectory.
+* R12.C: 🔄 Use workspace-aware labels in same-host and cross-host display disambiguation without changing canonical identity.
+* R12.D: 🔄 Preserve existing behavior for ordinary paths, incomplete markers, non-segment text, and empty workspace names.
+* R12.E: 🔄 Propagate only the derived workspace-aware `displayName` through HTTP, WebSocket, and dump output while preserving canonical fields byte-for-byte.
 
 ## Design
 
@@ -20,7 +20,7 @@ Use a pure server-side display helper that recognizes `.workspaces` only as a co
 
 ## Tasks
 
-- [ ] Add workspace display-path regressions (R12.A–R12.D; senior-dev)
+- [~] Add workspace display-path regressions (R12.A–R12.D; senior-dev)
   - AC: Root and nested workspace cwd values produce `<root>/<workspace>` for Claude- and OpenCode-shaped projects.
   - AC: Malformed and ordinary paths retain existing labels byte-for-byte.
   - AC: Canonical fields remain unchanged.
