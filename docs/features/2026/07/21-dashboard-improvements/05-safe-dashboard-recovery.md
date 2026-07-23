@@ -21,6 +21,8 @@ Every feature has its own Jujutsu change, tests, review, runtime or browser gate
 * R11.A: 🔄 Ensure every OpenCode plugin entry-module runtime export is callable as a plugin factory.
 * R11.B: 🔄 Preserve the exact bounded pending-write behavior without exporting test constants.
 * R11.C: 🔄 Load through OpenCode 1.18.4 and deliver a fresh session through ccmon within two seconds.
+* R13.A: 🔄 Emit the complete one-shot dump payload before a successful CLI process exits, including output larger than the platform pipe buffer.
+* R13.B: 🔄 Preserve exit codes, JSON shape, resource cleanup, filtered dumps, and watch behavior while allowing stdout to drain naturally.
 
 ## Design
 
@@ -62,6 +64,10 @@ Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key,
   * Result: A separate preserved change corrected the plugin export contract and was runtime-validated with OpenCode 1.18.4: `session.created` was written in 4ms and delivered to a ccmon subscriber in 856ms. Another preserved change contains a statically reviewed 20px Hide-control correction, but browser validation was unavailable; use it only as reference and reimplement against this baseline.
 * [x] Q: Why not continue designing retained-Waiting runtime leases?
   * Result: The user chose immediate recovery from the known-good state rather than further state-protocol design. Retained-Waiting remains excluded because historical asks cannot prove a discarded OpenCode runtime still has a pending request.
+* [x] Q: Why did final `dump --no-filter` validation exit successfully with truncated JSON?
+  * Tried: Compared direct Node and npm output through files, shell pipes, and subprocess capture; reproduced against both the recovery stack and `a2e0a344d4cf`.
+  * Result: `src/cli/main.ts` calls `process.exit(0)` immediately after `console.log()` queues a large payload. Pipe-backed stdout is asynchronous, so the process exits after only part of the JSON is written. File-backed output completes, and replacing forced exit with `process.exitCode` drains the full payload.
+  * Decision: The user approved a separate regression/fix change because both dump commands are required Phase 05 gates; baseline provenance does not make invalid piped JSON acceptable.
 
 ## Tasks
 
@@ -89,6 +95,11 @@ Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key,
   - AC: Dismissal uses no browser storage, HTTP/WebSocket mutation, backend command, Undo, or reset UI.
   - AC: Existing sorting, flash, accessible naming, propagation, and empty-state behavior remain correct.
   - AC: Targeted/full tests, lint, typecheck, and browser/manual geometry and interaction checks pass.
+- [~] Fix large piped dump truncation (R13.A–R13.B; senior-dev)
+  - AC: A subprocess fixture emits more than 64KiB through a real pipe, exits zero, parses as complete JSON, and contains the exact expected projects.
+  - AC: Successful one-shot commands use natural process termination so buffered stdout drains; error exit codes remain correct.
+  - AC: Targeted CLI tests, full tests, lint, typecheck, filtered dump, and no-filter dump through direct and npm-silent pipes pass.
+  - AC: The fix remains isolated from plugin, frontend, backend-state, filtering, cancellation, polling, and workspace behavior.
 - [ ] Review recovery scope and final integration (code-correctness reviewer + requirements reviewer)
   - AC: Each feature diff contains only its planned files and retains an independent rollback boundary.
   - AC: No backend state, blocker freshness, stale filtering, cancellation, polling, or WAL behavior changes.
@@ -105,3 +116,5 @@ Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key,
 - **public/js/render.js**: Display-host consumption and transient dismissal lifecycle/control.
 - **public/index.html**: Compact zero-layout-cost Hide-control styling.
 - **tests/render.test.ts**: Host display, raw identity, dismissal lifecycle, accessibility, and CSS regressions.
+- **src/cli/main.ts**: Natural one-shot CLI termination that permits buffered stdout to drain.
+- **tests/cli.test.ts**: Large piped dump process-boundary regression.

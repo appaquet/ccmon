@@ -42,6 +42,7 @@ Next resume at Phase 05's baseline-verification task. Keep one change per featur
 * R10: 🔄 Allow an exact card identity/state to be dismissed in page memory with a compact hover-only control that does not change card dimensions (Phase: Safe Dashboard Recovery, see R10.A–R10.F in the phase doc)
 * R11: 🔄 Keep the OpenCode plugin entry module loadable by exporting only callable plugin factories while preserving heartbeat backpressure behavior (Phase: Safe Dashboard Recovery, see R11.A–R11.C in the phase doc)
 * R12: ⬜ Display `.workspaces/<name>` sessions as `<filesystem-root>/<workspace>` without changing canonical project/session identity; only derived `displayName` output may change (Phase: Workspace Display Identity, see R12.A–R12.E in the phase doc)
+* R13: 🔄 Emit complete parseable JSON for large one-shot dump output consumed through pipes, without abandoning buffered stdout (Phase: Safe Dashboard Recovery, see R13.A–R13.B in the phase doc)
 
 ## Design
 
