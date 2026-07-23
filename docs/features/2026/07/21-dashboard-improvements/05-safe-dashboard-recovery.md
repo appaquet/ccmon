@@ -18,9 +18,9 @@ Every feature has its own Jujutsu change, tests, review, runtime or browser gate
 * R10.D: ⬜ Use a native compact top-right × that is hidden normally, visible on card hover or keyboard focus, and does not change card dimensions or content geometry.
 * R10.E: ⬜ Preserve accessible naming, keyboard activation, click propagation isolation, sorting, flash bookkeeping, and empty-state rendering.
 * R10.F: ⬜ Add no mobile/coarse-pointer exception, 44px touch target, fourth grid track, added card padding, persistence, Undo, or backend command.
-* R11.A: ⬜ Ensure every OpenCode plugin entry-module runtime export is callable as a plugin factory.
-* R11.B: ⬜ Preserve the exact bounded pending-write behavior without exporting test constants.
-* R11.C: ⬜ Load through OpenCode 1.18.4 and deliver a fresh session through ccmon within two seconds.
+* R11.A: 🔄 Ensure every OpenCode plugin entry-module runtime export is callable as a plugin factory.
+* R11.B: 🔄 Preserve the exact bounded pending-write behavior without exporting test constants.
+* R11.C: 🔄 Load through OpenCode 1.18.4 and deliver a fresh session through ccmon within two seconds.
 
 ## Design
 
@@ -65,14 +65,15 @@ Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key,
 
 ## Tasks
 
-- [~] Verify known-good baseline before additions
+- [x] Verify known-good baseline before additions
   - AC: Targeted baseline tests, full tests, lint, typecheck, and both dump checks pass.
   - AC: The diff from `a2e0a344d4cf` contains only project documentation/symlink before implementation starts.
-- [ ] Correct the OpenCode plugin export contract (R11.A–R11.C; staff-dev)
+- [~] Correct the OpenCode plugin export contract (R11.A–R11.C; staff-dev)
   - AC: `ccmonPlugin` is the only runtime export and every runtime export is callable.
   - AC: Bounded-write tests verify observable 256-item behavior without importing a numeric constant.
   - AC: Targeted plugin tests, full tests, lint, and typecheck pass.
   - AC: Isolated OpenCode 1.18.4 runtime writes a real root and ccmon delivers it within two seconds.
+  - Baseline validation: Targeted suites passed 280/280, full suite passed 507/507, lint and typecheck passed, both dump commands succeeded, and the recovery diff contains only project docs plus the `proj` symlink.
 - [ ] Add collision-safe frontend `.local` shortening (R9.A–R9.D; senior-dev)
   - AC: Accepted and rejected hostname forms match the requirements exactly.
   - AC: Cards, backend menu, and cross-host prefixes use one consistent collision-safe display mapping.
