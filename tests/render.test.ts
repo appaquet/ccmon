@@ -20,6 +20,7 @@ const backendManagerSource = readFileSync(
 
 type CardHeaderProject = {
   _backendKey?: string;
+  _displayHostname?: string;
   _hostname?: string;
   displayName?: string;
   projectName: string;
@@ -77,6 +78,10 @@ function loadSessionRenderHelpers(): {
     project: CardHeaderProject,
     displayName?: string,
   ) => CardHeaderData;
+  crossServerDisplayName: (
+    project: CardHeaderProject,
+    isCrossServerCollision: boolean,
+  ) => string | undefined;
   setNow: (now: number) => void;
   getSortedProjects: (
     projects: Array<{
@@ -116,6 +121,10 @@ function loadSessionRenderHelpers(): {
       project: CardHeaderProject,
       displayName?: string,
     ) => CardHeaderData;
+    crossServerDisplayName?: (
+      project: CardHeaderProject,
+      isCrossServerCollision: boolean,
+    ) => string | undefined;
     getSortedProjects?: (
       projects: Array<{
         _backendKey: string;
@@ -139,6 +148,7 @@ function loadSessionRenderHelpers(): {
   if (
     !context.projKey ||
     !context.cardHeaderData ||
+    !context.crossServerDisplayName ||
     !context.getSortedProjects
   ) {
     throw new Error("render helpers not loaded from browser sources");
@@ -147,6 +157,7 @@ function loadSessionRenderHelpers(): {
   return {
     projKey: context.projKey,
     cardHeaderData: context.cardHeaderData,
+    crossServerDisplayName: context.crossServerDisplayName,
     setNow: (now: number) => {
       FakeDate.nowValue = now;
     },
@@ -154,31 +165,169 @@ function loadSessionRenderHelpers(): {
   };
 }
 
-function loadBackendMergeHelper(): (entry: {
-  hostname: string | null;
-  projects: Array<Record<string, unknown>>;
-  url: string;
-}) => Array<Record<string, unknown>> {
-  const context = {
-    document: { getElementById: () => null },
-  } as {
-    document: { getElementById: () => null };
-    mergeBackendProjects?: (entry: {
+function loadHostnameDisplayHelpers(): {
+  shortHostname: (hostname: string) => string;
+  hostnameDisplayMap: (hostnames: string[]) => Map<string, string>;
+} {
+  const context = { Map, Set } as {
+    Map: MapConstructor;
+    Set: SetConstructor;
+    shortHostname?: (hostname: string) => string;
+    hostnameDisplayMap?: (hostnames: string[]) => Map<string, string>;
+  };
+
+  vm.runInNewContext(utilsSource, context);
+
+  if (!context.shortHostname || !context.hostnameDisplayMap) {
+    throw new Error("hostname display helpers not loaded from utils.js");
+  }
+
+  return {
+    shortHostname: context.shortHostname,
+    hostnameDisplayMap: context.hostnameDisplayMap,
+  };
+}
+
+function loadBackendDisplayHelpers(): {
+  mergeBackendProjects: (
+    entry: {
       hostname: string | null;
       projects: Array<Record<string, unknown>>;
       url: string;
-    }) => Array<Record<string, unknown>>;
+    },
+    displayHostnames?: Map<string, string>,
+  ) => Array<Record<string, unknown>>;
+  configuredHostnameDisplayMap: (
+    entries: Array<{ hostname: string | null; url: string }>,
+  ) => Map<string, string>;
+} {
+  const context = {
+    Map,
+    Set,
+    document: { getElementById: () => null },
+  } as {
+    Map: MapConstructor;
+    Set: SetConstructor;
+    document: { getElementById: () => null };
+    mergeBackendProjects?: (
+      entry: {
+        hostname: string | null;
+        projects: Array<Record<string, unknown>>;
+        url: string;
+      },
+      displayHostnames?: Map<string, string>,
+    ) => Array<Record<string, unknown>>;
+    configuredHostnameDisplayMap?: (
+      entries: Array<{ hostname: string | null; url: string }>,
+    ) => Map<string, string>;
   };
 
+  vm.runInNewContext(utilsSource, context);
   vm.runInNewContext(backendManagerSource, context);
 
-  if (!context.mergeBackendProjects) {
+  if (!context.mergeBackendProjects || !context.configuredHostnameDisplayMap) {
     throw new Error(
-      "mergeBackendProjects helper not loaded from backend-manager.js",
+      "backend display helpers not loaded from backend-manager.js",
     );
   }
 
-  return context.mergeBackendProjects;
+  return {
+    mergeBackendProjects: context.mergeBackendProjects,
+    configuredHostnameDisplayMap: context.configuredHostnameDisplayMap,
+  };
+}
+
+function renderBackendMenuRows(
+  entries: Array<{ hostname: string | null; url: string }>,
+): string[] {
+  const rows: Array<{ innerHTML: string }> = [];
+  const backendList = {
+    innerHTML: "",
+    appendChild: (row: { innerHTML: string }) => rows.push(row),
+  };
+  const context = {
+    Map,
+    Set,
+    document: {
+      createElement: () => ({
+        className: "",
+        innerHTML: "",
+        querySelector: () => ({ addEventListener: () => {} }),
+      }),
+      getElementById: (id: string) =>
+        id === "backend-list" ? backendList : null,
+    },
+  } as unknown as {
+    BackendManager: {
+      backends: Array<{ hostname: string | null; url: string }>;
+    };
+    updateBackendMenu: () => void;
+  };
+
+  vm.runInNewContext(utilsSource, context);
+  vm.runInNewContext(backendManagerSource, context);
+  context.BackendManager.backends = entries;
+  context.updateBackendMenu();
+  return rows.map((row) => row.innerHTML);
+}
+
+function addBackendAndGetDisplayMap(
+  entries: Array<Record<string, unknown>>,
+  url: string,
+  learnedHostname: string,
+): {
+  backends: Array<Record<string, unknown>>;
+  displayHostnames: Map<string, string>;
+  savedUrls: string | undefined;
+} {
+  let savedUrls: string | undefined;
+  const backendList = {
+    innerHTML: "",
+    appendChild: () => {},
+  };
+  const context = {
+    Map,
+    Set,
+    document: {
+      createElement: () => ({
+        className: "",
+        innerHTML: "",
+        querySelector: () => ({ addEventListener: () => {} }),
+      }),
+      getElementById: () => backendList,
+    },
+    localStorage: {
+      setItem: (_key: string, value: string) => (savedUrls = value),
+    },
+  } as unknown as {
+    BackendManager: {
+      _connect: (entry: Record<string, unknown>) => void;
+      addBackend: (url: string) => void;
+      backends: Array<Record<string, unknown>>;
+    };
+    configuredHostnameDisplayMap: (
+      entries: Array<{ hostname: string | null; url: string }>,
+    ) => Map<string, string>;
+  };
+
+  vm.runInNewContext(utilsSource, context);
+  vm.runInNewContext(backendManagerSource, context);
+  context.BackendManager.backends = entries;
+  context.BackendManager._connect = (entry) => {
+    entry.hostname = learnedHostname;
+  };
+  context.BackendManager.addBackend(url);
+
+  return {
+    backends: context.BackendManager.backends,
+    displayHostnames: context.configuredHostnameDisplayMap(
+      context.BackendManager.backends as Array<{
+        hostname: string | null;
+        url: string;
+      }>,
+    ),
+    savedUrls,
+  };
 }
 
 function loadCreateCard(): (
@@ -309,6 +458,7 @@ describe("render same-repo sibling identity", () => {
       state: "waiting_for_permission",
       stateLabel: "Waiting",
     });
+
     expect(
       cardHeaderData(
         {
@@ -318,6 +468,29 @@ describe("render same-repo sibling identity", () => {
         "build-host:ccmon",
       ).projectName,
     ).toBe("build-host:ccmon");
+  });
+
+  test("uses display-only hostnames for card host text and cross-server prefixes", () => {
+    const { cardHeaderData, crossServerDisplayName } =
+      loadSessionRenderHelpers();
+    const project = {
+      _backendKey: "build.local",
+      _displayHostname: "build",
+      _hostname: "build.local",
+      projectName: "ccmon",
+      source: "opencode",
+    };
+
+    expect(cardHeaderData(project).hostname).toBe("build");
+    expect(crossServerDisplayName(project, true)).toBe("build:ccmon");
+    expect(crossServerDisplayName(project, false)).toBeUndefined();
+    expect(project).toEqual({
+      _backendKey: "build.local",
+      _displayHostname: "build",
+      _hostname: "build.local",
+      projectName: "ccmon",
+      source: "opencode",
+    });
   });
 
   test("cardHeaderData omits a session when only a short opencode id is available", () => {
@@ -457,6 +630,27 @@ describe("render same-repo sibling identity", () => {
     expect(card.innerHTML).not.toContain('class="card-host" title="dotfiles">');
   });
 
+  test("createCard renders the display hostname in both host text and title", () => {
+    const createCard = loadCreateCard();
+    const card = createCard(
+      {
+        _backendKey: "ci.local",
+        _displayHostname: "ci",
+        _hostname: "ci.local",
+        projectName: "dotfiles",
+        source: "opencode",
+        state: "running",
+      },
+      false,
+      false,
+      undefined,
+      "ci.local::ses_dotfiles",
+    );
+
+    expect(card.innerHTML).toContain('class="card-host" title="ci">ci');
+    expect(card.innerHTML).not.toContain("ci.local");
+  });
+
   test("createCard keeps same-named projects distinguishable across hosts", () => {
     const createCard = loadCreateCard();
     const project = {
@@ -523,7 +717,7 @@ describe("render same-repo sibling identity", () => {
 
 describe("frontend backend project merge", () => {
   test("propagates the WebSocket hostname to every cloned project", () => {
-    const mergeBackendProjects = loadBackendMergeHelper();
+    const { mergeBackendProjects } = loadBackendDisplayHelpers();
     const originals = [
       { projectName: "ccmon", sessionId: "ses_123" },
       {
@@ -542,12 +736,14 @@ describe("frontend backend project merge", () => {
     ).toEqual([
       {
         _backendKey: "build-host",
+        _displayHostname: "build-host",
         _hostname: "build-host",
         projectName: "ccmon",
         sessionId: "ses_123",
       },
       {
         _backendKey: "build-host",
+        _displayHostname: "build-host",
         _hostname: "build-host",
         projectName: "ccmon-cli",
         sessionId: "ses_456",
@@ -555,5 +751,210 @@ describe("frontend backend project merge", () => {
     ]);
     expect(originals[0]).not.toHaveProperty("_hostname");
     expect(originals[1]._hostname).toBe("stale-host");
+  });
+
+  test("derives collision-safe display labels from configured backend hostnames", () => {
+    const { mergeBackendProjects, configuredHostnameDisplayMap } =
+      loadBackendDisplayHelpers();
+    const localEntry = {
+      hostname: "build.local",
+      projects: [{ projectName: "ccmon", sessionId: "ses_local" }],
+      url: "ws://build.local/ws",
+    };
+    const bareEntry = {
+      hostname: "build",
+      projects: [{ projectName: "ccmon", sessionId: "ses_bare" }],
+      url: "ws://build/ws",
+    };
+    const uniqueEntry = {
+      hostname: "ci.local.",
+      projects: [{ projectName: "ccmon", sessionId: "ses_ci" }],
+      url: "ws://ci.local/ws",
+    };
+    const entries = [localEntry, bareEntry, uniqueEntry];
+    const displayHostnames = configuredHostnameDisplayMap(entries);
+
+    expect(displayHostnames).toEqual(
+      new Map([
+        ["build.local", "build.local"],
+        ["build", "build"],
+        ["ci.local.", "ci"],
+      ]),
+    );
+    expect(mergeBackendProjects(localEntry, displayHostnames)).toEqual([
+      {
+        _backendKey: "build.local",
+        _displayHostname: "build.local",
+        _hostname: "build.local",
+        projectName: "ccmon",
+        sessionId: "ses_local",
+      },
+    ]);
+    expect(mergeBackendProjects(uniqueEntry, displayHostnames)).toEqual([
+      {
+        _backendKey: "ci.local.",
+        _displayHostname: "ci",
+        _hostname: "ci.local.",
+        projectName: "ccmon",
+        sessionId: "ses_ci",
+      },
+    ]);
+    expect(localEntry.projects).toEqual([
+      { projectName: "ccmon", sessionId: "ses_local" },
+    ]);
+  });
+
+  test("uses collision-safe display labels in the backend menu", () => {
+    const rows = renderBackendMenuRows([
+      { hostname: "build.local", url: "ws://build.local/ws" },
+      { hostname: "build", url: "ws://build/ws" },
+      { hostname: "ci.local.", url: "ws://ci.local/ws" },
+    ]);
+
+    expect(rows[0]).toContain(
+      'class="backend-host" title="build.local">build.local',
+    );
+    expect(rows[1]).toContain('class="backend-host" title="build">build');
+    expect(rows[2]).toContain('class="backend-host" title="ci">ci');
+  });
+
+  test("recomputes only display labels as backends disconnect, reconnect, and are removed", () => {
+    const { configuredHostnameDisplayMap } = loadBackendDisplayHelpers();
+    const localEntry = {
+      hostname: "build.local",
+      projects: [],
+      status: "connected",
+      url: "ws://build.local/ws",
+    };
+    const bareEntry = {
+      hostname: "build",
+      projects: [],
+      status: "connected",
+      url: "ws://build/ws",
+    };
+
+    expect(
+      configuredHostnameDisplayMap([localEntry, bareEntry]).get("build.local"),
+    ).toBe("build.local");
+    bareEntry.status = "disconnected";
+    expect(
+      configuredHostnameDisplayMap([localEntry, bareEntry]).get("build.local"),
+    ).toBe("build.local");
+    bareEntry.status = "connected";
+    expect(
+      configuredHostnameDisplayMap([localEntry, bareEntry]).get("build.local"),
+    ).toBe("build.local");
+    expect(configuredHostnameDisplayMap([localEntry]).get("build.local")).toBe(
+      "build",
+    );
+    const discoveringEntry = {
+      hostname: null as string | null,
+      projects: [],
+      status: "connecting",
+      url: "ws://ci.local/ws",
+    };
+    expect(
+      configuredHostnameDisplayMap([discoveringEntry]).get(
+        discoveringEntry.url,
+      ),
+    ).toBe(discoveringEntry.url);
+    discoveringEntry.hostname = "ci.local";
+    expect(
+      configuredHostnameDisplayMap([discoveringEntry]).get("ci.local"),
+    ).toBe("ci");
+    expect(localEntry).toEqual({
+      hostname: "build.local",
+      projects: [],
+      status: "connected",
+      url: "ws://build.local/ws",
+    });
+  });
+
+  test("recomputes collisions when addBackend learns a new raw hostname", () => {
+    const existing = {
+      hostname: "build.local",
+      projects: [],
+      status: "connected",
+      url: "ws://build.local/ws",
+    };
+    const result = addBackendAndGetDisplayMap(
+      [existing],
+      "ws://build/ws",
+      "build",
+    );
+
+    expect(result.displayHostnames).toEqual(
+      new Map([
+        ["build.local", "build.local"],
+        ["build", "build"],
+      ]),
+    );
+    expect(existing).toEqual({
+      hostname: "build.local",
+      projects: [],
+      status: "connected",
+      url: "ws://build.local/ws",
+    });
+    expect(result.backends[1]).toMatchObject({
+      hostname: "build",
+      status: "connecting",
+      url: "ws://build/ws",
+    });
+    expect(result.savedUrls).toBe(JSON.stringify(["ws://build/ws"]));
+  });
+});
+
+describe("frontend hostname display", () => {
+  test("removes one terminal case-insensitive .local label and one optional DNS dot", () => {
+    const { shortHostname } = loadHostnameDisplayHelpers();
+
+    expect(shortHostname("build.local")).toBe("build");
+    expect(shortHostname("build.LOCAL")).toBe("build");
+    expect(shortHostname("build.local.")).toBe("build");
+    expect(shortHostname("build.LOCAL.")).toBe("build");
+    expect(shortHostname("build.local.local")).toBe("build.local");
+  });
+
+  test("preserves a terminal .local hostname with a label longer than 63 characters", () => {
+    const { shortHostname } = loadHostnameDisplayHelpers();
+    const hostname = `${"a".repeat(64)}.local`;
+
+    expect(shortHostname(hostname)).toBe(hostname);
+  });
+
+  test("preserves bare, nonterminal, malformed, whitespace-bearing, and other-domain hostnames", () => {
+    const { shortHostname } = loadHostnameDisplayHelpers();
+    const unchanged = [
+      "local",
+      "localhost",
+      "build.local.example",
+      "build.example",
+      " build.local",
+      "build.local ",
+      "build..local",
+      "build.local..",
+      "build-.local",
+      "build_local.local",
+      ".local",
+    ];
+
+    for (const hostname of unchanged) {
+      expect(shortHostname(hostname)).toBe(hostname);
+    }
+  });
+
+  test("retains raw labels for distinct hosts that shorten to the same display label", () => {
+    const { hostnameDisplayMap } = loadHostnameDisplayHelpers();
+
+    expect(
+      hostnameDisplayMap(["build.local", "build", "ci.LOCAL", "ci.local."]),
+    ).toEqual(
+      new Map([
+        ["build.local", "build.local"],
+        ["build", "build"],
+        ["ci.LOCAL", "ci.LOCAL"],
+        ["ci.local.", "ci.local."],
+      ]),
+    );
   });
 });

@@ -52,6 +52,7 @@ var BackendManager = {
             entry.projects = data.projects || [];
           }
           mergeAndRender();
+          updateBackendMenu();
         } catch (err) {
           console.error('Failed to parse WebSocket message:', err);
         }
@@ -120,15 +121,27 @@ var BackendManager = {
 
 function mergeAndRender() {
   var merged = [];
+  var displayHostnames = configuredHostnameDisplayMap(BackendManager.backends);
   for (var i = 0; i < BackendManager.backends.length; i++) {
     var e = BackendManager.backends[i];
-    merged = merged.concat(mergeBackendProjects(e));
+    merged = merged.concat(mergeBackendProjects(e, displayHostnames));
   }
   render(getSortedProjects(merged));
 }
 
-function mergeBackendProjects(entry) {
-  var hostname = entry.hostname || entry.url;
+function configuredHostnameDisplayMap(entries) {
+  var hostnames = [];
+  for (var i = 0; i < entries.length; i++) {
+    hostnames.push(backendHostname(entries[i]));
+  }
+  return hostnameDisplayMap(hostnames);
+}
+
+function mergeBackendProjects(entry, displayHostnames) {
+  var hostname = backendHostname(entry);
+  var displayHostname = displayHostnames
+    ? displayHostnames.get(hostname)
+    : hostnameDisplayMap([hostname]).get(hostname);
   var projects = [];
   var i;
   var project;
@@ -141,10 +154,15 @@ function mergeBackendProjects(entry) {
       if (Object.prototype.hasOwnProperty.call(project, key)) copy[key] = project[key];
     }
     copy._backendKey = hostname;
+    copy._displayHostname = displayHostname;
     copy._hostname = hostname;
     projects.push(copy);
   }
   return projects;
+}
+
+function backendHostname(entry) {
+  return entry.hostname || entry.url;
 }
 
 function updateStatusPill() {
@@ -173,12 +191,14 @@ function updateStatusPill() {
 
 function updateBackendMenu() {
   var list = document.getElementById('backend-list');
+  var displayHostnames = configuredHostnameDisplayMap(BackendManager.backends);
   list.innerHTML = '';
   BackendManager.backends.forEach(function (entry, index) {
     var row = document.createElement('div');
     row.className = 'backend-row';
 
-    var displayName = entry.hostname || entry.url;
+    var hostname = backendHostname(entry);
+    var displayName = displayHostnames.get(hostname);
     var showUrl = entry.hostname ? entry.url : null;
 
     var dotClass = 'status-dot status-dot-' + entry.status;

@@ -67,12 +67,17 @@ function cardHeaderData(proj, displayName) {
     ? proj.sessionName
     : '';
   return {
-    hostname: proj._hostname || proj._backendKey || '',
+    hostname: proj._displayHostname || proj._hostname || proj._backendKey || '',
     projectName: displayName || proj.displayName || proj.projectName,
     sessionName: sessionName,
     state: state,
     stateLabel: stateLabel[state] || state,
   };
+}
+
+function crossServerDisplayName(proj, isCrossServerCollision) {
+  if (!isCrossServerCollision) return undefined;
+  return (proj._displayHostname || proj._hostname || proj._backendKey) + ':' + proj.projectName;
 }
 
 function createCard(proj, flashStopped, flashNotification, displayName, key) {
@@ -290,9 +295,7 @@ function render(projects) {
     var proj = all[i];
     var key = projKey(proj);
     var crossServerCollision = nameToBackendKeys.get(proj.projectName).size > 1;
-    var displayName = crossServerCollision
-      ? proj._backendKey + ':' + proj.projectName
-      : undefined;
+    var displayName = crossServerDisplayName(proj, crossServerCollision);
     grid.appendChild(createCard(
       proj,
       flashStopped.has(key),
