@@ -95,16 +95,26 @@ Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key,
   - AC: Dismissal uses no browser storage, HTTP/WebSocket mutation, backend command, Undo, or reset UI.
   - AC: Existing sorting, flash, accessible naming, propagation, and empty-state behavior remain correct.
   - AC: Targeted/full tests, lint, typecheck, and browser/manual geometry and interaction checks pass.
-- [~] Fix large piped dump truncation (R13.A–R13.B; senior-dev)
+  - Automated validation: Targeted render tests passed 31/31, full suite passed 528/528 before the dump fix and 529/529 afterward, lint and typecheck passed, and correctness/requirements reviews found no implementation defect.
+  - Remaining: Browser/manual geometry, hover/focus, keyboard/mouse interaction, flash-card interaction, restoration, and reload checks.
+- [x] Fix large piped dump truncation (R13.A–R13.B; senior-dev)
   - AC: A subprocess fixture emits more than 64KiB through a real pipe, exits zero, parses as complete JSON, and contains the exact expected projects.
   - AC: Successful one-shot commands use natural process termination so buffered stdout drains; error exit codes remain correct.
   - AC: Targeted CLI tests, full tests, lint, typecheck, filtered dump, and no-filter dump through direct and npm-silent pipes pass.
   - AC: The fix remains isolated from plugin, frontend, backend-state, filtering, cancellation, polling, and workspace behavior.
-- [ ] Review recovery scope and final integration (code-correctness reviewer + requirements reviewer)
+  - Validation: Targeted regression passed 1/1, CLI suite 63/63, full suite 529/529, lint and typecheck passed. Direct and npm-silent filtered/no-filter pipes plus file capture parsed complete JSON; the 512-project regression verifies every expected identity tuple.
+- [ ] Deploy the corrected plugin and reload OpenCode runtimes (R11.C; user validation)
+  - AC: The repository plugin is copied to `~/.config/opencode/plugins/ccmon.ts` after preserving a recoverable prior copy.
+  - AC: Existing OpenCode processes are restarted so they load the corrected plugin; restarting only `ccmon serve` is explicitly insufficient.
+  - AC: Runtime logs contain no `Plugin export is not a function`, and a real session transitions from Running to Stopped through plugin lifecycle evidence without waiting for SQLite fallback expiry.
+- [~] Review recovery scope and final integration (code-correctness reviewer + requirements reviewer)
   - AC: Each feature diff contains only its planned files and retains an independent rollback boundary.
   - AC: No backend state, blocker freshness, stale filtering, cancellation, polling, or WAL behavior changes.
   - AC: Full tests, lint, typecheck, both dump checks, plugin runtime validation, and frontend browser/manual validation pass on the final stack.
   - AC: Stop after Phase 05; Phase 06 workspace labels require separate approval and implementation change.
+  - Automated validation: Plugin 21/21, render 31/31, CLI 66/66, full suite 529/529, lint and typecheck passed. Direct and npm-silent filtered dumps parsed 4 projects; no-filter dumps parsed 250 projects and 333,046 bytes. Isolated OpenCode 1.18.4 wrote status in 2ms and delivered it in 224ms.
+  - Scope validation: Plugin, hostname, dismissal, and dump fixes remain independent changes. No state, blocker freshness, stale filtering, cancellation, polling/WAL, runtime lease, or workspace implementation change exists.
+  - Remaining: Corrected plugin deployment/OpenCode restart plus hostname and dismissal browser/manual gates.
 
 ## Files
 

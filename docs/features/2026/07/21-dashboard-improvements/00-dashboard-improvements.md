@@ -22,9 +22,9 @@ Recovery work now proceeds from known-good commit `a2e0a344d4cf`, not from the c
 
 ## Checkpoint
 
-The recovery line is a clean child of known-good `a2e0a344d4cf`; the problematic squash and partial-recovery changes remain preserved separately. Phase 05 is planned but not implemented: first repair the baseline plugin export contract, then independently add frontend-only `.local` shortening and a fresh compact hover-only dismissal control.
+Phase 05 implementation is complete on separate rollback boundaries: plugin export repair, collision-safe frontend `.local` display, transient card dismissal, and the separately approved large piped-dump fix. Automated validation passes 529 tests, lint, typecheck, filtered/no-filter JSON pipes, scope review, and isolated OpenCode 1.18.4 delivery in 224ms.
 
-Next resume at Phase 05's baseline-verification task. Keep one change per feature and stop after Phase 05; deferred Phase 06 workspace labels need separate approval. Retained-Waiting, stale-filter exemptions, cancellation heuristics, SQLite/WAL watching, and runtime leases remain excluded.
+Phase 05 remains in progress only for user-environment gates: install the corrected plugin and restart OpenCode processes, then browser-check hostname labels and the compact Hide control. Stop after Phase 05; deferred Phase 06 needs separate approval. Retained-Waiting, stale-filter exemptions, cancellation heuristics, SQLite/WAL watching, and runtime leases remain excluded.
 
 ## Requirements
 
@@ -123,7 +123,7 @@ Implemented persisted root user-message evidence in OpenCode generation reconstr
 
 [05-safe-dashboard-recovery](05-safe-dashboard-recovery.md)
 
-Recover only independently proven additions on top of `a2e0a344d4cf`: repair the plugin runtime export contract, shorten `.local` in frontend display without changing identity, and add compact transient card dismissal without changing card dimensions. Each feature is implemented, reviewed, validated, and committed separately.
+Implemented the isolated plugin repair, frontend-only `.local` display, compact transient dismissal, and large piped-dump fix. All automated and isolated-runtime gates pass; installation/restart and frontend browser/manual validation remain before completion.
 
 ### ⬜ 06 Phase: Workspace Display Identity
 
@@ -150,3 +150,5 @@ Add lexical `.workspaces/<name>` display labels as an isolated change after Phas
 - **src/parsers/opencode-db.ts**: Persisted OpenCode message access relevant to collection-level recovery evidence (OpenCode Transient Error Recovery).
 - **tests/server.test.ts**: Planned workspace `displayName` HTTP/WebSocket propagation coverage with canonical-field preservation (Workspace Display Identity).
 - **tests/cli-dump.test.ts**: Planned workspace `displayName` dump propagation coverage with canonical-field preservation (Workspace Display Identity).
+- **src/cli/main.ts**: Natural one-shot process termination so large piped JSON output drains completely (Safe Dashboard Recovery).
+- **tests/cli.test.ts**: Real subprocess regression for complete parseable dump output beyond 64KiB (Safe Dashboard Recovery).
