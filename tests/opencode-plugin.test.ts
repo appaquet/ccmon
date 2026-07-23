@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import * as pluginModule from "../resources/opencode-plugin/ccmon.ts";
 import { ccmonPlugin } from "../resources/opencode-plugin/ccmon.ts";
 
 const { heartbeatSink, appendFileMock, mkdirMock } = vi.hoisted(() => ({
@@ -54,6 +55,15 @@ function resetHeartbeatSink(): void {
   appendFileMock.mockClear();
   mkdirMock.mockClear();
 }
+
+describe("ccmon OpenCode plugin module contract", () => {
+  test("exports only callable plugin factories", () => {
+    expect(Object.keys(pluginModule)).toEqual(["ccmonPlugin"]);
+    expect(
+      Object.values(pluginModule).every((entry) => typeof entry === "function"),
+    ).toBe(true);
+  });
+});
 
 describe("ccmon OpenCode plugin blocker lifecycle records", () => {
   const previousStateHome = process.env.XDG_STATE_HOME;

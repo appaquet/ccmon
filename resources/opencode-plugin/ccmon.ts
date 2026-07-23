@@ -94,7 +94,7 @@ const TERMINAL_BARRIER_LIMIT = 1_024;
 const LEGACY_REQUEST_SLOT = "__ccmon_legacy_request__";
 
 /** Caps only queued heartbeat writes; lifecycle records are never dropped. */
-export const MAX_PENDING_WRITES = 256;
+const MAX_PENDING_WRITES = 256;
 
 export async function ccmonPlugin(context: PluginContext) {
   const { client, directory } = context;

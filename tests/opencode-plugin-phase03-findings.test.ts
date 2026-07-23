@@ -29,10 +29,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return { ...actual, appendFile: appendFileMock, mkdir: mkdirMock };
 });
 
-import {
-  ccmonPlugin,
-  MAX_PENDING_WRITES,
-} from "../resources/opencode-plugin/ccmon.ts";
+import { ccmonPlugin } from "../resources/opencode-plugin/ccmon.ts";
 
 const previousStateHome = process.env.XDG_STATE_HOME;
 
@@ -358,7 +355,7 @@ describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
     const { plugin, statusPath } = await createPlugin(logs);
     const seed = plugin["chat.message"]({ sessionID: "write-seed" });
     await firstWrite;
-    const activeCount = MAX_PENDING_WRITES + 4;
+    const activeCount = 260;
     const pressuredSession = `heartbeat-${activeCount - 1}`;
     const starts = Array.from({ length: activeCount }, (_, index) =>
       plugin["tool.execute.before"]({
@@ -400,6 +397,16 @@ describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
         entry.message.includes("heartbeat write queue is full"),
       ),
     ).toBe(true);
+    expect(
+      records(statusPath).filter(
+        (record) => record.event === "tool.execute.heartbeat",
+      ),
+    ).toHaveLength(256);
+    expect(
+      logs.filter((entry) =>
+        entry.message.includes("heartbeat write queue is full"),
+      ),
+    ).toHaveLength(4);
     await plugin.dispose();
   });
 });
