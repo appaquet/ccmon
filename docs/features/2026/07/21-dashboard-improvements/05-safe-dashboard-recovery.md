@@ -12,12 +12,12 @@ Every feature has its own Jujutsu change, tests, review, runtime or browser gate
 * R9.B: 🔄 Preserve raw hostname, backend key, URL, WebSocket payload, sort/flash identity, and project/session identity.
 * R9.C: 🔄 Preserve malformed, nonterminal, whitespace-bearing, bare `local`, `localhost`, and other-domain hostname forms.
 * R9.D: 🔄 Keep distinct raw hosts visually distinguishable by retaining raw labels when shortening collides.
-* R10.A: ⬜ Allow every card state to be dismissed for its exact raw backend/source/session identity and captured state.
-* R10.B: ⬜ Keep dismissal in page memory only; reload restores cards and no backend/storage mutation occurs.
-* R10.C: ⬜ Keep same-state cards hidden and restore them on state change, session replacement, or authoritative absence.
-* R10.D: ⬜ Use a native compact top-right × that is hidden normally, visible on card hover or keyboard focus, and does not change card dimensions or content geometry.
-* R10.E: ⬜ Preserve accessible naming, keyboard activation, click propagation isolation, sorting, flash bookkeeping, and empty-state rendering.
-* R10.F: ⬜ Add no mobile/coarse-pointer exception, 44px touch target, fourth grid track, added card padding, persistence, Undo, or backend command.
+* R10.A: 🔄 Allow every card state to be dismissed for its exact raw backend/source/session identity and captured state.
+* R10.B: 🔄 Keep dismissal in page memory only; reload restores cards and no backend/storage mutation occurs.
+* R10.C: 🔄 Keep same-state cards hidden and restore them on state change, session replacement, or authoritative absence.
+* R10.D: 🔄 Use a native compact top-right × that is hidden normally, visible on card hover or keyboard focus, and does not change card dimensions or content geometry.
+* R10.E: 🔄 Preserve accessible naming, keyboard activation, click propagation isolation, sorting, flash bookkeeping, and empty-state rendering.
+* R10.F: 🔄 Add no mobile/coarse-pointer exception, 44px touch target, fourth grid track, added card padding, persistence, Undo, or backend command.
 * R11.A: 🔄 Ensure every OpenCode plugin entry-module runtime export is callable as a plugin factory.
 * R11.B: 🔄 Preserve the exact bounded pending-write behavior without exporting test constants.
 * R11.C: 🔄 Load through OpenCode 1.18.4 and deliver a fresh session through ccmon within two seconds.
@@ -81,7 +81,9 @@ Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key,
   - AC: Raw hostnames, backend keys, URLs, payloads, and identity/state keys remain byte-for-byte unchanged.
   - AC: Hostname discovery, backend addition/removal, disconnect, and reconnect recompute only display labels and preserve raw connection/identity values.
   - AC: Targeted/full tests, lint, typecheck, and browser/manual display checks pass.
-- [ ] Add transient card dismissal and compact Hide control (R10.A–R10.F; senior-dev)
+  - Automated validation: Targeted render tests passed 21/21, full suite passed 518/518, lint and typecheck passed, and independent correctness/requirements reviews found no remaining static issues.
+  - Remaining: Browser/manual checks for cards, menu, cross-host prefixes, collision fallback, and add/remove/disconnect/reconnect display transitions.
+- [~] Add transient card dismissal and compact Hide control (R10.A–R10.F; senior-dev)
   - AC: Every state supports exact identity/state-scoped in-memory dismissal; state/session/authoritative absence and reload restore appropriately.
   - AC: The 20px control is out of flow, hidden/non-intercepting normally, shown on card hover or keyboard focus, and adds no card/header dimensions, padding, grid track, truncation change, or adjacent-card overlap.
   - AC: Dismissal uses no browser storage, HTTP/WebSocket mutation, backend command, Undo, or reset UI.

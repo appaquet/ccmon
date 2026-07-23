@@ -39,7 +39,7 @@ Next resume at Phase 05's baseline-verification task. Keep one change per featur
 * R7: 🔄 Keep OpenCode sessions Running in real time during long-running tools with pragmatic plugin heartbeats (Phase: OpenCode Tool Heartbeat, see R7.1–R7.7 in the phase doc)
 * R8: 🔄 Recover an OpenCode root from a transient Error only on strictly newer root-local user intent, while keeping Closed and genuine terminal errors authoritative (Phase: OpenCode Transient Error Recovery, see R8.A–R8.E in the phase doc)
 * R9: 🔄 Shorten one terminal `.local` hostname suffix only in frontend display while preserving raw backend identity, URLs, protocol values, and collision distinguishability (Phase: Safe Dashboard Recovery, see R9.A–R9.D in the phase doc)
-* R10: ⬜ Allow an exact card identity/state to be dismissed in page memory with a compact hover-only control that does not change card dimensions (Phase: Safe Dashboard Recovery, see R10.A–R10.F in the phase doc)
+* R10: 🔄 Allow an exact card identity/state to be dismissed in page memory with a compact hover-only control that does not change card dimensions (Phase: Safe Dashboard Recovery, see R10.A–R10.F in the phase doc)
 * R11: 🔄 Keep the OpenCode plugin entry module loadable by exporting only callable plugin factories while preserving heartbeat backpressure behavior (Phase: Safe Dashboard Recovery, see R11.A–R11.C in the phase doc)
 * R12: ⬜ Display `.workspaces/<name>` sessions as `<filesystem-root>/<workspace>` without changing canonical project/session identity; only derived `displayName` output may change (Phase: Workspace Display Identity, see R12.A–R12.E in the phase doc)
 
