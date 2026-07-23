@@ -80,6 +80,32 @@ function crossServerDisplayName(proj, isCrossServerCollision) {
   return (proj._displayHostname || proj._hostname || proj._backendKey) + ':' + proj.projectName;
 }
 
+function normalizedState(proj) {
+  return proj.state || 'stopped';
+}
+
+function dismissalKey(proj) {
+  return JSON.stringify([proj._backendKey, proj.source, proj.sessionId]);
+}
+
+function visibleProjects(projects) {
+  var currentKeys = {};
+  var currentStates = {};
+  for (var i = 0; i < projects.length; i++) {
+    var key = dismissalKey(projects[i]);
+    currentKeys[key] = true;
+    currentStates[key] = normalizedState(projects[i]);
+  }
+
+  pruneStale(dismissedCards, currentKeys, function (key, dismissedState) {
+    return dismissedState !== currentStates[key];
+  });
+
+  return projects.filter(function (proj) {
+    return dismissedCards.get(dismissalKey(proj)) !== normalizedState(proj);
+  });
+}
+
 function createCard(proj, flashStopped, flashNotification, displayName, key) {
   var card = document.createElement('div');
   var header = cardHeaderData(proj, displayName);
@@ -119,6 +145,7 @@ function createCard(proj, flashStopped, flashNotification, displayName, key) {
   }
 
   var html = `
+    <button type="button" class="card-hide" aria-label="Hide session ${esc(header.sessionName || header.projectName)}"><span aria-hidden="true">×</span></button>
     <div class="card-identity">
       <div class="card-header">
         <span class="badge ${badgeClass}">
@@ -158,6 +185,14 @@ function createCard(proj, flashStopped, flashNotification, displayName, key) {
   html += '<div class="card-agents">' + agentsHtml + '</div>';
 
   card.innerHTML = html;
+  var hideButton = card.querySelector('.card-hide');
+  if (hideButton) {
+    hideButton.addEventListener('click', function (event) {
+      event.stopPropagation();
+      dismissedCards.set(dismissalKey(proj), normalizedState(proj));
+      render(lastRenderedProjects);
+    });
+  }
   return card;
 }
 
@@ -167,6 +202,8 @@ var flashStopped = new Map();
 var flashNotification = new Map();
 var flashWaitingDismissed = new Set();
 var flashErrorDismissed = new Set();
+var dismissedCards = new Map();
+var lastRenderedProjects = [];
 
 // Removes entries from a Map or Set whose keys no longer appear in currentKeys,
 // or that fail an optional predicate(key, value). For Sets the value equals the key.
@@ -226,6 +263,7 @@ function getSortedProjects(projects) {
 function render(projects) {
   var grid = document.getElementById('project-grid');
   var all = projects.slice();
+  lastRenderedProjects = all;
 
   var now = Date.now();
   var flashWindow = 5000;
@@ -266,9 +304,10 @@ function render(projects) {
   pruneStale(flashWaitingDismissed, currentKeys);
   pruneStale(flashErrorDismissed, currentKeys);
 
+  var visible = visibleProjects(all);
   grid.innerHTML = '';
 
-  if (all.length === 0) {
+  if (visible.length === 0) {
     var empty = document.createElement('div');
     empty.className = 'empty-state';
     empty.textContent = 'No active projects';
@@ -284,15 +323,15 @@ function render(projects) {
   // appears under at least two distinct _backendKey values; within-host collisions
   // are already resolved upstream and need no further treatment here.
   var nameToBackendKeys = new Map();
-  for (var i = 0; i < all.length; i++) {
-    var p = all[i];
+  for (var i = 0; i < visible.length; i++) {
+    var p = visible[i];
     var keySet = nameToBackendKeys.get(p.projectName);
     if (!keySet) { keySet = new Set(); nameToBackendKeys.set(p.projectName, keySet); }
     keySet.add(p._backendKey);
   }
 
-  for (var i = 0; i < all.length; i++) {
-    var proj = all[i];
+  for (var i = 0; i < visible.length; i++) {
+    var proj = visible[i];
     var key = projKey(proj);
     var crossServerCollision = nameToBackendKeys.get(proj.projectName).size > 1;
     var displayName = crossServerDisplayName(proj, crossServerCollision);

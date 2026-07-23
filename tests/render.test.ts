@@ -17,6 +17,10 @@ const backendManagerSource = readFileSync(
   join(testDir, "../public/js/backend-manager.js"),
   "utf8",
 );
+const dashboardSource = readFileSync(
+  join(testDir, "../public/index.html"),
+  "utf8",
+);
 
 type CardHeaderProject = {
   _backendKey?: string;
@@ -96,6 +100,23 @@ function loadSessionRenderHelpers(): {
   ) => Array<{
     sessionId: string;
   }>;
+  dismissalKey: (project: {
+    _backendKey: string;
+    source: string;
+    sessionId?: string;
+  }) => string;
+  normalizedState: (project: { state?: string }) => string;
+  visibleProjects: <
+    T extends {
+      _backendKey: string;
+      source: string;
+      sessionId?: string;
+      state?: string;
+    },
+  >(
+    projects: T[],
+  ) => T[];
+  dismissedCards: Map<string, string>;
 } {
   class FakeDate extends Date {
     static nowValue = 0;
@@ -138,6 +159,23 @@ function loadSessionRenderHelpers(): {
     ) => Array<{
       sessionId: string;
     }>;
+    dismissalKey?: (project: {
+      _backendKey: string;
+      source: string;
+      sessionId?: string;
+    }) => string;
+    normalizedState?: (project: { state?: string }) => string;
+    visibleProjects?: <
+      T extends {
+        _backendKey: string;
+        source: string;
+        sessionId?: string;
+        state?: string;
+      },
+    >(
+      projects: T[],
+    ) => T[];
+    dismissedCards?: Map<string, string>;
     FakeDate?: typeof FakeDate;
   };
   context.FakeDate = FakeDate;
@@ -149,7 +187,11 @@ function loadSessionRenderHelpers(): {
     !context.projKey ||
     !context.cardHeaderData ||
     !context.crossServerDisplayName ||
-    !context.getSortedProjects
+    !context.getSortedProjects ||
+    !context.dismissalKey ||
+    !context.normalizedState ||
+    !context.visibleProjects ||
+    !context.dismissedCards
   ) {
     throw new Error("render helpers not loaded from browser sources");
   }
@@ -162,6 +204,10 @@ function loadSessionRenderHelpers(): {
       FakeDate.nowValue = now;
     },
     getSortedProjects: context.getSortedProjects,
+    dismissalKey: context.dismissalKey,
+    normalizedState: context.normalizedState,
+    visibleProjects: context.visibleProjects,
+    dismissedCards: context.dismissedCards,
   };
 }
 
@@ -341,8 +387,13 @@ function loadCreateCard(): (
     className = "";
     innerHTML = "";
     classList = { remove: () => {} };
+    hideButton = { addEventListener: () => {} };
 
     addEventListener(): void {}
+
+    querySelector(selector: string): { addEventListener: () => void } | null {
+      return selector === ".card-hide" ? this.hideButton : null;
+    }
   }
 
   const context = {
@@ -372,6 +423,93 @@ function loadCreateCard(): (
   }
 
   return context.createCard;
+}
+
+function loadDismissalHarness(): {
+  createCard: (project: Record<string, unknown>) => {
+    innerHTML: string;
+    hideButton: {
+      clickListener?: (event: { stopPropagation: () => void }) => void;
+    };
+  };
+  dismissalKey: (project: Record<string, unknown>) => string;
+  dismissedCards: Map<string, string>;
+  flashNotification: Map<string, number>;
+  gridChildren: () => Array<{ className: string; textContent: string }>;
+  render: (projects: Array<Record<string, unknown>>) => void;
+} {
+  class FakeButton {
+    clickListener?: (event: { stopPropagation: () => void }) => void;
+
+    addEventListener(
+      eventName: string,
+      listener: (event: { stopPropagation: () => void }) => void,
+    ): void {
+      if (eventName === "click") this.clickListener = listener;
+    }
+  }
+
+  class FakeCard {
+    className = "";
+    innerHTML = "";
+    textContent = "";
+    classList = { remove: () => {} };
+    hideButton = new FakeButton();
+
+    addEventListener(): void {}
+
+    querySelector(selector: string): FakeButton | null {
+      return selector === ".card-hide" ? this.hideButton : null;
+    }
+  }
+
+  let gridChildren: FakeCard[] = [];
+  const grid = {
+    get innerHTML(): string {
+      return "";
+    },
+    set innerHTML(_value: string) {
+      gridChildren = [];
+    },
+    appendChild: (child: FakeCard) => gridChildren.push(child),
+  };
+  const context = {
+    Date,
+    Map,
+    Set,
+    document: {
+      createElement: () => new FakeCard(),
+      getElementById: () => grid,
+    },
+  } as unknown as {
+    createCard?: (project: Record<string, unknown>) => FakeCard;
+    dismissalKey?: (project: Record<string, unknown>) => string;
+    dismissedCards?: Map<string, string>;
+    flashNotification?: Map<string, number>;
+    render?: (projects: Array<Record<string, unknown>>) => void;
+  };
+
+  vm.runInNewContext(utilsSource, context);
+  vm.runInNewContext(renderSource, context);
+
+  if (
+    !context.createCard ||
+    !context.dismissalKey ||
+    !context.dismissedCards ||
+    !context.flashNotification ||
+    !context.render
+  ) {
+    throw new Error("dismissal harness not loaded from browser sources");
+  }
+
+  return {
+    createCard: context.createCard,
+    dismissalKey: context.dismissalKey,
+    dismissedCards: context.dismissedCards,
+    flashNotification: context.flashNotification,
+    gridChildren: () => gridChildren,
+    render: context.render,
+  };
 }
 
 describe("render subagent labels", () => {
@@ -712,6 +850,329 @@ describe("render same-repo sibling identity", () => {
       "ses_newer",
       "ses_older",
     ]);
+  });
+});
+
+describe("transient card dismissal", () => {
+  const states = [
+    "running",
+    "stopped",
+    "waiting_for_permission",
+    "error",
+    "closed",
+  ];
+
+  test("hides every supported state only for its exact raw backend, source, and session identity", () => {
+    const { dismissalKey, dismissedCards, normalizedState, visibleProjects } =
+      loadSessionRenderHelpers();
+    const projects = states.map((state, index) => ({
+      _backendKey: "host-a",
+      projectName: `project-${index}`,
+      sessionId: `session-${index}`,
+      source: "opencode",
+      state,
+    }));
+
+    for (const project of projects) {
+      dismissedCards.set(dismissalKey(project), normalizedState(project));
+    }
+
+    expect(visibleProjects(projects)).toEqual([]);
+    expect(dismissalKey(projects[0])).toBe(
+      JSON.stringify(["host-a", "opencode", "session-0"]),
+    );
+  });
+
+  test("does not hide a matching session id from another raw backend or source", () => {
+    const { dismissalKey, dismissedCards, normalizedState, visibleProjects } =
+      loadSessionRenderHelpers();
+    const dismissed = {
+      _backendKey: "host-a.local",
+      projectName: "ccmon",
+      sessionId: "shared-session",
+      source: "opencode",
+      state: "running",
+    };
+    const sameSessionDifferentSource = {
+      ...dismissed,
+      source: "claude",
+    };
+    const sameSessionDifferentBackend = {
+      ...dismissed,
+      _backendKey: "host-a",
+    };
+
+    dismissedCards.set(dismissalKey(dismissed), normalizedState(dismissed));
+
+    expect(
+      visibleProjects([
+        dismissed,
+        sameSessionDifferentSource,
+        sameSessionDifferentBackend,
+      ]),
+    ).toEqual([sameSessionDifferentSource, sameSessionDifferentBackend]);
+  });
+
+  test("retains same-state dismissals and clears them on state changes, session replacement, and absence", () => {
+    const { dismissalKey, dismissedCards, normalizedState, visibleProjects } =
+      loadSessionRenderHelpers();
+    const running = {
+      _backendKey: "host-a",
+      projectName: "ccmon",
+      sessionId: "session-one",
+      source: "opencode",
+      state: "running",
+    };
+
+    dismissedCards.set(dismissalKey(running), normalizedState(running));
+    expect(visibleProjects([running])).toEqual([]);
+
+    const stopped = { ...running, state: "stopped" };
+    expect(visibleProjects([stopped])).toEqual([stopped]);
+    expect(dismissedCards.size).toBe(0);
+
+    dismissedCards.set(dismissalKey(running), normalizedState(running));
+    const replacement = { ...running, sessionId: "session-two" };
+    expect(visibleProjects([replacement])).toEqual([replacement]);
+    expect(dismissedCards.size).toBe(0);
+
+    dismissedCards.set(dismissalKey(running), normalizedState(running));
+    expect(visibleProjects([])).toEqual([]);
+    expect(dismissedCards.size).toBe(0);
+    expect(visibleProjects([running])).toEqual([running]);
+  });
+
+  test("starts with no dismissals after a page reload", () => {
+    const firstPage = loadSessionRenderHelpers();
+    const project = {
+      _backendKey: "host-a",
+      projectName: "ccmon",
+      sessionId: "session-one",
+      source: "opencode",
+      state: "running",
+    };
+    firstPage.dismissedCards.set(
+      firstPage.dismissalKey(project),
+      firstPage.normalizedState(project),
+    );
+
+    const reloadedPage = loadSessionRenderHelpers();
+    expect(reloadedPage.dismissedCards.size).toBe(0);
+    expect(reloadedPage.visibleProjects([project])).toEqual([project]);
+  });
+
+  test("uses a semantic button, stops click propagation, and records only an in-memory dismissal", () => {
+    const harness = loadDismissalHarness();
+    const project = {
+      _backendKey: "host-a",
+      projectName: "ccmon",
+      sessionId: "session-one",
+      sessionName: "Inspect render tests",
+      source: "opencode",
+      state: "running",
+    };
+    harness.render([project]);
+    const card = harness.createCard(project);
+    let propagationStopped = false;
+
+    card.hideButton.clickListener?.({
+      stopPropagation: () => {
+        propagationStopped = true;
+      },
+    });
+
+    expect(card.innerHTML).toContain(
+      'type="button" class="card-hide" aria-label="Hide session Inspect render tests"',
+    );
+    expect(card.innerHTML).toContain('<span aria-hidden="true">×</span>');
+    expect(propagationStopped).toBe(true);
+    expect(harness.dismissedCards).toEqual(
+      new Map([[harness.dismissalKey(project), "running"]]),
+    );
+    expect(renderSource).not.toMatch(
+      /localStorage|sessionStorage|fetch\(|WebSocket|XMLHttpRequest/,
+    );
+  });
+
+  test("updates notification bookkeeping for hidden cards before filtering them", () => {
+    const harness = loadDismissalHarness();
+    const project = {
+      _backendKey: "host-a",
+      notificationTimestamp: "2026-07-23T12:00:00.000Z",
+      projectName: "ccmon",
+      sessionId: "session-one",
+      source: "opencode",
+      state: "running",
+    };
+
+    harness.render([project]);
+    harness.dismissedCards.set(harness.dismissalKey(project), "running");
+    harness.render([
+      {
+        ...project,
+        notificationTimestamp: "2026-07-23T12:00:01.000Z",
+      },
+    ]);
+
+    expect(harness.flashNotification.has("host-a::session-one")).toBe(true);
+  });
+
+  test("renders the established empty state when every incoming card is hidden", () => {
+    const harness = loadDismissalHarness();
+    const project = {
+      _backendKey: "host-a",
+      projectName: "ccmon",
+      sessionId: "session-one",
+      source: "opencode",
+      state: "running",
+    };
+
+    harness.dismissedCards.set(harness.dismissalKey(project), "running");
+    harness.render([project]);
+
+    expect(
+      harness.gridChildren().map((child) => ({
+        className: child.className,
+        textContent: child.textContent,
+      })),
+    ).toEqual([
+      { className: "empty-state", textContent: "No active projects" },
+    ]);
+  });
+
+  test("retains the baseline sort order for the remaining cards after one dismissal", () => {
+    const {
+      dismissalKey,
+      dismissedCards,
+      getSortedProjects,
+      normalizedState,
+      setNow,
+      visibleProjects,
+    } = loadSessionRenderHelpers();
+    const newest = {
+      _backendKey: "host-a",
+      lastUpdated: new Date(3_000).toISOString(),
+      projectName: "newest",
+      sessionId: "session-newest",
+      source: "opencode",
+      state: "running",
+    };
+    const dismissed = {
+      _backendKey: "host-a",
+      lastUpdated: new Date(2_000).toISOString(),
+      projectName: "dismissed",
+      sessionId: "session-dismissed",
+      source: "opencode",
+      state: "running",
+    };
+    const oldest = {
+      _backendKey: "host-a",
+      lastUpdated: new Date(1_000).toISOString(),
+      projectName: "oldest",
+      sessionId: "session-oldest",
+      source: "opencode",
+      state: "running",
+    };
+
+    setNow(30_000);
+    const baselineOrder = getSortedProjects([
+      oldest,
+      dismissed,
+      newest,
+    ]) as (typeof newest)[];
+    dismissedCards.set(dismissalKey(dismissed), normalizedState(dismissed));
+
+    expect(baselineOrder.map((project) => project.sessionId)).toEqual([
+      "session-newest",
+      "session-dismissed",
+      "session-oldest",
+    ]);
+    expect(
+      visibleProjects(baselineOrder).map((project) => project.sessionId),
+    ).toEqual(["session-newest", "session-oldest"]);
+  });
+
+  test("keeps flash bookkeeping for hidden cards through stopped, waiting, and error transitions", () => {
+    const harness = loadDismissalHarness();
+    const running = {
+      _backendKey: "host-a",
+      projectName: "ccmon",
+      sessionId: "session-one",
+      source: "opencode",
+      state: "running",
+    };
+
+    harness.render([running]);
+
+    const dismissAndRenderSameState = (project: typeof running) => {
+      harness.dismissedCards.set(harness.dismissalKey(project), project.state);
+      harness.render([project]);
+      expect(harness.gridChildren()[0]?.className).toBe("empty-state");
+    };
+
+    dismissAndRenderSameState(running);
+    const stopped = { ...running, state: "stopped" };
+    harness.render([stopped]);
+    expect(harness.gridChildren()[0]?.className).toContain(
+      "card-flashing-stopped",
+    );
+
+    dismissAndRenderSameState(stopped);
+    const waiting = { ...running, state: "waiting_for_permission" };
+    harness.render([waiting]);
+    expect(harness.gridChildren()[0]?.className).toContain(
+      "card-flashing-waiting",
+    );
+
+    dismissAndRenderSameState(waiting);
+    const error = { ...running, state: "error" };
+    harness.render([error]);
+    expect(harness.gridChildren()[0]?.className).toContain(
+      "card-flashing-error",
+    );
+  });
+
+  test("uses the project name as the Hide button fallback and keeps the compact control out of layout flow", () => {
+    const createCard = loadCreateCard();
+    const card = createCard(
+      {
+        _backendKey: "host-a",
+        projectName: "ccmon",
+        sessionId: "session-one",
+        source: "opencode",
+        state: "running",
+      },
+      false,
+      false,
+      undefined,
+      "host-a::session-one",
+    );
+
+    expect(card.innerHTML).toContain('aria-label="Hide session ccmon"');
+    expect(dashboardSource).toMatch(/\.card\s*\{[\s\S]*position:\s*relative/);
+    expect(dashboardSource).toMatch(
+      /\.card-hide\s*\{[\s\S]*position:\s*absolute/,
+    );
+    expect(dashboardSource).toMatch(/\.card-hide\s*\{[\s\S]*width:\s*20px/);
+    expect(dashboardSource).toMatch(/\.card-hide\s*\{[\s\S]*height:\s*20px/);
+    expect(dashboardSource).toMatch(/\.card-hide\s*\{[\s\S]*top:\s*-10px/);
+    expect(dashboardSource).toMatch(/\.card-hide\s*\{[\s\S]*right:\s*8px/);
+    expect(dashboardSource).toMatch(
+      /opacity:\s*0[\s\S]*pointer-events:\s*none/,
+    );
+    expect(dashboardSource).toMatch(
+      /\.card:hover\s+\.card-hide,[\s\S]*\.card-hide:focus-visible/,
+    );
+    expect(dashboardSource).toMatch(
+      /\.card-hide:focus-visible\s*\{[\s\S]*outline:/,
+    );
+    expect(dashboardSource).not.toContain("@media (hover: none)");
+    expect(dashboardSource).not.toContain("pointer: coarse");
+    expect(dashboardSource).not.toContain(
+      "grid-template-columns: max-content minmax(0, 3fr) minmax(0, 2fr) 20px",
+    );
+    expect(dashboardSource).toContain("padding: 14px 16px;");
+    expect(dashboardSource).toContain("gap: 14px;");
   });
 });
 
