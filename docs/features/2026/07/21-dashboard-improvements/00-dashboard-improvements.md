@@ -118,7 +118,7 @@ Implemented pragmatic plugin-local real-time tool liveness with immediate starts
 
 Implemented persisted root user-message evidence in OpenCode generation reconstruction so a transient Error can recover without a plugin follow-up event. Closed remains absolute, and generic timestamps or descendant activity cannot hide genuine errors. Automated validation is complete; review closure remains.
 
-### ⬜ 05 Phase: Safe Dashboard Recovery
+### 🔄 05 Phase: Safe Dashboard Recovery
 
 [05-safe-dashboard-recovery](05-safe-dashboard-recovery.md)
 

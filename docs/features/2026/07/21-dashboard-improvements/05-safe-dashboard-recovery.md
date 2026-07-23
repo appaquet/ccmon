@@ -65,7 +65,7 @@ Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key,
 
 ## Tasks
 
-- [ ] Verify known-good baseline before additions
+- [~] Verify known-good baseline before additions
   - AC: Targeted baseline tests, full tests, lint, typecheck, and both dump checks pass.
   - AC: The diff from `a2e0a344d4cf` contains only project documentation/symlink before implementation starts.
 - [ ] Correct the OpenCode plugin export contract (R11.A–R11.C; staff-dev)
