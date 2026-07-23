@@ -2,7 +2,7 @@
 
 ## Context
 
-The combined `097c1f22` squash mixed safe presentation features with confirmed state, plugin-loading, and layout regressions. This phase starts from known-good `a2e0a344d4cf` and reintroduces only three independently justified changes: the OpenCode plugin export-contract correction, frontend-only terminal `.local` shortening, and transient card dismissal with a compact hover-only control.
+The combined `097c1f22` squash mixed safe presentation features with confirmed state, plugin-loading, and layout regressions. This phase starts from known-good `a2e0a344d4cf` and performs one prerequisite baseline repair plus two independently justified additions: correct the OpenCode plugin export contract already broken in the baseline, add frontend-only terminal `.local` shortening, and add transient card dismissal with a compact hover-only control.
 
 Every feature has its own Jujutsu change, tests, review, runtime or browser gate, and rollback boundary. No retained-Waiting semantics, Waiting stale-filter exemption, cancellation classification, SQLite/WAL watcher, runtime lease, or backend state redesign belongs in this phase.
 
@@ -40,6 +40,8 @@ Never copy the squash wholesale. Implement against baseline patterns and use the
 
 Derive collision-safe display labels from all configured raw hostnames. Stamp a display-only hostname onto cloned frontend project objects and use it for card text/title, backend-menu labels, and cross-host prefixes. Raw identity and transport values remain untouched.
 
+Recompute the display mapping whenever configured backends or their learned hostnames change. Disconnection must not mutate raw identity; reconnecting or removing a backend may legitimately change only the display collision set.
+
 ### Card dismissal
 
 Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key, source, and session ID, with captured normalized state as the value. Process complete incoming state before filtering hidden cards. The native button is a 20px out-of-flow overlay, invisible and non-intercepting by default, revealed by card hover or `:focus-visible`. It must not alter card/header tracks, padding, dimensions, or text truncation.
@@ -56,6 +58,10 @@ Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key,
   * Result: No. Workspace labels alter server-side project display/disambiguation and are isolated in Phase 06.
 * [x] Q: Can the original dismissal CSS be reused?
   * Result: No. It added a fourth grid track, an in-flow 44px control, and always-visible/coarse-pointer behavior. The recovery uses a fresh 20px out-of-flow hover/focus control.
+* [x] Q: Which work from the abandoned recovery stack is already proven but not present on this line?
+  * Result: A separate preserved change corrected the plugin export contract and was runtime-validated with OpenCode 1.18.4: `session.created` was written in 4ms and delivered to a ccmon subscriber in 856ms. Another preserved change contains a statically reviewed 20px Hide-control correction, but browser validation was unavailable; use it only as reference and reimplement against this baseline.
+* [x] Q: Why not continue designing retained-Waiting runtime leases?
+  * Result: The user chose immediate recovery from the known-good state rather than further state-protocol design. Retained-Waiting remains excluded because historical asks cannot prove a discarded OpenCode runtime still has a pending request.
 
 ## Tasks
 
@@ -71,6 +77,7 @@ Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key,
   - AC: Accepted and rejected hostname forms match the requirements exactly.
   - AC: Cards, backend menu, and cross-host prefixes use one consistent collision-safe display mapping.
   - AC: Raw hostnames, backend keys, URLs, payloads, and identity/state keys remain byte-for-byte unchanged.
+  - AC: Hostname discovery, backend addition/removal, disconnect, and reconnect recompute only display labels and preserve raw connection/identity values.
   - AC: Targeted/full tests, lint, typecheck, and browser/manual display checks pass.
 - [ ] Add transient card dismissal and compact Hide control (R10.A–R10.F; senior-dev)
   - AC: Every state supports exact identity/state-scoped in-memory dismissal; state/session/authoritative absence and reload restore appropriately.
@@ -82,6 +89,7 @@ Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key,
   - AC: Each feature diff contains only its planned files and retains an independent rollback boundary.
   - AC: No backend state, blocker freshness, stale filtering, cancellation, polling, or WAL behavior changes.
   - AC: Full tests, lint, typecheck, both dump checks, plugin runtime validation, and frontend browser/manual validation pass on the final stack.
+  - AC: Stop after Phase 05; Phase 06 workspace labels require separate approval and implementation change.
 
 ## Files
 

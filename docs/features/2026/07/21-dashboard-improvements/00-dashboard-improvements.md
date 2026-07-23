@@ -22,9 +22,9 @@ Recovery work now proceeds from known-good commit `a2e0a344d4cf`, not from the c
 
 ## Checkpoint
 
-The recovery line is a clean child of known-good `a2e0a344d4cf`; the full problematic and partial-recovery stack remains preserved separately. Baseline already contains the visually validated card layout plus Phases 02–04. Phase 05 will first correct the plugin entry-module export contract, then independently add frontend-only `.local` shortening and a freshly implemented compact hover-only dismissal control. Phase 06 keeps workspace labels separate because they alter project-display disambiguation rather than hostname presentation.
+The recovery line is a clean child of known-good `a2e0a344d4cf`; the problematic squash and partial-recovery changes remain preserved separately. Phase 05 is planned but not implemented: first repair the baseline plugin export contract, then independently add frontend-only `.local` shortening and a fresh compact hover-only dismissal control.
 
-No Phase 05 implementation has started. Retained-Waiting, Waiting stale-filter exemption, cancellation heuristics, SQLite/WAL watching, and runtime-lease work are explicitly excluded from this recovery.
+Next resume at Phase 05's baseline-verification task. Keep one change per feature and stop after Phase 05; deferred Phase 06 workspace labels need separate approval. Retained-Waiting, stale-filter exemptions, cancellation heuristics, SQLite/WAL watching, and runtime leases remain excluded.
 
 ## Requirements
 
@@ -41,11 +41,13 @@ No Phase 05 implementation has started. Retained-Waiting, Waiting stale-filter e
 * R9: ⬜ Shorten one terminal `.local` hostname suffix only in frontend display while preserving raw backend identity, URLs, protocol values, and collision distinguishability (Phase: Safe Dashboard Recovery, see R9.A–R9.D in the phase doc)
 * R10: ⬜ Allow an exact card identity/state to be dismissed in page memory with a compact hover-only control that does not change card dimensions (Phase: Safe Dashboard Recovery, see R10.A–R10.F in the phase doc)
 * R11: ⬜ Keep the OpenCode plugin entry module loadable by exporting only callable plugin factories while preserving heartbeat backpressure behavior (Phase: Safe Dashboard Recovery, see R11.A–R11.C in the phase doc)
-* R12: ⬜ Display `.workspaces/<name>` sessions as `<filesystem-root>/<workspace>` without changing canonical project/session identity (Phase: Workspace Display Identity, see R12.A–R12.D in the phase doc)
+* R12: ⬜ Display `.workspaces/<name>` sessions as `<filesystem-root>/<workspace>` without changing canonical project/session identity; only derived `displayName` output may change (Phase: Workspace Display Identity, see R12.A–R12.E in the phase doc)
 
 ## Design
 
 The approved identity hierarchy uses two compact rows. Row one starts with the textual state pill, followed by the project display name and right-aligned server hostname; separators and the redundant source badge are omitted. Project and hostname occupy independent shrink-safe grid tracks so the project does not disappear when the hostname is long. Row two contains the human-readable session name and is omitted when no such name exists. All identity values retain the existing single-line ellipsis behavior; full values remain available through the DOM/title affordance. The grid widens the card maximum to approximately 480px without sacrificing narrow-screen safety. The lower context, task, agent, and flash sections are unchanged.
+
+Recovery follows a strict known-good-baseline rule: implement each safe feature from baseline patterns, use the rejected squash only as a requirements/test reference, validate it independently, and retain a separate rollback boundary. Presentation transformations may change only explicit display fields; raw identity and backend state remain authoritative.
 
 ## Questions & Investigations
 
@@ -87,6 +89,8 @@ The approved identity hierarchy uses two compact rows. Row one starts with the t
   * Result: The squash combined safe display work with invalid retained-Waiting semantics, a plugin export-contract break, and UI regressions. A clean child of the known-good parent preserves the working state model and permits each safe feature to retain an independent rollback boundary.
 * [x] Q: Which post-baseline work is safe to reintroduce now?
   * Result: The isolated plugin export correction, frontend-only collision-safe `.local` display, and fresh in-memory card dismissal are safe. Workspace display labels are also presentation-only but remain a separate phase because they affect server-side display-name disambiguation. Retained-Waiting and cancellation changes are excluded.
+* [x] Q: Did the plugin export break originate only in the rejected squash?
+  * Result: No. Known-good `a2e0a344d4cf` already exports numeric `MAX_PENDING_WRITES`, which OpenCode 1.18.4 attempts to invoke as a plugin factory. Treat its correction as a prerequisite baseline repair, previously proven in an isolated runtime, rather than as a feature copied from the squash.
 
 ## Phases
 
@@ -124,14 +128,14 @@ Recover only independently proven additions on top of `a2e0a344d4cf`: repair the
 
 [06-workspace-display-identity](06-workspace-display-identity.md)
 
-Add lexical `.workspaces/<name>` display labels as an isolated presentation change after Phase 05 stabilizes. Preserve canonical cwd/project/session identity and validate same-host and cross-host disambiguation independently.
+Add lexical `.workspaces/<name>` display labels as an isolated change after Phase 05 stabilizes and receives separate approval. Preserve canonical identity while explicitly validating the changed derived `displayName` in HTTP, WebSocket, and dump output.
 
 ## Files
 
 - **public/js/render.js**: Two-row identity rendering, display-name precedence, and preserved card activity rendering (Session Card Layout).
 - **public/index.html**: Dashboard shell, widened grid, and card identity CSS (Session Card Layout).
 - **public/js/utils.js**: Shared escaping and truncation helpers relevant to readable identity values.
-- **public/js/backend-manager.js**: Merges server updates and carries hostname context into each frontend project (Session Card Layout).
+- **public/js/backend-manager.js**: Merges server updates, carries raw hostname context, and is planned to derive frontend-only collision-safe host labels (Session Card Layout, Safe Dashboard Recovery).
 - **src/server.ts**: Sends the server hostname with WebSocket state updates.
 - **src/types.ts**: Defines the project/session fields consumed by the card.
 - **tests/render.test.ts**: Focused identity, hostname, fallback, cross-host, and preserved-card tests (Session Card Layout).
@@ -143,4 +147,5 @@ Add lexical `.workspaces/<name>` display labels as an isolated presentation chan
 - **tests/opencode-plugin.test.ts**: Plugin request-ID and hermetic heartbeat lifecycle tests (Sub-agent Question Blocking, OpenCode Tool Heartbeat).
 - **tests/opencode-plugin-phase03-findings.test.ts**: Hermetic delayed-write, generation-ordering, blocker-pressure, and bounded-work regressions (OpenCode Tool Heartbeat).
 - **src/parsers/opencode-db.ts**: Persisted OpenCode message access relevant to collection-level recovery evidence (OpenCode Transient Error Recovery).
-- **public/js/backend-manager.js**: Raw backend identity plus planned frontend-only display-hostname mapping (Safe Dashboard Recovery).
+- **tests/server.test.ts**: Planned workspace `displayName` HTTP/WebSocket propagation coverage with canonical-field preservation (Workspace Display Identity).
+- **tests/cli-dump.test.ts**: Planned workspace `displayName` dump propagation coverage with canonical-field preservation (Workspace Display Identity).
