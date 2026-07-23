@@ -4,23 +4,27 @@
 
 The dashboard currently identifies OpenCode sessions by placing the session name in parentheses after the project name. This makes the project being worked on difficult to scan, especially when the combined identity is long and is not truncated in a useful way. The session name is the more valuable identifier when both names exist, while the project name and the machine hosting it must remain visible context.
 
-The completed implementation keeps the card identity compact and explicit: a first row for textual state, project, and machine, followed by a session-name row when a human-readable name exists. The redundant backend source badge and separators were removed. The card cap widened to approximately 480px while retaining a narrow-screen-safe minimum; the existing context, task, agent, and flash sections remain unchanged.
+The completed baseline implementation keeps the card identity compact and explicit: a first row for textual state, project, and machine, followed by a session-name row when a human-readable name exists. The redundant backend source badge and separators were removed. The card cap widened to approximately 480px while retaining a narrow-screen-safe minimum; the existing context, task, agent, and flash sections remain unchanged.
+
+Recovery work now proceeds from known-good commit `a2e0a344d4cf`, not from the combined `097c1f22` squash. Safe additions are reintroduced as independent changes with their own validation and rollback boundaries; retained-Waiting and other confirmed state regressions are excluded.
 
 ## Inbox
 
 - [x] A sub-agent asking question should mark the session as blocked (planned in [Phase 02](02-subagent-question-blocking.md))
 - [x] When opencode is in `preparing patch` and the patch is big, the project may be marked as stopped (planned in [Phase 03](03-opencode-tool-heartbeat.md))
 
-- [ ] Add a way to remove cards from dashboard (ex: mouse-hover close button?).
+- [x] Add a way to remove cards from dashboard (planned in [Phase 05](05-safe-dashboard-recovery.md)).
 
-- [ ] If a project is in `Waiting`, don't make it time out with `Stopped`. It should remain waiting
+- [ ] If a project is in `Waiting`, don't make it time out with `Stopped`. It should remain waiting (deferred: retained asks are not authoritative after an OpenCode runtime disappears).
 
-- [ ] Drop `.local` suffix from hostnames
-- [ ] Detect workspaces (`.workspaces/` prefix), and find a way to show <project name>/<workspace name> instead
+- [x] Drop `.local` suffix from hostnames (planned in [Phase 05](05-safe-dashboard-recovery.md)).
+- [x] Detect workspaces (`.workspaces/` prefix), and find a way to show <project name>/<workspace name> instead (planned separately in [Phase 06](06-workspace-display-identity.md)).
 
 ## Checkpoint
 
-The ASCII proposal was reviewed and implemented as a two-row identity block. User visual validation refined the row to `state   project-name                         machine`, removed the redundant source badge, and confirmed the result. Phase 01 is complete. Phase 02 implementation and automated verification are complete; manual nested-question validation remains before marking its requirements complete. Phase 03 implementation and automated verification are complete; only the real OpenCode timing trace remains. Phase 04 implementation and automated validation are complete; review closure is the remaining step.
+The recovery line is a clean child of known-good `a2e0a344d4cf`; the full problematic and partial-recovery stack remains preserved separately. Baseline already contains the visually validated card layout plus Phases 02–04. Phase 05 will first correct the plugin entry-module export contract, then independently add frontend-only `.local` shortening and a freshly implemented compact hover-only dismissal control. Phase 06 keeps workspace labels separate because they alter project-display disambiguation rather than hostname presentation.
+
+No Phase 05 implementation has started. Retained-Waiting, Waiting stale-filter exemption, cancellation heuristics, SQLite/WAL watching, and runtime-lease work are explicitly excluded from this recovery.
 
 ## Requirements
 
@@ -34,6 +38,10 @@ The ASCII proposal was reviewed and implemented as a two-row identity block. Use
 * R6: 🔄 Promote a top-level OpenCode session to Waiting when any descendant has a fresh unresolved question or permission (Phase: Sub-agent Question Blocking, see R6.1–R6.14 in the phase doc)
 * R7: 🔄 Keep OpenCode sessions Running in real time during long-running tools with pragmatic plugin heartbeats (Phase: OpenCode Tool Heartbeat, see R7.1–R7.7 in the phase doc)
 * R8: 🔄 Recover an OpenCode root from a transient Error only on strictly newer root-local user intent, while keeping Closed and genuine terminal errors authoritative (Phase: OpenCode Transient Error Recovery, see R8.A–R8.E in the phase doc)
+* R9: ⬜ Shorten one terminal `.local` hostname suffix only in frontend display while preserving raw backend identity, URLs, protocol values, and collision distinguishability (Phase: Safe Dashboard Recovery, see R9.A–R9.D in the phase doc)
+* R10: ⬜ Allow an exact card identity/state to be dismissed in page memory with a compact hover-only control that does not change card dimensions (Phase: Safe Dashboard Recovery, see R10.A–R10.F in the phase doc)
+* R11: ⬜ Keep the OpenCode plugin entry module loadable by exporting only callable plugin factories while preserving heartbeat backpressure behavior (Phase: Safe Dashboard Recovery, see R11.A–R11.C in the phase doc)
+* R12: ⬜ Display `.workspaces/<name>` sessions as `<filesystem-root>/<workspace>` without changing canonical project/session identity (Phase: Workspace Display Identity, see R12.A–R12.D in the phase doc)
 
 ## Design
 
@@ -75,6 +83,10 @@ The approved identity hierarchy uses two compact rows. Row one starts with the t
   * No. Error barriers are generation-scoped: valid later `chat.message`, raw user prompt, or `session.created` activity reopens the session, while same-generation late tool/question evidence remains suppressed.
 * [x] Q: What if OpenCode persists later root user activity but emits no plugin recovery event?
   * A strictly newer persisted root user message is valid generation reactivation evidence. Generic SQLite timestamps, assistant/tool activity, and descendant activity are not sufficient; Closed remains permanently authoritative.
+* [x] Q: Why recover from `a2e0a344d4cf` instead of repairing `097c1f22` in place?
+  * Result: The squash combined safe display work with invalid retained-Waiting semantics, a plugin export-contract break, and UI regressions. A clean child of the known-good parent preserves the working state model and permits each safe feature to retain an independent rollback boundary.
+* [x] Q: Which post-baseline work is safe to reintroduce now?
+  * Result: The isolated plugin export correction, frontend-only collision-safe `.local` display, and fresh in-memory card dismissal are safe. Workspace display labels are also presentation-only but remain a separate phase because they affect server-side display-name disambiguation. Retained-Waiting and cancellation changes are excluded.
 
 ## Phases
 
@@ -102,6 +114,18 @@ Implemented pragmatic plugin-local real-time tool liveness with immediate starts
 
 Implemented persisted root user-message evidence in OpenCode generation reconstruction so a transient Error can recover without a plugin follow-up event. Closed remains absolute, and generic timestamps or descendant activity cannot hide genuine errors. Automated validation is complete; review closure remains.
 
+### ⬜ 05 Phase: Safe Dashboard Recovery
+
+[05-safe-dashboard-recovery](05-safe-dashboard-recovery.md)
+
+Recover only independently proven additions on top of `a2e0a344d4cf`: repair the plugin runtime export contract, shorten `.local` in frontend display without changing identity, and add compact transient card dismissal without changing card dimensions. Each feature is implemented, reviewed, validated, and committed separately.
+
+### ⬜ 06 Phase: Workspace Display Identity
+
+[06-workspace-display-identity](06-workspace-display-identity.md)
+
+Add lexical `.workspaces/<name>` display labels as an isolated presentation change after Phase 05 stabilizes. Preserve canonical cwd/project/session identity and validate same-host and cross-host disambiguation independently.
+
 ## Files
 
 - **public/js/render.js**: Two-row identity rendering, display-name precedence, and preserved card activity rendering (Session Card Layout).
@@ -119,3 +143,4 @@ Implemented persisted root user-message evidence in OpenCode generation reconstr
 - **tests/opencode-plugin.test.ts**: Plugin request-ID and hermetic heartbeat lifecycle tests (Sub-agent Question Blocking, OpenCode Tool Heartbeat).
 - **tests/opencode-plugin-phase03-findings.test.ts**: Hermetic delayed-write, generation-ordering, blocker-pressure, and bounded-work regressions (OpenCode Tool Heartbeat).
 - **src/parsers/opencode-db.ts**: Persisted OpenCode message access relevant to collection-level recovery evidence (OpenCode Transient Error Recovery).
+- **public/js/backend-manager.js**: Raw backend identity plus planned frontend-only display-hostname mapping (Safe Dashboard Recovery).
