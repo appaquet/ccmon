@@ -8,10 +8,10 @@ Every feature has its own Jujutsu change, tests, review, runtime or browser gate
 
 ## Requirements
 
-* R9.A: ⬜ Remove exactly one case-insensitive terminal `.local` label, optionally followed by one DNS trailing dot, wherever a hostname is displayed.
-* R9.B: ⬜ Preserve raw hostname, backend key, URL, WebSocket payload, sort/flash identity, and project/session identity.
-* R9.C: ⬜ Preserve malformed, nonterminal, whitespace-bearing, bare `local`, `localhost`, and other-domain hostname forms.
-* R9.D: ⬜ Keep distinct raw hosts visually distinguishable by retaining raw labels when shortening collides.
+* R9.A: 🔄 Remove exactly one case-insensitive terminal `.local` label, optionally followed by one DNS trailing dot, wherever a hostname is displayed.
+* R9.B: 🔄 Preserve raw hostname, backend key, URL, WebSocket payload, sort/flash identity, and project/session identity.
+* R9.C: 🔄 Preserve malformed, nonterminal, whitespace-bearing, bare `local`, `localhost`, and other-domain hostname forms.
+* R9.D: 🔄 Keep distinct raw hosts visually distinguishable by retaining raw labels when shortening collides.
 * R10.A: ⬜ Allow every card state to be dismissed for its exact raw backend/source/session identity and captured state.
 * R10.B: ⬜ Keep dismissal in page memory only; reload restores cards and no backend/storage mutation occurs.
 * R10.C: ⬜ Keep same-state cards hidden and restore them on state change, session replacement, or authoritative absence.
@@ -68,13 +68,14 @@ Track dismissal in a module-memory map keyed by a JSON tuple of raw backend key,
 - [x] Verify known-good baseline before additions
   - AC: Targeted baseline tests, full tests, lint, typecheck, and both dump checks pass.
   - AC: The diff from `a2e0a344d4cf` contains only project documentation/symlink before implementation starts.
-- [~] Correct the OpenCode plugin export contract (R11.A–R11.C; staff-dev)
+- [x] Correct the OpenCode plugin export contract (R11.A–R11.C; staff-dev)
   - AC: `ccmonPlugin` is the only runtime export and every runtime export is callable.
   - AC: Bounded-write tests verify observable 256-item behavior without importing a numeric constant.
   - AC: Targeted plugin tests, full tests, lint, and typecheck pass.
   - AC: Isolated OpenCode 1.18.4 runtime writes a real root and ccmon delivers it within two seconds.
   - Baseline validation: Targeted suites passed 280/280, full suite passed 507/507, lint and typecheck passed, both dump commands succeeded, and the recovery diff contains only project docs plus the `proj` symlink.
-- [ ] Add collision-safe frontend `.local` shortening (R9.A–R9.D; senior-dev)
+  - Validation: Targeted plugin suites passed 21/21, full suite passed 508/508, lint and typecheck passed, correctness/requirements reviews found no issues, and isolated OpenCode 1.18.4 wrote status in 2ms and delivered the session in 224ms.
+- [~] Add collision-safe frontend `.local` shortening (R9.A–R9.D; senior-dev)
   - AC: Accepted and rejected hostname forms match the requirements exactly.
   - AC: Cards, backend menu, and cross-host prefixes use one consistent collision-safe display mapping.
   - AC: Raw hostnames, backend keys, URLs, payloads, and identity/state keys remain byte-for-byte unchanged.
