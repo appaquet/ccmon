@@ -177,6 +177,63 @@ describe("HTTP server", () => {
     expect(entry.projectName).toBe("testproj");
   });
 
+  test("HTTP and WebSocket expose only a workspace-derived displayName", async () => {
+    const projDir = join(tmpDir, "-work-repo-workspaces-alpha-packages-web");
+    const cwd = "/work/repo/.workspaces/alpha/packages/web";
+    const sessionId = "workspace-http-ws";
+    await mkdir(projDir, { recursive: true });
+    const latestJSONL = join(projDir, "session.jsonl");
+    await writeFile(
+      latestJSONL,
+      `${JSON.stringify({ cwd, sessionId, timestamp: new Date().toISOString() })}\n`,
+    );
+
+    const srv = startServer({
+      port: 0,
+      backends: [new ClaudeBackend(tmpDir)],
+      maxInactivityHours: Infinity,
+    });
+    stop = srv.stop;
+    await srv.ready;
+
+    const response = await fetch(`http://localhost:${srv.port}/api/state`);
+    const [httpProject] = (await response.json()) as Array<
+      Record<string, unknown>
+    >;
+    const wsProject = await new Promise<Record<string, unknown>>(
+      (resolve, reject) => {
+        const ws = new WebSocket(`ws://localhost:${srv.port}/ws`);
+        const timeout = setTimeout(() => {
+          ws.close();
+          reject(new Error("Timed out waiting for workspace state"));
+        }, 3000);
+        ws.onmessage = (event) => {
+          clearTimeout(timeout);
+          ws.close();
+          resolve(
+            (
+              JSON.parse(event.data as string) as {
+                projects: Array<Record<string, unknown>>;
+              }
+            ).projects[0],
+          );
+        };
+        ws.onerror = reject;
+      },
+    );
+
+    expect(httpProject.displayName).toBe("repo/alpha");
+    expect(wsProject).toEqual(httpProject);
+    expect({ ...httpProject, displayName: undefined }).toMatchObject({
+      cwd,
+      latestJSONL,
+      projectDir: "-work-repo-workspaces-alpha-packages-web",
+      projectName: "web",
+      sessionId,
+      source: "claude",
+    });
+  });
+
   test("GET /unknown returns 404", async () => {
     const srv = startServer({ port: 0, backends: [new ClaudeBackend(tmpDir)] });
     await srv.ready;

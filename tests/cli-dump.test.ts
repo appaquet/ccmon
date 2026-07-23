@@ -8,7 +8,7 @@ const collectBackendStates = vi.fn();
 vi.mock("../src/backends/index.ts", () => ({ createBackends }));
 vi.mock("../src/backends/collect-states.ts", () => ({ collectBackendStates }));
 
-const { runDump } = await import("../src/cli/commands/dump.ts");
+const { buildOutput, runDump } = await import("../src/cli/commands/dump.ts");
 
 describe("runDump", () => {
   afterEach(() => {
@@ -41,5 +41,26 @@ describe("runDump", () => {
     } finally {
       stderr.mockRestore();
     }
+  });
+
+  test("dump changes only displayName for workspace projects", () => {
+    const project = {
+      cwd: "/work/repo/.workspaces/alpha/packages/api",
+      projectName: "api",
+      sessionId: "ses_alpha",
+      source: "opencode" as const,
+      state: "running" as const,
+      lastUpdated: "2026-07-23T12:00:00.000Z",
+    };
+
+    const [output] = JSON.parse(
+      buildOutput([project], Infinity, null),
+    ) as Array<Record<string, unknown>>;
+
+    expect(output.displayName).toBe("repo/alpha");
+    expect({ ...output, displayName: undefined }).toEqual({
+      ...project,
+      displayName: undefined,
+    });
   });
 });

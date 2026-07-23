@@ -77,7 +77,7 @@ function cardHeaderData(proj, displayName) {
 
 function crossServerDisplayName(proj, isCrossServerCollision) {
   if (!isCrossServerCollision) return undefined;
-  return (proj._displayHostname || proj._hostname || proj._backendKey) + ':' + proj.projectName;
+  return (proj._displayHostname || proj._hostname || proj._backendKey) + ':' + (proj.displayName || proj.projectName);
 }
 
 function normalizedState(proj) {
@@ -318,22 +318,24 @@ function render(projects) {
   // Server-side disambiguateProjectNames() owns cross-backend disambiguation within
   // a single ccmon host (claude vs opencode) and its output is consumed verbatim by
   // both the web UI and the CLI. This block is a separate, orthogonal concern: it
-  // labels projects whose names collide ACROSS multiple ccmon servers (identified by
-  // _backendKey = server hostname). A prefix is added only when the same projectName
+  // labels projects whose display names collide ACROSS multiple ccmon servers (identified by
+  // _backendKey = server hostname). A prefix is added only when the same displayName
   // appears under at least two distinct _backendKey values; within-host collisions
   // are already resolved upstream and need no further treatment here.
   var nameToBackendKeys = new Map();
   for (var i = 0; i < visible.length; i++) {
     var p = visible[i];
-    var keySet = nameToBackendKeys.get(p.projectName);
-    if (!keySet) { keySet = new Set(); nameToBackendKeys.set(p.projectName, keySet); }
+    var displayName = p.displayName || p.projectName;
+    var keySet = nameToBackendKeys.get(displayName);
+    if (!keySet) { keySet = new Set(); nameToBackendKeys.set(displayName, keySet); }
     keySet.add(p._backendKey);
   }
 
   for (var i = 0; i < visible.length; i++) {
     var proj = visible[i];
     var key = projKey(proj);
-    var crossServerCollision = nameToBackendKeys.get(proj.projectName).size > 1;
+    var effectiveDisplayName = proj.displayName || proj.projectName;
+    var crossServerCollision = nameToBackendKeys.get(effectiveDisplayName).size > 1;
     var displayName = crossServerDisplayName(proj, crossServerCollision);
     grid.appendChild(createCard(
       proj,

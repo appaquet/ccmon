@@ -28,6 +28,29 @@ const JSONL_EXT = ".jsonl";
 export type ProjectDisplayState = ProjectState & { displayName: string };
 
 /**
+ * Returns the logical path used to present a workspace cwd, or null when the
+ * cwd does not contain a complete `.workspaces/<name>` path segment pair.
+ */
+export function workspaceDisplaySegments(cwd: string): string[] | null {
+  const segments = cwd.split(/[\\/]/);
+  let workspaceMarker = -1;
+  for (let index = 1; index < segments.length - 1; index++) {
+    if (
+      segments[index] === ".workspaces" &&
+      segments[index - 1] !== "" &&
+      segments[index + 1] !== ""
+    ) {
+      workspaceMarker = index;
+    }
+  }
+  if (workspaceMarker === -1) return null;
+
+  const rootSegments = segments.slice(0, workspaceMarker);
+  while (rootSegments[0] === "") rootSegments.shift();
+  return [...rootSegments, segments[workspaceMarker + 1]];
+}
+
+/**
  * Derives unique display labels for projects sharing a canonical leaf name.
  * Canonical projectName values and input objects remain unchanged.
  */
@@ -35,7 +58,17 @@ export function disambiguateProjectNames(
   projects: ProjectState[],
 ): ProjectDisplayState[] {
   const groups = new Map<string, ProjectState[]>();
+  const displaySegments = new Map<ProjectState, string[]>();
+  const displayBases = new Map<ProjectState, string>();
   for (const p of projects) {
+    const workspaceSegments = workspaceDisplaySegments(p.cwd);
+    const segments = workspaceSegments ?? p.cwd.split("/");
+    const base = workspaceSegments
+      ? segments.slice(-2).join("/")
+      : p.projectName;
+    displaySegments.set(p, segments);
+    displayBases.set(p, base);
+
     const existing = groups.get(p.projectName);
     if (existing !== undefined) {
       existing.push(p);
@@ -46,18 +79,20 @@ export function disambiguateProjectNames(
 
   const displayNames = new Map<ProjectState, string>();
   for (const project of projects)
-    displayNames.set(project, project.projectName);
+    displayNames.set(project, displayBases.get(project) ?? project.projectName);
 
   for (const group of groups.values()) {
     if (group.length <= 1) continue;
 
-    const maxParts = Math.max(...group.map((p) => p.cwd.split("/").length));
+    const maxParts = Math.max(
+      ...group.map((p) => (displaySegments.get(p) ?? p.cwd.split("/")).length),
+    );
     let segments = 2;
     while (segments <= maxParts) {
       const seen = new Set<string>();
       let hasDuplicates = false;
       for (const p of group) {
-        const parts = p.cwd.split("/");
+        const parts = displaySegments.get(p) ?? p.cwd.split("/");
         const name = parts.slice(-segments).join("/");
         if (seen.has(name)) {
           hasDuplicates = true;
@@ -71,7 +106,7 @@ export function disambiguateProjectNames(
 
     if (segments <= maxParts) {
       for (const p of group) {
-        const parts = p.cwd.split("/");
+        const parts = displaySegments.get(p) ?? p.cwd.split("/");
         displayNames.set(p, parts.slice(-segments).join("/"));
       }
     }

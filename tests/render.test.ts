@@ -435,7 +435,11 @@ function loadDismissalHarness(): {
   dismissalKey: (project: Record<string, unknown>) => string;
   dismissedCards: Map<string, string>;
   flashNotification: Map<string, number>;
-  gridChildren: () => Array<{ className: string; textContent: string }>;
+  gridChildren: () => Array<{
+    className: string;
+    innerHTML: string;
+    textContent: string;
+  }>;
   render: (projects: Array<Record<string, unknown>>) => void;
 } {
   class FakeButton {
@@ -629,6 +633,66 @@ describe("render same-repo sibling identity", () => {
       projectName: "ccmon",
       source: "opencode",
     });
+  });
+
+  test("uses effective workspace display names for cross-server collision prefixes without changing dismissal identity", () => {
+    const { crossServerDisplayName, dismissalKey } = loadSessionRenderHelpers();
+    const project = {
+      _backendKey: "build.local",
+      _displayHostname: "build",
+      _hostname: "build.local",
+      cwd: "/work/repo/.workspaces/alpha/packages/web",
+      displayName: "repo/alpha",
+      projectName: "web",
+      sessionId: "ses_alpha",
+      source: "opencode",
+    };
+
+    expect(crossServerDisplayName(project, true)).toBe("build:repo/alpha");
+    expect(dismissalKey(project)).toBe(
+      JSON.stringify(["build.local", "opencode", "ses_alpha"]),
+    );
+    expect(project).toEqual({
+      _backendKey: "build.local",
+      _displayHostname: "build",
+      _hostname: "build.local",
+      cwd: "/work/repo/.workspaces/alpha/packages/web",
+      displayName: "repo/alpha",
+      projectName: "web",
+      sessionId: "ses_alpha",
+      source: "opencode",
+    });
+  });
+
+  test("groups cross-server workspace collisions by effective displayName", () => {
+    const harness = loadDismissalHarness();
+    harness.render([
+      {
+        _backendKey: "host-a",
+        _hostname: "host-a",
+        displayName: "repo/alpha",
+        projectName: "web",
+        sessionId: "ses_a",
+        source: "opencode",
+        state: "running",
+      },
+      {
+        _backendKey: "host-b",
+        _hostname: "host-b",
+        displayName: "repo/alpha",
+        projectName: "api",
+        sessionId: "ses_b",
+        source: "claude",
+        state: "running",
+      },
+    ]);
+
+    expect(harness.gridChildren().map((card) => card.innerHTML)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("host-a:repo/alpha"),
+        expect.stringContaining("host-b:repo/alpha"),
+      ]),
+    );
   });
 
   test("cardHeaderData omits a session when only a short opencode id is available", () => {

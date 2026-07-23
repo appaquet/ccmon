@@ -6,6 +6,7 @@ import {
   disambiguateProjectNames,
   filterStaleProjects,
   scanProjects,
+  workspaceDisplaySegments,
 } from "../src/project-utils.ts";
 import type { SessionState } from "../src/session-core.ts";
 import type { ProjectState } from "../src/types.ts";
@@ -377,5 +378,216 @@ describe("disambiguateProjectNames", () => {
       { projectName: "backend", displayName: "backend" },
     ]);
     expect(a.projectName).toBe("backend");
+  });
+});
+
+describe("workspace display identity", () => {
+  test("derives root and nested workspace display segments lexically", () => {
+    expect(workspaceDisplaySegments("/work/repo/.workspaces/alpha")).toEqual([
+      "work",
+      "repo",
+      "alpha",
+    ]);
+    expect(
+      workspaceDisplaySegments("/work/repo/.workspaces/alpha/packages/web"),
+    ).toEqual(["work", "repo", "alpha"]);
+  });
+
+  test("derives workspace display segments from drive, UNC, mixed, and trailing-separator paths", () => {
+    expect(
+      workspaceDisplaySegments(String.raw`C:\work\repo\.workspaces\alpha`),
+    ).toEqual(["C:", "work", "repo", "alpha"]);
+    expect(
+      workspaceDisplaySegments(
+        String.raw`\\server\share\repo\.workspaces\beta`,
+      ),
+    ).toEqual(["server", "share", "repo", "beta"]);
+    expect(
+      workspaceDisplaySegments(
+        String.raw`C:/work\repo/.workspaces\alpha/packages\web/`,
+      ),
+    ).toEqual(["C:", "work", "repo", "alpha"]);
+    expect(workspaceDisplaySegments("/work/repo/.workspaces/alpha/")).toEqual([
+      "work",
+      "repo",
+      "alpha",
+    ]);
+  });
+
+  test("uses the workspace root label before any collision fallback", () => {
+    expect(
+      disambiguateProjectNames([
+        makeProjectState("/work/repo/.workspaces/alpha"),
+      ])[0]?.displayName,
+    ).toBe("repo/alpha");
+  });
+
+  test("uses the deepest valid workspace marker", () => {
+    const project = makeProjectState(
+      "/work/repo/.workspaces/alpha/.workspaces/beta/packages/web",
+    );
+    project.projectName = "web";
+
+    expect(disambiguateProjectNames([project])[0]?.displayName).toBe(
+      "alpha/beta",
+    );
+  });
+
+  test("preserves malformed, incomplete, empty-name, and non-segment paths", () => {
+    for (const cwd of [
+      "/work/repo/.workspaces",
+      "/work/repo/.workspaces/",
+      "/.workspaces/alpha",
+      "/work/repo/.workspaces-alpha",
+      "/work/repo/.workspacesalpha",
+      "/work/repo/not.workspaces/alpha",
+    ]) {
+      expect(workspaceDisplaySegments(cwd)).toBeNull();
+    }
+  });
+
+  test("uses workspace labels for Claude and OpenCode projects without changing canonical fields", () => {
+    const claude = makeProjectState(
+      "/work/repo/.workspaces/alpha/packages/api",
+    );
+    claude.projectName = "api";
+    const opencode = {
+      cwd: "/work/repo/.workspaces/beta/packages/web",
+      projectName: "web",
+      sessionId: "ses_beta",
+      source: "opencode" as const,
+      state: "running" as const,
+      lastUpdated: "2026-07-23T12:00:00.000Z",
+    };
+    const canonical = [structuredClone(claude), structuredClone(opencode)];
+
+    const labels = disambiguateProjectNames([claude, opencode]);
+
+    expect(labels.map((project) => project.displayName)).toEqual([
+      "repo/alpha",
+      "repo/beta",
+    ]);
+    expect(
+      labels.map(({ displayName: _displayName, ...project }) => project),
+    ).toEqual(canonical);
+  });
+
+  test("uses an OpenCode drive-root workspace label without changing canonical fields", () => {
+    const project = {
+      cwd: "C:\\work\\repo\\.workspaces\\alpha\\",
+      projectName: "alpha",
+      sessionId: "ses_drive",
+      source: "opencode" as const,
+      state: "running" as const,
+      lastUpdated: "2026-07-23T12:00:00.000Z",
+    };
+
+    const [display] = disambiguateProjectNames([project]);
+
+    expect(display?.displayName).toBe("repo/alpha");
+    expect({ ...display, displayName: undefined }).toEqual({
+      ...project,
+      displayName: undefined,
+    });
+  });
+
+  test("uses workspace segments within a mixed canonical-name collision group", () => {
+    const workspace = makeProjectState("/work/repo/.workspaces/alpha/backend");
+    workspace.projectName = "backend";
+    const ordinary = makeProjectState("/home/other/backend");
+    const canonical = [structuredClone(workspace), structuredClone(ordinary)];
+
+    const displays = disambiguateProjectNames([workspace, ordinary]);
+
+    expect(displays.map((project) => project.displayName)).toEqual([
+      "repo/alpha",
+      "other/backend",
+    ]);
+    expect(
+      displays.map(({ displayName: _displayName, ...project }) => project),
+    ).toEqual(canonical);
+  });
+
+  test("does not group unrelated canonical names with matching workspace labels", () => {
+    const api = makeProjectState("/work/repo/.workspaces/alpha/api");
+    api.projectName = "api";
+    const web = makeProjectState("/other/repo/.workspaces/alpha/web");
+    web.projectName = "web";
+
+    expect(
+      disambiguateProjectNames([api, web]).map(
+        (project) => project.displayName,
+      ),
+    ).toEqual(["repo/alpha", "repo/alpha"]);
+  });
+
+  test("expands identical workspace labels deterministically before session fallback", () => {
+    const first = makeProjectState("/work/repo/.workspaces/alpha");
+    first.sessionId = "ses_work";
+    const second = makeProjectState("/home/repo/.workspaces/alpha/deep/path");
+    second.projectName = "alpha";
+    second.sessionId = "ses_home";
+
+    expect(
+      disambiguateProjectNames([first, second]).map(
+        (project) => project.displayName,
+      ),
+    ).toEqual(["work/repo/alpha", "home/repo/alpha"]);
+  });
+
+  test("uses session suffixes when identical workspace labels have no lexical fallback", () => {
+    const first = makeProjectState("/work/repo/.workspaces/alpha");
+    first.sessionId = "ses_first";
+    const second = makeProjectState(
+      "/work/repo/.workspaces/alpha/packages/web",
+    );
+    second.projectName = "alpha";
+    second.sessionId = "ses_second";
+
+    expect(
+      disambiguateProjectNames([first, second]).map(
+        (project) => project.displayName,
+      ),
+    ).toEqual(["repo/alpha (ses_first)", "repo/alpha (ses_second)"]);
+  });
+
+  test("retains the original session fallback when workspace session IDs match", () => {
+    const first = makeProjectState("/work/repo/.workspaces/alpha");
+    first.sessionId = "ses_shared";
+    const second = makeProjectState(
+      "/work/repo/.workspaces/alpha/packages/web",
+    );
+    second.projectName = "alpha";
+    second.sessionId = "ses_shared";
+
+    expect(
+      disambiguateProjectNames([first, second]).map(
+        (project) => project.displayName,
+      ),
+    ).toEqual(["repo/alpha (ses_shared)", "repo/alpha (ses_shared)"]);
+  });
+
+  test("retains non-workspace collision behavior byte-for-byte", () => {
+    const projects = [
+      makeProjectState("/home/user/projectA/backend"),
+      makeProjectState("/home/user/projectB/backend"),
+    ];
+
+    expect(
+      disambiguateProjectNames(projects).map((project) => project.displayName),
+    ).toEqual(["projectA/backend", "projectB/backend"]);
+  });
+
+  test("retains malformed paths' canonical project labels through disambiguation", () => {
+    const projects = [
+      makeProjectState("/work/repo/.workspaces"),
+      makeProjectState("/work/repo/.workspaces/"),
+      makeProjectState("/work/repo/.workspaces-alpha"),
+      makeProjectState("/work/repo/not.workspaces/alpha"),
+    ];
+
+    expect(
+      disambiguateProjectNames(projects).map((project) => project.displayName),
+    ).toEqual(projects.map((project) => project.projectName));
   });
 });
