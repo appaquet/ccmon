@@ -74,7 +74,7 @@ const commands: Record<string, () => Promise<number | undefined>> = {
 const command = subcommand ? commands[subcommand] : undefined;
 if (command) {
   const code = await command();
-  if (code !== undefined) process.exit(code);
+  if (code !== undefined) process.exitCode = code;
 } else {
   process.stderr.write(
     `Usage: ccmon <subcommand>

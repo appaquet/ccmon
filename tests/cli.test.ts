@@ -71,6 +71,37 @@ function makeStatusEvent(event = "PostToolUse", state = "running"): string {
   });
 }
 
+function largeDumpProjectIdentity(index: number) {
+  const suffix = String(index).padStart(3, "0");
+  const projectName = `large-dump-${suffix}`;
+  return {
+    sessionId: `session-${suffix}`,
+    cwd: `/home/user/${projectName}`,
+    projectName,
+  };
+}
+
+async function createClaudeDumpFixtures(
+  projectsDir: string,
+  count: number,
+): Promise<void> {
+  await Promise.all(
+    Array.from({ length: count }, async (_, index) => {
+      const project = largeDumpProjectIdentity(index);
+      const projectDir = join(projectsDir, `-home-user-${project.projectName}`);
+      await mkdir(projectDir, { recursive: true });
+      await writeFile(
+        join(projectDir, "session.jsonl"),
+        `${JSON.stringify({
+          timestamp: "2026-07-23T00:00:00.000Z",
+          sessionId: project.sessionId,
+          cwd: project.cwd,
+        })}\n`,
+      );
+    }),
+  );
+}
+
 function createOpencodeSchema(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE project (
@@ -503,6 +534,42 @@ describe("dump", () => {
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(1);
     expect(parsed[0].cwd).toBe("/home/user/proj");
+  });
+
+  test("drains a large no-filter dump through stdout before exiting", async () => {
+    const projectCount = 512;
+    const expectedProjects = Array.from({ length: projectCount }, (_, index) =>
+      largeDumpProjectIdentity(index),
+    );
+    await createClaudeDumpFixtures(tmpDir, projectCount);
+
+    const configPath = join(tmpDir, "ccmon-config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ backends: [{ type: "claude", enabled: true }] }),
+    );
+
+    const result = await spawnCli(["dump", "--no-filter"], {
+      env: {
+        CLAUDE_PROJECTS_DIR: tmpDir,
+        CCMON_CONFIG: configPath,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(Buffer.byteLength(result.stdout)).toBeGreaterThan(64 * 1024);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toHaveLength(projectCount);
+    const actualProjects: typeof expectedProjects = parsed.map(
+      ({ sessionId, cwd, projectName }: (typeof expectedProjects)[number]) => ({
+        sessionId,
+        cwd,
+        projectName,
+      }),
+    );
+    expect(
+      actualProjects.toSorted((a, b) => a.sessionId.localeCompare(b.sessionId)),
+    ).toEqual(expectedProjects);
   });
 });
 
