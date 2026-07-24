@@ -22,7 +22,7 @@ Recovery work now proceeds from known-good commit `a2e0a344d4cf`, not from the c
 
 ## Checkpoint
 
-Phase 05 implementation is complete on separate rollback boundaries: plugin export repair, collision-safe frontend `.local` display, transient card dismissal, and the separately approved large piped-dump fix. Automated validation passes 529 tests, lint, typecheck, filtered/no-filter JSON pipes, scope review, and isolated OpenCode 1.18.4 delivery in 224ms.
+Phase 02 now normalizes SDK ask IDs and recovers legacy blocker records consistently in both the backend ledger and heartbeat tracker. Automated validation passes 555 tests, lint, typecheck, filtered/no-filter dumps, and correctness review; real nested question/permission validation remains before the phase can close.
 
 Phase 05 frontend validation passed; only the Home Manager-managed plugin activation and OpenCode restart gate remains. Phase 06 workspace display is implemented in its own change and passes 547 tests, lint, typecheck, dump checks, and independent correctness/requirements reviews.
 
@@ -78,6 +78,8 @@ Recovery follows a strict known-good-baseline rule: implement each safe feature 
   * All descendants reachable through the SQLite `session.parent_id` graph, including nested sub-agents. Use a recursive forest snapshot; do not infer ancestry from project names or directories.
 * [x] Q: How should multiple questions and permissions be correlated?
   * Use `(session_id, blocker_kind, request_id)` identity, with a conservative legacy session-level slot for ID-less records. Replies/rejections clear only matching blockers; the existing five-minute freshness window remains authoritative.
+* [x] Q: How do SDK-shaped ask and resolution IDs preserve that blocker identity?
+  * OpenCode emits `properties.id` for blocker ask events and `properties.requestID`/`properties.permissionID` for resolution events. Normalize the ask ID only for question/permission asks; when a keyed resolution has no exact match, clear only the matching kind's legacy slot in both the backend and heartbeat tracker.
 * [x] Q: How should long OpenCode tools remain Running in real time?
   * The plugin tracks every in-flight tool by call ID, writes an immediate running event on `tool.execute.before`, emits forced running heartbeats every 30 seconds while active, pauses during blockers, and stops the heartbeat immediately on completion/error/terminal/dispose.
 * [x] Q: How should heartbeat writes interact with the status-log deduplication and growth?
@@ -107,7 +109,7 @@ Implemented and visually validated the two-row session-first identity block, wid
 
 [02-subagent-question-blocking](02-subagent-question-blocking.md)
 
-Implemented recursive descendant blocker aggregation so a fresh unresolved question or permission places the top-level OpenCode session in the existing Waiting state. Automated checks pass; manual nested-question validation remains before completion.
+Implemented recursive descendant blocker aggregation and SDK-shaped ask/reply request correlation so a fresh unresolved question or permission places the top-level OpenCode session in the existing Waiting state without leaving stale legacy blockers. Automated checks pass; manual nested-question validation remains before completion.
 
 ### 🔄 03 Phase: OpenCode Tool Heartbeat
 
@@ -142,12 +144,12 @@ Implemented lexical `.workspaces/<name>` labels across same-host, cross-host, HT
 - **src/server.ts**: Sends the server hostname with WebSocket state updates.
 - **src/types.ts**: Defines the project/session fields consumed by the card.
 - **tests/render.test.ts**: Focused identity, hostname, fallback, cross-host, and preserved-card tests (Session Card Layout).
-- **src/backends/opencode.ts**: Recursive descendant discovery, blocker aggregation, precedence, and recursive activity planning (Sub-agent Question Blocking).
+- **src/backends/opencode.ts**: Recursive descendant discovery, blocker aggregation, request-aware legacy recovery, precedence, and recursive activity planning (Sub-agent Question Blocking).
 - **src/session-core.ts**: Shared status-event/request identity extensions if required by blocker reconstruction (Sub-agent Question Blocking).
 - **src/timing.ts**: Existing permission/activity thresholds and heartbeat cadence relationship (Sub-agent Question Blocking, OpenCode Tool Heartbeat).
-- **resources/opencode-plugin/ccmon.ts**: Request-aware lifecycle records, in-flight tool tracking, forced heartbeats, and cleanup (Sub-agent Question Blocking, OpenCode Tool Heartbeat).
-- **tests/backends/opencode.test.ts**: Recursive graph, blocker ledger, precedence, stale boundary, and backend integration tests (Sub-agent Question Blocking).
-- **tests/opencode-plugin.test.ts**: Plugin request-ID and hermetic heartbeat lifecycle tests (Sub-agent Question Blocking, OpenCode Tool Heartbeat).
+- **resources/opencode-plugin/ccmon.ts**: SDK-shaped request-aware lifecycle records, legacy tracker recovery, in-flight tool tracking, forced heartbeats, and cleanup (Sub-agent Question Blocking, OpenCode Tool Heartbeat).
+- **tests/backends/opencode.test.ts**: Recursive graph, SDK-shaped blocker ledger, legacy recovery, precedence, stale boundary, and backend integration tests (Sub-agent Question Blocking).
+- **tests/opencode-plugin.test.ts**: Plugin SDK request-ID, legacy heartbeat-tracker recovery, and hermetic heartbeat lifecycle tests (Sub-agent Question Blocking, OpenCode Tool Heartbeat).
 - **tests/opencode-plugin-phase03-findings.test.ts**: Hermetic delayed-write, generation-ordering, blocker-pressure, and bounded-work regressions (OpenCode Tool Heartbeat).
 - **src/parsers/opencode-db.ts**: Persisted OpenCode message access relevant to collection-level recovery evidence (OpenCode Transient Error Recovery).
 - **tests/server.test.ts**: Planned workspace `displayName` HTTP/WebSocket propagation coverage with canonical-field preservation (Workspace Display Identity).

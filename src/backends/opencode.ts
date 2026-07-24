@@ -948,7 +948,9 @@ function buildSessionEvidence(
         timestampMs,
       });
     } else {
-      blockers.delete(key);
+      if (!blockers.delete(key) && requestId !== null) {
+        blockers.delete(blockerKey(blockerLifecycle.kind, null));
+      }
     }
   }
 

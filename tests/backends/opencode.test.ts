@@ -3493,6 +3493,82 @@ describe("OpencodeBackend — recursive blocker aggregation", () => {
     );
   });
 
+  test("keeps a same-kind legacy blocker when a keyed reply resolves its exact blocker", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const backend = backendForStatus(
+      status("child", "question.asked", "waiting_for_permission", now - 3_000) +
+        status(
+          "child",
+          "question.asked",
+          "waiting_for_permission",
+          now - 2_000,
+          "keyed-question",
+          "question",
+        ) +
+        status(
+          "child",
+          "question.replied",
+          "running",
+          now - 1_000,
+          "keyed-question",
+          "question",
+        ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
+  test.each([
+    ["question.replied", "question"],
+    ["permission.rejected", "permission"],
+  ] as const)("%s recovers a same-kind legacy blocker when no exact request exists", async (replyEvent, kind) => {
+    addSession("root");
+    addSession("child", "root");
+    const backend = backendForStatus(
+      status("child", `${kind}.asked`, "waiting_for_permission", now - 2_000) +
+        status(
+          "child",
+          replyEvent,
+          "running",
+          now - 1_000,
+          `new-${kind}-request`,
+          kind,
+        ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "running",
+    );
+  });
+
+  test("does not let a keyed question reply clear a legacy permission blocker", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const backend = backendForStatus(
+      status(
+        "child",
+        "permission.asked",
+        "waiting_for_permission",
+        now - 2_000,
+      ) +
+        status(
+          "child",
+          "question.rejected",
+          "running",
+          now - 1_000,
+          "question-request",
+          "question",
+        ),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "waiting_for_permission",
+    );
+  });
+
   test("uses a conservative per-session legacy slot for ID-less lifecycle records", async () => {
     addSession("root");
     addSession("child", "root");

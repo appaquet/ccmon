@@ -89,6 +89,10 @@ Any descendant blocker wins over Running siblings. Resolving one blocker does no
   * Principal review confirmed recursive CTE discovery, request-aware ledgers, graph safety, and direct backend aggregation are feasible with existing SQLite/Vitest seams.
 * [x] Q: How should historical error evidence interact with later valid activity?
   * Error barriers are generation-scoped. Later valid `chat.message`, raw `UserPromptSubmit`, or `session.created` starts a new generation; same-generation late tool/question evidence remains suppressed.
+* [x] Q: Why can a runtime reply fail to resolve its preceding ask blocker?
+  * Uncertainty: The OpenCode SDK emits an ask identifier as `properties.id`, but replies use `properties.requestID` or `properties.permissionID`.
+  * Tried: Compared the captured `debug.local.json` status sequence, installed SDK event types, plugin output, and backend ledger keys.
+  * Result: Restricted `properties.id` normalization to blocker ask events. Keyed replies/rejections remove an exact blocker or, when absent, the same-kind legacy compatibility slot in both the backend ledger and plugin heartbeat tracker. This preserves multi-request matching, recovers records produced by the previous plugin, and prevents a recovered blocker from suppressing heartbeats indefinitely.
 
 ## Tasks
 
@@ -126,6 +130,12 @@ Any descendant blocker wins over Running siblings. Resolving one blocker does no
   - AC: Same-generation late tool/question events remain suppressed.
   - AC: A reactivated session can enter Waiting again on a new blocker.
   - Follow-up: Phase 04 adds persisted SQLite root-user evidence for recovery when the plugin emits no later chat/user lifecycle record.
+- [x] Correct OpenCode blocker ask/reply identifier correlation (senior-dev)
+  - AC: `question.asked` and `permission.asked` normalize their SDK `properties.id` into the lifecycle request ID; unrelated event IDs are not accepted as a generic fallback.
+  - AC: A keyed reply/rejection clears its exact blocker or, when absent, only the same-kind legacy compatibility slot for that session.
+  - AC: Existing malformed ID-less ask records recover without weakening independent concurrent blocker matching.
+  - AC: Plugin and backend regressions cover SDK-shaped question and permission lifecycles.
+  - Validation: Focused suites passed; full suite passed 555 tests; lint, typecheck, and filtered/no-filter dump checks passed. A correctness review caught plugin heartbeat-tracker fallback drift, which is now covered by legacy question/reply and permission/rejection heartbeat-resumption regressions.
 - [ ] Review and validate Phase 02 (code-correctness reviewer + user)
   - AC: Tests, lint, typecheck, and both OpenCode dump integration checks pass.
   - AC: Manual nested-sub-agent question/permission scenarios show only the parent Waiting badge changing.

@@ -93,19 +93,25 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
     await plugin.event({
       event: {
         type: "question.asked",
-        properties: { sessionID: "ses_1", requestID: "question-1" },
+        properties: { sessionID: "ses_1", id: "question-1" },
       },
     });
     await plugin.event({
       event: {
         type: "permission.asked",
-        properties: { sessionID: "ses_1", permissionID: "permission-1" },
+        properties: { sessionID: "ses_1", id: "permission-1" },
       },
     });
     await plugin.event({
       event: {
         type: "question.replied",
         properties: { sessionID: "ses_1", requestID: "question-1" },
+      },
+    });
+    await plugin.event({
+      event: {
+        type: "question.asked",
+        properties: { sessionID: "ses_1", id: "question-2" },
       },
     });
     await plugin.event({
@@ -122,7 +128,19 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
     });
     await plugin.event({
       event: {
-        type: "question.asked",
+        type: "permission.asked",
+        properties: { sessionID: "ses_1", id: "permission-2" },
+      },
+    });
+    await plugin.event({
+      event: {
+        type: "permission.rejected",
+        properties: { sessionID: "ses_1", permissionID: "permission-2" },
+      },
+    });
+    await plugin.event({
+      event: {
+        type: "question.replied",
         properties: { sessionID: "ses_1", id: "message-not-a-request" },
       },
     });
@@ -155,6 +173,12 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
         blocker_kind: "question",
       },
       {
+        event: "question.asked",
+        state: "waiting_for_permission",
+        request_id: "question-2",
+        blocker_kind: "question",
+      },
+      {
         event: "question.rejected",
         state: "running",
         request_id: "question-2",
@@ -167,12 +191,24 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
         blocker_kind: "permission",
       },
       {
-        event: "question.asked",
+        event: "permission.asked",
         state: "waiting_for_permission",
+        request_id: "permission-2",
+        blocker_kind: "permission",
+      },
+      {
+        event: "permission.rejected",
+        state: "running",
+        request_id: "permission-2",
+        blocker_kind: "permission",
+      },
+      {
+        event: "question.replied",
+        state: "running",
         blocker_kind: "question",
       },
     ]);
-    expect(lines[5].request_id).toBeUndefined();
+    expect(lines[8].request_id).toBeUndefined();
   });
 
   test("serializes concurrent lifecycle writes and suppresses late running evidence", async () => {
@@ -760,6 +796,162 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
       "question.rejected",
       "tool.execute.heartbeat",
     ]);
+  });
+
+  test.each([
+    {
+      askEvent: "question.asked",
+      resolveEvent: "question.replied",
+      resolveProperties: { requestID: "question-request" },
+    },
+    {
+      askEvent: "permission.asked",
+      resolveEvent: "permission.rejected",
+      resolveProperties: { permissionID: "permission-request" },
+    },
+  ])("resumes tool heartbeats when $resolveEvent clears a same-kind legacy blocker", async ({
+    askEvent,
+    resolveEvent,
+    resolveProperties,
+  }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-22T12:00:00.000Z"));
+    const { plugin, statusPath } = await createPlugin();
+    const sessionID = `legacy-${askEvent}`;
+
+    await plugin["tool.execute.before"]({
+      sessionID,
+      input: { callID: "call" },
+    });
+    await plugin.event({
+      event: { type: askEvent, properties: { sessionID } },
+    });
+    await plugin.event({
+      event: {
+        type: resolveEvent,
+        properties: { sessionID, ...resolveProperties },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(
+      records(statusPath)
+        .filter((record) => record.session_id === sessionID)
+        .map((record) => record.event),
+    ).toEqual([
+      "tool.execute.before",
+      askEvent,
+      resolveEvent,
+      "tool.execute.heartbeat",
+    ]);
+  });
+
+  test("prefers an exact keyed resolution over the same-kind legacy fallback", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-22T12:00:00.000Z"));
+    const { plugin, statusPath } = await createPlugin();
+
+    await plugin["tool.execute.before"]({
+      sessionID: "exact-before-legacy",
+      input: { callID: "call" },
+    });
+    await plugin.event({
+      event: {
+        type: "question.asked",
+        properties: { sessionID: "exact-before-legacy" },
+      },
+    });
+    await plugin.event({
+      event: {
+        type: "question.asked",
+        properties: { sessionID: "exact-before-legacy", id: "keyed" },
+      },
+    });
+    await plugin.event({
+      event: {
+        type: "question.replied",
+        properties: { sessionID: "exact-before-legacy", requestID: "keyed" },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(
+      records(statusPath).filter(
+        (record) =>
+          record.session_id === "exact-before-legacy" &&
+          record.event === "tool.execute.heartbeat",
+      ),
+    ).toHaveLength(0);
+
+    await plugin.event({
+      event: {
+        type: "question.rejected",
+        properties: { sessionID: "exact-before-legacy", requestID: "unknown" },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(
+      records(statusPath).filter(
+        (record) =>
+          record.session_id === "exact-before-legacy" &&
+          record.event === "tool.execute.heartbeat",
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("does not let a keyed question resolver clear a legacy permission blocker", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-22T12:00:00.000Z"));
+    const { plugin, statusPath } = await createPlugin();
+
+    await plugin["tool.execute.before"]({
+      sessionID: "kind-isolated-legacy",
+      input: { callID: "call" },
+    });
+    await plugin.event({
+      event: {
+        type: "permission.asked",
+        properties: { sessionID: "kind-isolated-legacy" },
+      },
+    });
+    await plugin.event({
+      event: {
+        type: "question.rejected",
+        properties: {
+          sessionID: "kind-isolated-legacy",
+          requestID: "question-request",
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(
+      records(statusPath).filter(
+        (record) =>
+          record.session_id === "kind-isolated-legacy" &&
+          record.event === "tool.execute.heartbeat",
+      ),
+    ).toHaveLength(0);
+
+    await plugin.event({
+      event: {
+        type: "permission.rejected",
+        properties: {
+          sessionID: "kind-isolated-legacy",
+          permissionID: "permission-request",
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(
+      records(statusPath).filter(
+        (record) =>
+          record.session_id === "kind-isolated-legacy" &&
+          record.event === "tool.execute.heartbeat",
+      ),
+    ).toHaveLength(1);
   });
 
   test("reactivation clears prior blockers and accepts only new-generation blockers", async () => {

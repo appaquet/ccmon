@@ -14,6 +14,11 @@ type SessionState =
 
 type LifecycleMode = "active" | "idle" | "hard_terminal";
 type BlockerKind = "question" | "permission";
+type BlockerLifecycle = {
+  action: "ask" | "resolve";
+  key: string;
+  kind: BlockerKind;
+};
 
 interface SessionInfo {
   id: string;
@@ -186,6 +191,18 @@ export async function ccmonPlugin(context: PluginContext) {
     return undefined;
   }
 
+  function extractBlockerAskRequestId(
+    ctx: EventHandlerContext,
+  ): string | undefined {
+    const requestId = extractRequestId(ctx);
+    if (requestId) return requestId;
+
+    const properties = ctx.event.properties as Record<string, unknown> | undefined;
+    return typeof properties?.id === "string" && properties.id.length > 0
+      ? properties.id
+      : undefined;
+  }
+
   function extractCallId(
     ctx: EventHandlerContext | HookHandlerContext,
   ): string | undefined {
@@ -214,7 +231,7 @@ export async function ccmonPlugin(context: PluginContext) {
     eventType: string,
     kind: BlockerKind | undefined,
     requestId: string | undefined,
-  ): { action: "ask" | "resolve"; key: string } | null {
+  ): BlockerLifecycle | null {
     if (!kind) return null;
     const key = `${kind}\u0000${requestId || LEGACY_REQUEST_SLOT}`;
     if (
@@ -222,7 +239,7 @@ export async function ccmonPlugin(context: PluginContext) {
       eventType === "permission.asked" ||
       eventType === "permission.ask"
     ) {
-      return { action: "ask", key };
+      return { action: "ask", key, kind };
     }
     if (
       eventType === "question.replied" ||
@@ -230,7 +247,7 @@ export async function ccmonPlugin(context: PluginContext) {
       eventType === "permission.replied" ||
       eventType === "permission.rejected"
     ) {
-      return { action: "resolve", key };
+      return { action: "resolve", key, kind };
     }
     return null;
   }
@@ -476,7 +493,12 @@ export async function ccmonPlugin(context: PluginContext) {
       tracker.blockers.add(lifecycle.key);
       stopHeartbeat(tracker);
     } else if (lifecycle?.action === "resolve") {
-      const wasBlocked = tracker.blockers.delete(lifecycle.key);
+      const wasBlocked =
+        tracker.blockers.delete(lifecycle.key) ||
+        (requestId !== undefined &&
+          tracker.blockers.delete(
+            `${lifecycle.kind}\u0000${LEGACY_REQUEST_SLOT}`,
+          ));
       if (wasBlocked && tracker.blockers.size === 0) {
         startHeartbeat(sessionId);
       }
@@ -646,7 +668,7 @@ export async function ccmonPlugin(context: PluginContext) {
             const sessionId = extractSessionId(ctx);
             if (sessionId) {
               const blockerKind = type.startsWith("question") ? "question" : "permission";
-              await writeStatus(sessionId, "waiting_for_permission", type, undefined, extractRequestId(ctx), blockerKind, true);
+              await writeStatus(sessionId, "waiting_for_permission", type, undefined, extractBlockerAskRequestId(ctx), blockerKind, true);
             }
             break;
           }

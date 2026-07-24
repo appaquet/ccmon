@@ -81,6 +81,8 @@ The initial scope excludes `session.status: busy`. Manual tracing must confirm `
   * Decision: Use a deterministic test-local append sink for heartbeat tests, remove wall-clock polling, and leave production persistence unchanged.
   * Follow-up: The same native-write and polling pattern was found in the Phase 03 findings suite, so the deterministic sink scope includes both heartbeat test files.
   * Validation note: The initial shell lacked Node/npm; the Nix development environment supplied runtime validation. Both targeted heartbeat files passed 20/20, 10 repeated runs passed, the full suite passed 492/492, and lint, typecheck, and both dump checks passed.
+* [x] Q: How do heartbeats resume for legacy ID-less blocker records when a keyed resolution arrives?
+  * Result: The plugin mirrors the Phase 02 backend compatibility rule: after an exact keyed match misses, it clears only the same-kind legacy slot. This avoids retaining a stale tracker blocker that would indefinitely suppress heartbeats, while preserving exact-key and question/permission isolation.
 
 ## Tasks
 
