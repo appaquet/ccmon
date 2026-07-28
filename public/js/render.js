@@ -1,9 +1,9 @@
 function renderContextBar(inputTokens, tasksDone, tasksTotal) {
-  var MAX_CTX = 128000;
+  var MAX_CTX = 250000;
   var tokens = inputTokens || 0;
   var pct = Math.min(100, Math.round((tokens / MAX_CTX) * 100));
-  var fillClass = tokens > 120000 ? 'ctx-fill ctx-fill-danger'
-    : tokens > 100000 ? 'ctx-fill ctx-fill-warn'
+  var fillClass = tokens > 200000 ? 'ctx-fill ctx-fill-danger'
+    : tokens > 150000 ? 'ctx-fill ctx-fill-warn'
     : 'ctx-fill';
   var label = tokens >= 1000 ? Math.round(tokens / 1000) + 'k' : String(tokens);
   var tasksHtml = tasksTotal > 0
