@@ -15,6 +15,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { buildProjectState } from "../../src/backends/build-project-state.ts";
 import { OpencodeBackend } from "../../src/backends/opencode.ts";
+import { filterStaleProjects } from "../../src/project-utils.ts";
 import type { SessionState } from "../../src/session-core.ts";
 import {
   OPENCODE_ACTIVE_THRESHOLD_MS,
@@ -1376,7 +1377,7 @@ describe("OpencodeBackend — sub-agents", () => {
     expect(state).toBe("stopped");
   });
 
-  test("buildProjectState lastUpdated uses child time_updated when child is more recent", async () => {
+  test("buildProjectState ignores generic child time_updated when parent is older", async () => {
     const now = Date.now();
     const parentId = setupParent();
 
@@ -1403,7 +1404,7 @@ describe("OpencodeBackend — sub-agents", () => {
 
     const project = (await backend.scanProjects())[0];
     const state = await buildProjectState(backend, project);
-    expect(state.lastUpdated).toBe(new Date(childUpdated).toISOString());
+    expect(state.lastUpdated).toBe(new Date(parentUpdated).toISOString());
   });
 
   test("buildProjectState keeps stale top-level peer state and lastUpdated session-scoped when same-directory peer activity exists", async () => {
@@ -3588,10 +3589,10 @@ describe("OpencodeBackend — recursive blocker aggregation", () => {
     );
   });
 
-  test("traverses archived intermediates and counts archived blocked descendants", async () => {
+  test("traverses archived intermediates without letting archived blocked descendants promote the root", async () => {
     addSession("root");
     addSession("archived-middle", "root", true);
-    addSession("archived-child", "archived-middle", true);
+    addSession("archived-child", "archived-middle");
     const backend = backendForStatus(
       status(
         "archived-child",
@@ -3604,8 +3605,51 @@ describe("OpencodeBackend — recursive blocker aggregation", () => {
     );
 
     await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
-      "waiting_for_permission",
+      "stopped",
     );
+  });
+
+  test("excludes generic, terminal, and archived descendant row recency from project freshness", async () => {
+    const staleAt = now - 2 * 60 * 60_000;
+    addSession("generic-root", null, false, staleAt);
+    addSession("generic-child", "generic-root", false, now);
+    addSession("terminal-root", null, false, staleAt);
+    addSession("terminal-child", "terminal-root", false, now);
+    addSession("archived-root", null, false, staleAt);
+    addSession("archived-child", "archived-root", true, now);
+    const backend = backendForStatus(
+      status("terminal-child", "session.idle", "stopped", now - 1_000) +
+        status(
+          "archived-child",
+          "permission.asked",
+          "waiting_for_permission",
+          now - 500,
+          "archived",
+          "permission",
+        ),
+    );
+
+    const states = await Promise.all(
+      ["generic-root", "terminal-root", "archived-root"].map(
+        async (sessionId) =>
+          buildProjectState(backend, await projectFor(backend, sessionId)),
+      ),
+    );
+
+    expect(states.map((state) => state.lastUpdated)).toEqual([
+      new Date(staleAt).toISOString(),
+      new Date(staleAt).toISOString(),
+      new Date(staleAt).toISOString(),
+    ]);
+    expect(states.map((state) => state.state)).toEqual([
+      "running",
+      "stopped",
+      "stopped",
+    ]);
+    expect(filterStaleProjects(states, 1)).toEqual([]);
+    await expect(
+      backend.getSubagents(await projectFor(backend, "archived-root")),
+    ).resolves.toEqual([]);
   });
 
   test("does not attach missing-parent sessions or disconnected cycles to a root", async () => {
@@ -3981,6 +4025,131 @@ describe("OpencodeBackend — recursive blocker aggregation", () => {
     await expect(backend.resolveState(project)).resolves.toBe("running");
     await expect(backend.computeLastUpdated(project)).resolves.toBe(
       new Date(userMessageAt).toISOString(),
+    );
+  });
+
+  test("a persisted child user message after idle reactivates the direct child and root", async () => {
+    addSession("root");
+    addSession("child", "root");
+    const userMessageAt = now - 1_500;
+    addMessage("child", "child-user", "user", userMessageAt);
+    const backend = backendForStatus(
+      status("root", "session.idle", "stopped", now - 3_000) +
+        status("child", "session.idle", "stopped", now - 2_000),
+    );
+    const project = await projectFor(backend);
+
+    const state = await buildProjectState(backend, project);
+
+    expect(state.state).toBe("running");
+    expect(state.subagentCount).toBe(1);
+    expect(state.subagents).toHaveLength(1);
+    expect(state.subagents?.[0]).toMatchObject({
+      agentId: "child",
+      isActive: true,
+      lastMessageTime: new Date(userMessageAt).toISOString(),
+    });
+    expect(state.lastUpdated).toBe(new Date(userMessageAt).toISOString());
+  });
+
+  test("a persisted user message in a nested descendant promotes an idle root", async () => {
+    addSession("root");
+    addSession("middle", "root");
+    addSession("leaf", "middle");
+    const userMessageAt = now - 1_500;
+    addMessage("leaf", "leaf-user", "user", userMessageAt);
+    const backend = backendForStatus(
+      status("root", "session.idle", "stopped", now - 4_000) +
+        status("middle", "session.idle", "stopped", now - 3_000) +
+        status("leaf", "session.idle", "stopped", now - 2_000),
+    );
+
+    const state = await buildProjectState(backend, await projectFor(backend));
+
+    expect(state.state).toBe("running");
+    expect(state.lastUpdated).toBe(new Date(userMessageAt).toISOString());
+    expect(state.subagentCount).toBeUndefined();
+    expect(state.subagents?.[0]).toMatchObject({
+      agentId: "middle",
+      isActive: false,
+    });
+  });
+
+  test("an archived descendant user message does not promote an idle root", async () => {
+    addSession("root");
+    addSession("archived-child", "root", true);
+    addMessage("archived-child", "archived-child-user", "user", now - 1_500);
+    const backend = backendForStatus(
+      status("root", "session.idle", "stopped", now - 2_000),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "stopped",
+    );
+  });
+
+  test("persisted descendant activity stays isolated to its own root", async () => {
+    addSession("root");
+    addSession("other-root");
+    addSession("other-child", "other-root");
+    addMessage("other-child", "other-child-user", "user", now - 1_500);
+    const backend = backendForStatus(
+      status("root", "session.idle", "stopped", now - 3_000) +
+        status("other-root", "session.idle", "stopped", now - 3_000) +
+        status("other-child", "session.idle", "stopped", now - 2_000),
+    );
+
+    await expect(
+      backend.resolveState(await projectFor(backend, "root")),
+    ).resolves.toBe("stopped");
+    await expect(
+      backend.resolveState(await projectFor(backend, "other-root")),
+    ).resolves.toBe("running");
+  });
+
+  test("assistant-only recency after child idle does not reactivate the child", async () => {
+    addSession("root");
+    addSession("child", "root");
+    addMessage("child", "child-assistant", "assistant", now - 1_000);
+    const backend = backendForStatus(
+      status("root", "session.idle", "stopped", now - 3_000) +
+        status("child", "session.idle", "stopped", now - 2_000),
+    );
+    const project = await projectFor(backend);
+
+    await expect(backend.resolveState(project)).resolves.toBe("stopped");
+    await expect(backend.getSubagents(project)).resolves.toMatchObject([
+      { agentId: "child", isActive: false },
+    ]);
+  });
+
+  test.each([
+    ["error", "session.error", "error"],
+    ["closed", "session.deleted", "closed"],
+  ] as const)("root %s remains authoritative over an active persisted child generation", async (_name, event, state) => {
+    addSession("root");
+    addSession("child", "root");
+    addMessage("child", `child-user-${state}`, "user", now - 1_500);
+    const backend = backendForStatus(
+      status("root", event, state, now - 2_000) +
+        status("child", "session.idle", "stopped", now - 2_000),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      state,
+    );
+  });
+
+  test("missing message storage preserves graph-only child fallback", async () => {
+    addSession("root");
+    addSession("child", "root", false, now - 1_000);
+    run(db, "DROP TABLE message");
+    const backend = backendForStatus(
+      status("root", "session.idle", "stopped", now - 3_000),
+    );
+
+    await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
+      "running",
     );
   });
 

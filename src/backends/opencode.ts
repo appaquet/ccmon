@@ -223,8 +223,7 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
       snapshot.forest.directChildrenByRoot.get(projectInfo.sessionId) ?? [];
     return rows
       .map((row) => {
-        const evidence =
-          snapshot.evidenceBySession.get(row.id)?.lifecycle ?? null;
+        const evidence = snapshot.evidenceBySession.get(row.id) ?? null;
         return {
           row,
           evidence,
@@ -239,7 +238,7 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
         sessionName: row.title || undefined,
         isActive: decision === "live",
         lastMessageTime: new Date(
-          evidence?.timestampMs ?? row.time_updated,
+          getChildLastMessageMs(row, evidence),
         ).toISOString(),
         launchTime: new Date(row.time_created).toISOString(),
       }))
@@ -555,7 +554,7 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
           session.id,
           statusEventIndex.eventsBySession.get(session.id) ?? [],
           now,
-          session.parent_id === null ? session.latestUserMessageMs : null,
+          session.latestUserMessageMs,
         ),
       );
     }
@@ -576,14 +575,14 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
               blocker.timestampMs > recoveredGenerationStartMs),
         ),
       );
-      const hasLiveDirectChild = (
-        forest.directChildrenByRoot.get(root.id) ?? []
-      ).some((child) => {
-        if (child.time_archived !== null) return false;
+      const hasLiveDescendant = (
+        forest.descendantsByRoot.get(root.id) ?? []
+      ).some((descendant) => {
+        if (descendant.time_archived !== null) return false;
         return (
           this.getChildLifecycleDecision(
-            child,
-            evidenceBySession.get(child.id)?.lifecycle ?? null,
+            descendant,
+            evidenceBySession.get(descendant.id) ?? null,
             now,
             recoveredGenerationStartMs,
           ) === "live"
@@ -600,11 +599,11 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
       } else if (root.time_archived !== null) {
         state = "stopped";
       } else if (rootStatus === "stopped") {
-        state = hasLiveDirectChild ? "running" : "stopped";
+        state = hasLiveDescendant ? "running" : "stopped";
       } else if (now - root.time_updated < OPENCODE_ACTIVE_THRESHOLD_MS) {
         state = "running";
       } else {
-        state = hasLiveDirectChild ? "running" : "stopped";
+        state = hasLiveDescendant ? "running" : "stopped";
       }
 
       const terminalTimestampMs =
@@ -617,7 +616,9 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
           const activity = evidenceBySession.get(session.id)?.latestActivityMs;
           return Math.max(
             latest,
-            session.time_updated,
+            session.id === root.id
+              ? session.time_updated
+              : Number.NEGATIVE_INFINITY,
             activity ?? Number.NEGATIVE_INFINITY,
           );
         }, root.time_updated);
@@ -657,26 +658,36 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
 
   private getChildLifecycleDecision(
     row: ChildLifecycleRow,
-    evidence: ChildLifecycleEvidence | null,
+    evidence: SessionEvidence | null,
     now: number,
     generationStartMs: number | null = null,
   ): ChildLifecycleDecision {
+    const lifecycle = evidence?.lifecycle ?? null;
     const latestEvidenceMs =
-      evidence?.timestampMs ?? Math.max(row.time_created, row.time_updated);
+      evidence?.latestActivityMs ??
+      lifecycle?.timestampMs ??
+      Math.max(row.time_created, row.time_updated);
     if (generationStartMs !== null && latestEvidenceMs <= generationStartMs) {
       return "excluded";
     }
-    if (evidence === null) {
+    if (evidence?.mode === "hard_terminal" || evidence?.mode === "idle") {
+      if (lifecycle === null) return "excluded";
+      return lifecycle.timestampMs >= now - SUBAGENT_EXPIRY_MS
+        ? "terminal_retained"
+        : "excluded";
+    }
+    if (evidence?.state !== null) return "live";
+    if (lifecycle === null) {
       return latestEvidenceMs > now - SUBAGENT_LIFECYCLE_TIMEOUT_MS
         ? "live"
         : "excluded";
     }
-    if (evidence.isTerminal) {
-      return evidence.timestampMs >= now - SUBAGENT_EXPIRY_MS
+    if (lifecycle.isTerminal) {
+      return lifecycle.timestampMs >= now - SUBAGENT_EXPIRY_MS
         ? "terminal_retained"
         : "excluded";
     }
-    return this.isLiveChildLifecycleEvidence(evidence, now)
+    return this.isLiveChildLifecycleEvidence(lifecycle, now)
       ? "live"
       : "excluded";
   }
@@ -706,20 +717,35 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
     }
 
     const rootsById = new Map<string, ForestSession>();
-    const descendantsByRoot = new Map<string, ForestSession[]>();
-    const directChildrenByRoot = new Map<string, ForestSession[]>();
+    const childrenByParent = new Map<string, ForestSession[]>();
     for (const row of rows) {
       if (row.id === row.root_id) {
         rootsById.set(row.id, row);
         continue;
       }
-      const descendants = descendantsByRoot.get(row.root_id);
-      if (descendants) descendants.push(row);
-      else descendantsByRoot.set(row.root_id, [row]);
-      if (row.parent_id === row.root_id) {
-        const directChildren = directChildrenByRoot.get(row.root_id);
-        if (directChildren) directChildren.push(row);
-        else directChildrenByRoot.set(row.root_id, [row]);
+      if (row.parent_id !== null) {
+        const children = childrenByParent.get(row.parent_id);
+        if (children) children.push(row);
+        else childrenByParent.set(row.parent_id, [row]);
+      }
+    }
+    const descendantsByRoot = new Map<string, ForestSession[]>();
+    const directChildrenByRoot = new Map<string, ForestSession[]>();
+    for (const root of rootsById.values()) {
+      const descendants: ForestSession[] = [];
+      const directChildren: ForestSession[] = [];
+      const collectDescendants = (parentId: string, isDirectChild: boolean) => {
+        for (const child of childrenByParent.get(parentId) ?? []) {
+          if (child.time_archived !== null) continue;
+          descendants.push(child);
+          if (isDirectChild) directChildren.push(child);
+          collectDescendants(child.id, false);
+        }
+      };
+      collectDescendants(root.id, true);
+      if (descendants.length > 0) descendantsByRoot.set(root.id, descendants);
+      if (directChildren.length > 0) {
+        directChildrenByRoot.set(root.id, directChildren);
       }
     }
     return { rootsById, descendantsByRoot, directChildrenByRoot };
@@ -759,7 +785,6 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
             SELECT m.session_id, MAX(m.time_created)
             FROM message m
             JOIN forest ON forest.session_id = m.session_id
-                         AND forest.root_id = forest.session_id
             WHERE CASE WHEN json_valid(m.data)
               THEN json_extract(m.data, '$.role')
             END = 'user'
@@ -808,6 +833,16 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
     }
     throw new Error("OpenCode session table requires an index on parent_id");
   }
+}
+
+function getChildLastMessageMs(
+  row: ChildLifecycleRow,
+  evidence: SessionEvidence | null,
+): number {
+  if (evidence?.mode === "active" && evidence.latestActivityMs !== null) {
+    return evidence.latestActivityMs;
+  }
+  return evidence?.lifecycle?.timestampMs ?? row.time_updated;
 }
 
 function readTail(
