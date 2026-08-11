@@ -59,6 +59,8 @@ type ForestSession = ChildLifecycleRow & {
   directory: string;
   projectName: string | null;
   latestUserMessageMs: number | null;
+  latestSqliteActivityMs: number | null;
+  latestActiveToolMs: number | null;
 };
 
 type ForestSnapshot = {
@@ -143,6 +145,8 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
   private statusEventIndex: StatusEventIndex | null = null;
   private messageTableAvailable: boolean | null = null;
   private messageTableSchemaVersion: number | null = null;
+  private partTableAvailable: boolean | null = null;
+  private partTableSchemaVersion: number | null = null;
   private collectionByProject = new WeakMap<
     OpencodeProjectInfo,
     CollectionSnapshot
@@ -555,6 +559,8 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
           statusEventIndex.eventsBySession.get(session.id) ?? [],
           now,
           session.latestUserMessageMs,
+          session.latestSqliteActivityMs,
+          session.latestActiveToolMs,
         ),
       );
     }
@@ -696,23 +702,39 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
   private loadForestSnapshot(): ForestSnapshot {
     let rows: Array<ForestSession & { root_id: string }>;
     const includePersistedUserMessages = this.shouldLoadPersistedUserMessages();
+    const includePartActivity =
+      includePersistedUserMessages && this.shouldLoadPartActivity();
     try {
-      rows = this.loadForestRows(includePersistedUserMessages);
+      rows = this.loadForestRows(
+        includePersistedUserMessages,
+        includePartActivity,
+      );
       if (includePersistedUserMessages) {
         this.messageTableAvailable = true;
         this.messageTableSchemaVersion = null;
       }
     } catch (error) {
-      if (!isMissingMessageTable(error)) throw error;
-      const schemaVersion = this.readSchemaVersion();
-      if (this.messageTableExists()) {
-        rows = this.loadForestRows(true);
+      if (isMissingPartTable(error) && includePersistedUserMessages) {
+        const partTable = this.readPartTableSnapshot();
+        rows = this.loadForestRows(true, partTable.exists);
         this.messageTableAvailable = true;
         this.messageTableSchemaVersion = null;
+        this.partTableAvailable = partTable.exists;
+        this.partTableSchemaVersion = partTable.exists
+          ? null
+          : partTable.schemaVersion;
       } else {
-        this.messageTableAvailable = false;
-        this.messageTableSchemaVersion = schemaVersion;
-        rows = this.loadForestRows(false);
+        if (!isMissingMessageTable(error)) throw error;
+        const schemaVersion = this.readSchemaVersion();
+        if (this.messageTableExists()) {
+          rows = this.loadForestRows(true, this.shouldLoadPartActivity());
+          this.messageTableAvailable = true;
+          this.messageTableSchemaVersion = null;
+        } else {
+          this.messageTableAvailable = false;
+          this.messageTableSchemaVersion = schemaVersion;
+          rows = this.loadForestRows(false, false);
+        }
       }
     }
 
@@ -760,11 +782,40 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
     return true;
   }
 
+  private shouldLoadPartActivity(): boolean {
+    if (this.partTableAvailable !== false) return true;
+    const schemaVersion = this.readSchemaVersion();
+    if (schemaVersion === this.partTableSchemaVersion) return false;
+    this.partTableAvailable = null;
+    this.partTableSchemaVersion = null;
+    return true;
+  }
+
   private readSchemaVersion(): number {
     const row = this.db.prepare("PRAGMA schema_version").get() as {
       schema_version: number;
     };
     return row.schema_version;
+  }
+
+  private readPartTableSnapshot(): {
+    exists: boolean;
+    schemaVersion: number;
+  } {
+    const row = this.db
+      .prepare(
+        `SELECT
+           (SELECT schema_version FROM pragma_schema_version) AS schemaVersion,
+           EXISTS(
+             SELECT 1 FROM sqlite_master
+             WHERE type = 'table' AND name = 'part'
+           ) AS partTableExists`,
+      )
+      .get() as { schemaVersion: number; partTableExists: number };
+    return {
+      exists: row.partTableExists !== 0,
+      schemaVersion: row.schemaVersion,
+    };
   }
 
   private messageTableExists(): boolean {
@@ -779,6 +830,7 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
 
   private loadForestRows(
     includePersistedUserMessages: boolean,
+    includePartActivity: boolean,
   ): Array<ForestSession & { root_id: string }> {
     const userMessageCte = includePersistedUserMessages
       ? `, root_user_messages(session_id, latestUserMessageMs) AS (
@@ -797,6 +849,46 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
     const userMessageJoin = includePersistedUserMessages
       ? "LEFT JOIN root_user_messages ON root_user_messages.session_id = s.id"
       : "";
+    const partActivityRows = includePartActivity
+      ? `UNION ALL
+              SELECT p.session_id, p.time_updated, p.data, 'part' AS kind
+              FROM part p
+              JOIN forest ON forest.session_id = p.session_id`
+      : "";
+    const sqliteActivityCte = includePersistedUserMessages
+      ? `, sqlite_activity(session_id, latestSqliteActivityMs, latestActiveToolMs) AS (
+            SELECT activity.session_id,
+                   MAX(activity.time_updated),
+                   MAX(CASE
+                     WHEN activity.kind = 'part'
+                       AND CASE WHEN json_valid(activity.data)
+                         THEN json_extract(activity.data, '$.type')
+                       END = 'tool'
+                       AND COALESCE(
+                         CASE WHEN json_valid(activity.data)
+                           THEN json_extract(activity.data, '$.state')
+                         END,
+                         CASE WHEN json_valid(activity.data)
+                           THEN json_extract(activity.data, '$.status')
+                         END
+                       ) IN ('pending', 'running')
+                     THEN activity.time_updated
+                   END)
+            FROM (
+              SELECT m.session_id, m.time_updated, NULL AS data, 'message' AS kind
+              FROM message m
+              JOIN forest ON forest.session_id = m.session_id
+              ${partActivityRows}
+            ) activity
+            GROUP BY activity.session_id
+          )`
+      : "";
+    const sqliteActivityColumns = includePersistedUserMessages
+      ? "sqlite_activity.latestSqliteActivityMs, sqlite_activity.latestActiveToolMs"
+      : "NULL, NULL";
+    const sqliteActivityJoin = includePersistedUserMessages
+      ? "LEFT JOIN sqlite_activity ON sqlite_activity.session_id = s.id"
+      : "";
 
     return this.db
       .prepare(
@@ -807,14 +899,16 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
              SELECT forest.root_id, child.id
              FROM forest
              JOIN session child ON child.parent_id = forest.session_id
-          )${userMessageCte}
-          SELECT forest.root_id, s.id, s.parent_id, s.title, s.directory,
-                 p.name AS projectName, s.time_created, s.time_updated, s.time_archived,
-                 ${latestUserMessageColumn} AS latestUserMessageMs
-          FROM forest
-          JOIN session s ON s.id = forest.session_id
-          JOIN project p ON p.id = s.project_id
-          ${userMessageJoin}`,
+          )${userMessageCte}${sqliteActivityCte}
+           SELECT forest.root_id, s.id, s.parent_id, s.title, s.directory,
+                  p.name AS projectName, s.time_created, s.time_updated, s.time_archived,
+                  ${latestUserMessageColumn} AS latestUserMessageMs,
+                  ${sqliteActivityColumns}
+           FROM forest
+           JOIN session s ON s.id = forest.session_id
+           JOIN project p ON p.id = s.project_id
+           ${userMessageJoin}
+           ${sqliteActivityJoin}`,
       )
       .all() as Array<ForestSession & { root_id: string }>;
   }
@@ -876,11 +970,17 @@ function isMissingMessageTable(error: unknown): boolean {
   return error instanceof Error && /no such table: message/.test(error.message);
 }
 
+function isMissingPartTable(error: unknown): boolean {
+  return error instanceof Error && /no such table: part/.test(error.message);
+}
+
 function buildSessionEvidence(
   sessionId: string,
   events: StatusEvent[],
   now: number,
   latestUserMessageMs: number | null,
+  latestSqliteActivityMs: number | null,
+  latestActiveToolMs: number | null,
 ): SessionEvidence {
   const blockers = new Map<string, Blocker>();
   let latestActivityMs: number | null = null;
@@ -898,6 +998,9 @@ function buildSessionEvidence(
     const isReactivation =
       isPersistedUserMessage ||
       (rawEvent !== null && isGenerationReactivation(rawEvent));
+    const isIdleReactivation =
+      isPersistedUserMessage ||
+      (rawEvent !== null && isIdleReactivationEvidence(rawEvent));
     const isHardTerminal =
       rawEvent !== null && isHardTerminalEvidence(rawEvent);
 
@@ -919,7 +1022,7 @@ function buildSessionEvidence(
         terminalTimestampMs = null;
         recoveredGenerationStartMs = timestampMs;
       }
-    } else if (mode === "idle" && !isReactivation && !isHardTerminal) {
+    } else if (mode === "idle" && !isIdleReactivation && !isHardTerminal) {
       continue;
     } else if (mode === "idle") {
       mode = "active";
@@ -989,6 +1092,19 @@ function buildSessionEvidence(
     }
   }
 
+  const hasFreshSqliteActivity = isFreshSqliteActivity(
+    latestSqliteActivityMs,
+    now,
+  );
+  const hasFreshActiveTool = isFreshSqliteActivity(latestActiveToolMs, now);
+  if (mode === "active" && hasFreshSqliteActivity) {
+    latestActivityMs = Math.max(
+      latestActivityMs ?? Number.NEGATIVE_INFINITY,
+      latestSqliteActivityMs,
+    );
+    if (state === null || hasFreshActiveTool) state = "running";
+  }
+
   return {
     mode,
     state:
@@ -1050,6 +1166,26 @@ function isGenerationReactivation(event: StatusEvent): boolean {
     event.event === "chat.message" ||
     event.event === "UserPromptSubmit" ||
     event.event === "session.created"
+  );
+}
+
+function isIdleReactivationEvidence(event: StatusEvent): boolean {
+  return (
+    isGenerationReactivation(event) ||
+    event.event === "session.status" ||
+    event.event === "message.part.updated"
+  );
+}
+
+function isFreshSqliteActivity(
+  timestampMs: number | null,
+  now: number,
+): timestampMs is number {
+  return (
+    timestampMs !== null &&
+    Number.isFinite(timestampMs) &&
+    timestampMs <= now &&
+    now - timestampMs < OPENCODE_ACTIVE_THRESHOLD_MS
   );
 }
 

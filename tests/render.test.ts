@@ -378,8 +378,6 @@ function addBackendAndGetDisplayMap(
 
 function loadCreateCard(): (
   project: Record<string, unknown>,
-  flashStopped: boolean,
-  flashNotification: boolean,
   displayName: string | undefined,
   key: string,
 ) => { className: string; innerHTML: string } {
@@ -408,8 +406,6 @@ function loadCreateCard(): (
     document: { createElement: () => CardElement };
     createCard?: (
       project: Record<string, unknown>,
-      flashStopped: boolean,
-      flashNotification: boolean,
       displayName: string | undefined,
       key: string,
     ) => CardElement;
@@ -434,7 +430,6 @@ function loadDismissalHarness(): {
   };
   dismissalKey: (project: Record<string, unknown>) => string;
   dismissedCards: Map<string, string>;
-  flashNotification: Map<string, number>;
   gridChildren: () => Array<{
     className: string;
     innerHTML: string;
@@ -489,7 +484,6 @@ function loadDismissalHarness(): {
     createCard?: (project: Record<string, unknown>) => FakeCard;
     dismissalKey?: (project: Record<string, unknown>) => string;
     dismissedCards?: Map<string, string>;
-    flashNotification?: Map<string, number>;
     render?: (projects: Array<Record<string, unknown>>) => void;
   };
 
@@ -500,7 +494,6 @@ function loadDismissalHarness(): {
     !context.createCard ||
     !context.dismissalKey ||
     !context.dismissedCards ||
-    !context.flashNotification ||
     !context.render
   ) {
     throw new Error("dismissal harness not loaded from browser sources");
@@ -510,7 +503,6 @@ function loadDismissalHarness(): {
     createCard: context.createCard,
     dismissalKey: context.dismissalKey,
     dismissedCards: context.dismissedCards,
-    flashNotification: context.flashNotification,
     gridChildren: () => gridChildren,
     render: context.render,
   };
@@ -730,8 +722,6 @@ describe("render same-repo sibling identity", () => {
         source: "opencode",
         state: "running",
       },
-      false,
-      false,
       undefined,
       "build-host::ses_1234567890abcdef",
     );
@@ -768,8 +758,6 @@ describe("render same-repo sibling identity", () => {
           { status: "deleted" },
         ],
       },
-      false,
-      false,
       undefined,
       "build-host::ses_main",
     );
@@ -814,8 +802,6 @@ describe("render same-repo sibling identity", () => {
         source: "opencode",
         state: "running",
       },
-      false,
-      false,
       undefined,
       "ci-mac-mini::ses_dotfiles",
     );
@@ -843,8 +829,6 @@ describe("render same-repo sibling identity", () => {
         source: "opencode",
         state: "running",
       },
-      false,
-      false,
       undefined,
       "ci.local::ses_dotfiles",
     );
@@ -864,15 +848,11 @@ describe("render same-repo sibling identity", () => {
 
     const hostA = createCard(
       { ...project, _hostname: "host-a" },
-      false,
-      false,
       "host-a:ccmon",
       "host-a::ses_a",
     );
     const hostB = createCard(
       { ...project, _hostname: "host-b" },
-      false,
-      false,
       "host-b:ccmon",
       "host-b::ses_b",
     );
@@ -1058,7 +1038,7 @@ describe("transient card dismissal", () => {
     );
   });
 
-  test("updates notification bookkeeping for hidden cards before filtering them", () => {
+  test("does not flash cards when notification timestamps change", () => {
     const harness = loadDismissalHarness();
     const project = {
       _backendKey: "host-a",
@@ -1070,7 +1050,6 @@ describe("transient card dismissal", () => {
     };
 
     harness.render([project]);
-    harness.dismissedCards.set(harness.dismissalKey(project), "running");
     harness.render([
       {
         ...project,
@@ -1078,7 +1057,7 @@ describe("transient card dismissal", () => {
       },
     ]);
 
-    expect(harness.flashNotification.has("host-a::session-one")).toBe(true);
+    expect(harness.gridChildren()[0]?.className).toBe("card");
   });
 
   test("renders the established empty state when every incoming card is hidden", () => {
@@ -1156,7 +1135,7 @@ describe("transient card dismissal", () => {
     ).toEqual(["session-newest", "session-oldest"]);
   });
 
-  test("keeps flash bookkeeping for hidden cards through stopped, waiting, and error transitions", () => {
+  test("keeps red attention bookkeeping for hidden cards through state transitions", () => {
     const harness = loadDismissalHarness();
     const running = {
       _backendKey: "host-a",
@@ -1177,9 +1156,7 @@ describe("transient card dismissal", () => {
     dismissAndRenderSameState(running);
     const stopped = { ...running, state: "stopped" };
     harness.render([stopped]);
-    expect(harness.gridChildren()[0]?.className).toContain(
-      "card-flashing-stopped",
-    );
+    expect(harness.gridChildren()[0]?.className).toBe("card");
 
     dismissAndRenderSameState(stopped);
     const waiting = { ...running, state: "waiting_for_permission" };
@@ -1206,8 +1183,6 @@ describe("transient card dismissal", () => {
         source: "opencode",
         state: "running",
       },
-      false,
-      false,
       undefined,
       "host-a::session-one",
     );
@@ -1237,6 +1212,30 @@ describe("transient card dismissal", () => {
     );
     expect(dashboardSource).toContain("padding: 14px 16px;");
     expect(dashboardSource).toContain("gap: 14px;");
+  });
+
+  test("limits CSS animation to red attention cards", () => {
+    expect(dashboardSource).not.toMatch(/\.dot-running\s*\{[^}]*animation\s*:/);
+    expect(dashboardSource).not.toMatch(
+      /\.agent-dot-active\s*\{[^}]*animation\s*:/,
+    );
+    expect(dashboardSource).toContain(".card-flashing-waiting");
+    expect(dashboardSource).toContain("animation: flash-waiting");
+    expect(dashboardSource).toContain(".card-flashing-error");
+    expect(dashboardSource).toContain("animation: flash-error");
+    expect(renderSource).toContain("flashWaitingDismissed.add(key)");
+    expect(renderSource).toContain(
+      "card.classList.remove('card-flashing-waiting')",
+    );
+    expect(renderSource).toContain("flashErrorDismissed.add(key)");
+    expect(renderSource).toContain(
+      "card.classList.remove('card-flashing-error')",
+    );
+    expect(dashboardSource).not.toContain("@keyframes pulse-dot");
+    expect(dashboardSource).not.toContain("@keyframes flash-stopped");
+    expect(dashboardSource).not.toContain("@keyframes flash-notification");
+    expect(dashboardSource).not.toMatch(/\.ctx-fill\s*\{[^}]*transition\s*:/);
+    expect(dashboardSource).toContain("transition: color 0.2s;");
   });
 });
 

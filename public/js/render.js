@@ -106,7 +106,7 @@ function visibleProjects(projects) {
   });
 }
 
-function createCard(proj, flashStopped, flashNotification, displayName, key) {
+function createCard(proj, displayName, key) {
   var card = document.createElement('div');
   var header = cardHeaderData(proj, displayName);
   var s = header.state;
@@ -114,8 +114,6 @@ function createCard(proj, flashStopped, flashNotification, displayName, key) {
   var isErrorFlash = s === 'error' && !flashErrorDismissed.has(key);
   var flashClasses = isWaitingFlash ? ' card-flashing-waiting'
     : isErrorFlash ? ' card-flashing-error'
-    : flashStopped ? ' card-flashing-stopped'
-    : flashNotification ? ' card-flashing-notification'
     : '';
   card.className = 'card' + flashClasses;
 
@@ -197,9 +195,6 @@ function createCard(proj, flashStopped, flashNotification, displayName, key) {
 }
 
 var prevState = new Map();
-var prevNotificationTimestamp = new Map();
-var flashStopped = new Map();
-var flashNotification = new Map();
 var flashWaitingDismissed = new Set();
 var flashErrorDismissed = new Set();
 var dismissedCards = new Map();
@@ -265,15 +260,10 @@ function render(projects) {
   var all = projects.slice();
   lastRenderedProjects = all;
 
-  var now = Date.now();
-  var flashWindow = 5000;
   for (var i = 0; i < all.length; i++) {
     var proj = all[i];
     var key = projKey(proj);
     var prev = prevState.get(key);
-    if (prev === 'running' && proj.state === 'stopped') {
-      flashStopped.set(key, now);
-    }
     if (prev === 'waiting_for_permission' && proj.state !== 'waiting_for_permission') {
       flashWaitingDismissed.delete(key);
     }
@@ -281,15 +271,6 @@ function render(projects) {
       flashErrorDismissed.delete(key);
     }
     prevState.set(key, proj.state);
-
-    var prevTs = prevNotificationTimestamp.get(key);
-    var curTs = proj.notificationTimestamp;
-    if (prevTs !== undefined && curTs && curTs !== prevTs) {
-      flashNotification.set(key, now);
-    }
-    if (curTs !== undefined) {
-      prevNotificationTimestamp.set(key, curTs);
-    }
   }
 
   var currentKeys = {};
@@ -298,9 +279,6 @@ function render(projects) {
   }
 
   pruneStale(prevState, currentKeys);
-  pruneStale(prevNotificationTimestamp, currentKeys);
-  pruneStale(flashStopped, currentKeys, function (_, ts) { return now - ts >= flashWindow; });
-  pruneStale(flashNotification, currentKeys, function (_, ts) { return now - ts >= flashWindow; });
   pruneStale(flashWaitingDismissed, currentKeys);
   pruneStale(flashErrorDismissed, currentKeys);
 
@@ -339,8 +317,6 @@ function render(projects) {
     var displayName = crossServerDisplayName(proj, crossServerCollision);
     grid.appendChild(createCard(
       proj,
-      flashStopped.has(key),
-      flashNotification.has(key),
       displayName,
       key,
     ));

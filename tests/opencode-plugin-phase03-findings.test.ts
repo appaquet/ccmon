@@ -308,7 +308,7 @@ describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
       },
     });
     expect(vi.getTimerCount()).toBe(80);
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(15_000);
 
     pressuredRecords = records(statusPath).filter(
       (record) => record.session_id === pressuredSession,
@@ -363,7 +363,7 @@ describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
         input: { callID: `call-${index}` },
       }),
     );
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(15_000);
     const blocker = plugin.event({
       event: {
         type: "permission.asked",

@@ -535,6 +535,312 @@ describe("OpencodeBackend — core", () => {
   });
 });
 
+describe("OpencodeBackend — SQLite activity fallback", () => {
+  const now = Date.UTC(2026, 6, 31, 12, 0, 0);
+  let db: DB;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(now));
+    db = new DatabaseSync(":memory:");
+    createSchema(db);
+    tmpDir = mkdtempSync(join(tmpdir(), "ccmon-sqlite-activity-"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function insertRoot(sessionId: string, timeUpdated = now - 5 * 60_000): void {
+    run(db, "INSERT OR IGNORE INTO project (id, name, root) VALUES (?, ?, ?)", [
+      "proj-sqlite-activity",
+      "sqliteactivity",
+      "/home/user/sqliteactivity",
+    ]);
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        sessionId,
+        "SQLite activity",
+        "/home/user/sqliteactivity",
+        now - 10 * 60_000,
+        timeUpdated,
+        "proj-sqlite-activity",
+      ],
+    );
+  }
+
+  function insertPart(
+    sessionId: string,
+    partId: string,
+    timeUpdated: number,
+    data: Record<string, unknown>,
+  ): void {
+    const messageId = `message-${partId}`;
+    run(
+      db,
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+      [
+        messageId,
+        sessionId,
+        now - 10 * 60_000,
+        timeUpdated,
+        JSON.stringify({ role: "assistant" }),
+      ],
+    );
+    run(
+      db,
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        partId,
+        messageId,
+        sessionId,
+        now - 10 * 60_000,
+        timeUpdated,
+        JSON.stringify(data),
+      ],
+    );
+  }
+
+  function backendForStatus(records = ""): OpencodeBackend {
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    if (records) writeFileSync(statusPath, records);
+    return new OpencodeBackend(db, 5_000, statusPath);
+  }
+
+  function statusRecord(
+    sessionId: string,
+    event: string,
+    state: SessionState,
+    timestamp: number,
+  ): string {
+    return `${JSON.stringify({
+      event,
+      state,
+      timestamp: new Date(timestamp).toISOString(),
+      session_id: sessionId,
+      working_dir: "/home/user/sqliteactivity",
+    })}\n`;
+  }
+
+  test("keeps the captured stale session running from fresh same-session streaming activity", async () => {
+    insertRoot("captured");
+    run(
+      db,
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+      [
+        "message-captured",
+        "captured",
+        now - 10 * 60_000,
+        now - 20_000,
+        JSON.stringify({ role: "assistant" }),
+      ],
+    );
+    run(
+      db,
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "part-captured",
+        "message-captured",
+        "captured",
+        now - 10 * 60_000,
+        now - 10_000,
+        JSON.stringify({ type: "tool", tool: "apply_patch", state: "pending" }),
+      ],
+    );
+    const backend = backendForStatus(
+      statusRecord("captured", "question.replied", "running", now - 5 * 60_000),
+    );
+    const project = (await backend.scanProjects())[0];
+
+    await expect(backend.resolveState(project)).resolves.toBe("running");
+    await expect(backend.computeLastUpdated(project)).resolves.toBe(
+      new Date(now - 10_000).toISOString(),
+    );
+  });
+
+  test("keeps fresh message activity when the older schema has no part table", async () => {
+    insertRoot("message-only");
+    run(db, "DROP TABLE part");
+    run(
+      db,
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+      [
+        "message-only-activity",
+        "message-only",
+        now - 10 * 60_000,
+        now - 10_000,
+        JSON.stringify({ role: "assistant" }),
+      ],
+    );
+    const backend = backendForStatus();
+    const project = (await backend.scanProjects())[0];
+
+    await expect(backend.resolveState(project)).resolves.toBe("running");
+    await expect(backend.computeLastUpdated(project)).resolves.toBe(
+      new Date(now - 10_000).toISOString(),
+    );
+  });
+
+  test("rechecks a part table created during the missing-table fallback", async () => {
+    insertRoot("part-race");
+    run(
+      db,
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+      [
+        "message-part-race",
+        "part-race",
+        now - 10 * 60_000,
+        now - 5 * 60_000,
+        JSON.stringify({ role: "assistant" }),
+      ],
+    );
+    run(db, "DROP TABLE part");
+    const backend = backendForStatus();
+    const originalPrepare = db.prepare.bind(db);
+    let createdPartTable = false;
+    const prepareSpy = vi.spyOn(db, "prepare").mockImplementation((sql) => {
+      if (
+        !createdPartTable &&
+        sql.includes("WITH RECURSIVE forest") &&
+        sql.includes("FROM part p")
+      ) {
+        try {
+          return originalPrepare(sql);
+        } catch (error) {
+          originalPrepare(
+            "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL)",
+          ).run();
+          createdPartTable = true;
+          throw error;
+        }
+      }
+      return originalPrepare(sql);
+    });
+
+    try {
+      const firstProject = (await backend.scanProjects())[0];
+      await expect(backend.resolveState(firstProject)).resolves.toBe("stopped");
+      run(
+        db,
+        "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+        [
+          "part-race-activity",
+          "message-part-race",
+          "part-race",
+          now - 10_000,
+          now - 10_000,
+          JSON.stringify({ type: "text", text: "fresh" }),
+        ],
+      );
+      const secondProject = (await backend.scanProjects())[0];
+
+      await expect(backend.resolveState(secondProject)).resolves.toBe(
+        "running",
+      );
+    } finally {
+      prepareSpy.mockRestore();
+    }
+  });
+
+  test("accepts only valid activity strictly inside the 30-second threshold", async () => {
+    insertRoot("fresh");
+    insertPart("fresh", "part-fresh", now - OPENCODE_ACTIVE_THRESHOLD_MS + 1, {
+      type: "tool",
+      tool: "write",
+      status: "running",
+    });
+    insertRoot("threshold");
+    insertPart(
+      "threshold",
+      "part-threshold",
+      now - OPENCODE_ACTIVE_THRESHOLD_MS,
+      {
+        type: "text",
+        text: "at threshold",
+      },
+    );
+    insertRoot("future");
+    insertPart("future", "part-future", now + 1, {
+      type: "text",
+      text: "from the future",
+    });
+    const backend = backendForStatus();
+    const projects = await backend.scanProjects();
+    const fresh = projects.find((project) => project.sessionId === "fresh");
+    const threshold = projects.find(
+      (project) => project.sessionId === "threshold",
+    );
+    const future = projects.find((project) => project.sessionId === "future");
+    if (!fresh || !threshold || !future) {
+      throw new Error("expected all SQLite activity fixtures to be scanned");
+    }
+
+    await expect(backend.resolveState(fresh)).resolves.toBe("running");
+    await expect(backend.resolveState(threshold)).resolves.toBe("stopped");
+    await expect(backend.resolveState(future)).resolves.toBe("stopped");
+  });
+
+  test("expires a lone busy status record at the activity threshold", async () => {
+    insertRoot("stale-busy");
+    const backend = backendForStatus(
+      statusRecord(
+        "stale-busy",
+        "session.status",
+        "running",
+        now - OPENCODE_ACTIVE_THRESHOLD_MS,
+      ),
+    );
+    const project = (await backend.scanProjects())[0];
+
+    await expect(backend.resolveState(project)).resolves.toBe("stopped");
+  });
+
+  test("does not let SQLite activity override explicit terminal or archived sessions", async () => {
+    insertRoot("idle");
+    insertPart("idle", "part-idle", now - 1_000, {
+      type: "text",
+      text: "active",
+    });
+    insertRoot("errored");
+    insertPart("errored", "part-error", now - 1_000, {
+      type: "text",
+      text: "active",
+    });
+    insertRoot("closed");
+    insertPart("closed", "part-closed", now - 1_000, {
+      type: "text",
+      text: "active",
+    });
+    insertRoot("archived", now - 1_000);
+    run(db, "UPDATE session SET time_archived = ? WHERE id = ?", [
+      now,
+      "archived",
+    ]);
+    const backend = backendForStatus(
+      statusRecord("idle", "session.idle", "stopped", now - 2_000) +
+        statusRecord("errored", "session.error", "error", now - 2_000) +
+        statusRecord("closed", "session.deleted", "closed", now - 2_000),
+    );
+    const projects = await backend.scanProjects();
+    const idle = projects.find((project) => project.sessionId === "idle");
+    const errored = projects.find((project) => project.sessionId === "errored");
+    const closed = projects.find((project) => project.sessionId === "closed");
+    if (!idle || !errored || !closed) {
+      throw new Error("expected all terminal fixtures to be scanned");
+    }
+
+    await expect(backend.resolveState(idle)).resolves.toBe("stopped");
+    await expect(backend.resolveState(errored)).resolves.toBe("error");
+    await expect(backend.resolveState(closed)).resolves.toBe("closed");
+    expect(
+      projects.find((project) => project.sessionId === "archived"),
+    ).toBeUndefined();
+  });
+});
+
 describe("OpencodeBackend — enrichment", () => {
   let db: DB;
   let backend: OpencodeBackend;

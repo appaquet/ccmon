@@ -381,7 +381,7 @@
     .badge-waiting  { background: rgba(239,68,68,0.12);  color: var(--waiting); }
     .badge-closed   { background: rgba(107,114,128,0.12); color: var(--closed); border: 1px solid rgba(107,114,128,0.18); }
 
-    .dot-running  { background: var(--running); animation: pulse-dot 1.8s ease-in-out infinite; }
+    .dot-running  { background: var(--running); }
     .dot-stopped  { background: var(--stopped); }
     .dot-waiting  { background: var(--waiting); }
     .dot-closed   { background: var(--closed); }
@@ -411,11 +411,6 @@
       font-size: 15px;
     }
 
-    @keyframes pulse-dot {
-      0%, 100% { opacity: 1;    transform: scale(1); }
-      50%       { opacity: 0.35; transform: scale(0.75); }
-    }
-
     @keyframes flash-waiting {
       0%, 100% { border-color: var(--border); }
       50%       { border-color: var(--waiting); box-shadow: 0 0 8px rgba(239,68,68,0.4); }
@@ -432,22 +427,6 @@
     .card-flashing-error {
       animation: flash-error 1s ease-in-out infinite;
       cursor: pointer;
-    }
-
-    @keyframes flash-stopped {
-      0%, 100% { border-color: var(--border); }
-      50%       { border-color: var(--stopped); box-shadow: 0 0 12px rgba(249,115,22,0.5); }
-    }
-    .card-flashing-stopped {
-      animation: flash-stopped 0.5s ease-in-out 10;
-    }
-
-    @keyframes flash-notification {
-      0%, 100% { border-color: var(--border); }
-      50%       { border-color: #f59e0b; box-shadow: 0 0 10px rgba(245,158,11,0.45); }
-    }
-    .card-flashing-notification {
-      animation: flash-notification 0.5s ease-in-out 10;
     }
 
     /* Context window progress bar */
@@ -473,7 +452,6 @@
       height: 100%;
       border-radius: 4px;
       background: var(--running);
-      transition: width 0.3s ease;
     }
     .ctx-fill-warn  { background: #f59e0b; }
     .ctx-fill-danger { background: var(--waiting); }
@@ -511,7 +489,6 @@
     }
     .agent-dot-active {
       background: var(--running);
-      animation: pulse-dot 1.8s ease-in-out infinite;
     }
     .agent-dot-idle {
       background: var(--muted);

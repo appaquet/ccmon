@@ -38,6 +38,7 @@ interface EventProperties {
   id?: string;
   info?: SessionInfo;
   part?: Record<string, unknown>;
+  status?: string;
   error?: unknown;
 }
 
@@ -93,7 +94,7 @@ type StatusRecord = {
   blocker_kind?: BlockerKind;
 };
 
-const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
 const SESSION_CACHE_LIMIT = 1_024;
 const TERMINAL_BARRIER_LIMIT = 1_024;
 const LEGACY_REQUEST_SLOT = "__ccmon_legacy_request__";
@@ -105,6 +106,7 @@ export async function ccmonPlugin(context: PluginContext) {
   const { client, directory } = context;
   const sessionCwdMap = new Map<string, string>();
   const lastWrittenState = new Map<string, SessionState>();
+  const lastForcedLivenessBySession = new Map<string, number>();
   const lifecycleModes = new Map<string, LifecycleMode>();
   const inFlightBySession = new Map<string, InFlightSession>();
   let writeQueue: Promise<void> = Promise.resolve();
@@ -162,6 +164,9 @@ export async function ccmonPlugin(context: PluginContext) {
 
     if (typeof props?.sessionID === "string") return props.sessionID;
     if (typeof props?.sessionId === "string") return props.sessionId;
+    const part = props?.part as Record<string, unknown> | undefined;
+    if (typeof part?.sessionID === "string") return part.sessionID;
+    if (typeof part?.sessionId === "string") return part.sessionId;
     if (typeof info?.id === "string") return info.id;
     if (typeof c.sessionID === "string") return c.sessionID;
     return undefined;
@@ -260,6 +265,14 @@ export async function ccmonPlugin(context: PluginContext) {
     );
   }
 
+  function isIdleReactivation(eventType: string): boolean {
+    return (
+      isGenerationReactivation(eventType) ||
+      eventType === "session.status" ||
+      eventType === "message.part.updated"
+    );
+  }
+
   function stopHeartbeat(tracker: InFlightSession): void {
     if (tracker.heartbeatTimer !== null) {
       clearInterval(tracker.heartbeatTimer);
@@ -297,6 +310,7 @@ export async function ccmonPlugin(context: PluginContext) {
     }
     sessionCwdMap.delete(sessionId);
     lastWrittenState.delete(sessionId);
+    lastForcedLivenessBySession.delete(sessionId);
     const mode = state === "stopped" ? "idle" : "hard_terminal";
     lifecycleModes.delete(sessionId);
     lifecycleModes.set(sessionId, mode);
@@ -427,6 +441,25 @@ export async function ccmonPlugin(context: PluginContext) {
     );
   }
 
+  function queueForcedLiveness(
+    sessionId: string,
+    eventType: "session.status" | "message.part.updated",
+  ): Promise<void> {
+    const mode = lifecycleModes.get(sessionId) ?? "active";
+    if (disposed || mode === "hard_terminal") return Promise.resolve();
+
+    const now = Date.now();
+    const lastForcedLivenessMs = lastForcedLivenessBySession.get(sessionId);
+    if (
+      lastForcedLivenessMs !== undefined &&
+      now - lastForcedLivenessMs < HEARTBEAT_INTERVAL_MS
+    ) {
+      return Promise.resolve();
+    }
+    setBoundedSessionValue(lastForcedLivenessBySession, sessionId, now);
+    return writeStatus(sessionId, "running", eventType, undefined, undefined, undefined, true);
+  }
+
   function statusRecord(
     sessionId: string,
     state: SessionState,
@@ -459,6 +492,7 @@ export async function ccmonPlugin(context: PluginContext) {
 
     const mode = lifecycleModes.get(sessionId) ?? "active";
     const isReactivation = isGenerationReactivation(eventType);
+    const isIdleReactivationEvent = isIdleReactivation(eventType);
     if (
       mode === "hard_terminal" &&
       !isReactivation &&
@@ -468,7 +502,7 @@ export async function ccmonPlugin(context: PluginContext) {
     }
     if (
       mode === "idle" &&
-      !isReactivation &&
+      !isIdleReactivationEvent &&
       state !== "error" &&
       state !== "closed"
     ) {
@@ -483,7 +517,7 @@ export async function ccmonPlugin(context: PluginContext) {
     } else if (isReactivation) {
       resetSessionGeneration(sessionId);
     } else if (mode === "idle") {
-      lifecycleModes.set(sessionId, "active");
+      resetSessionGeneration(sessionId);
     }
 
     if (isTerminal) {
@@ -640,6 +674,14 @@ export async function ccmonPlugin(context: PluginContext) {
             }
             break;
           }
+          case "session.status": {
+            const sessionId = extractSessionId(ctx);
+            const status = ctx.event.properties?.status;
+            if (sessionId && (status === "busy" || status === "retry")) {
+              await queueForcedLiveness(sessionId, type);
+            }
+            break;
+          }
           case "session.error": {
             const sessionId = extractSessionId(ctx);
             if (sessionId) {
@@ -687,6 +729,8 @@ export async function ccmonPlugin(context: PluginContext) {
             const sessionId = extractSessionId(ctx);
             if (sessionId && isCompletedToolPart(ctx)) {
               finishTool(sessionId, extractCallId(ctx));
+            } else if (sessionId) {
+              await queueForcedLiveness(sessionId, type);
             }
             break;
           }

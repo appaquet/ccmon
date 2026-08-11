@@ -683,7 +683,130 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
       .map((line) => JSON.parse(line));
   }
 
-  test("writes an immediate start, waits 30 seconds, and shares heartbeats across concurrent calls", async () => {
+  test("uses v1.18.10 status and streamed parts for bounded liveness", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-31T12:00:00.000Z"));
+    const { plugin, statusPath } = await createPlugin();
+
+    await plugin.event({
+      event: { type: "session.idle", properties: { sessionID: "streaming" } },
+    });
+    await plugin.event({
+      event: {
+        type: "session.status",
+        properties: { sessionID: "streaming", status: "busy" },
+      },
+    });
+    await plugin.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { sessionID: "streaming", type: "text", text: "first" },
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(14_999);
+    await plugin.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { sessionID: "streaming", type: "text", text: "second" },
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    await plugin.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { sessionID: "streaming", type: "text", text: "third" },
+        },
+      },
+    });
+    await plugin.event({
+      event: {
+        type: "session.status",
+        properties: { sessionID: "streaming", status: "retry" },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+    await plugin.event({
+      event: {
+        type: "session.status",
+        properties: { sessionID: "streaming", status: "retry" },
+      },
+    });
+
+    expect(records(statusPath).map((record) => record.event)).toEqual([
+      "session.idle",
+      "session.status",
+      "message.part.updated",
+      "session.status",
+    ]);
+    expect(records(statusPath).map((record) => record.state)).toEqual([
+      "stopped",
+      "running",
+      "running",
+      "running",
+    ]);
+    expect(vi.getTimerCount()).toBe(0);
+
+    await plugin.event({
+      event: { type: "session.idle", properties: { sessionID: "streaming" } },
+    });
+    expect(records(statusPath).map((record) => record.event)).toEqual([
+      "session.idle",
+      "session.status",
+      "message.part.updated",
+      "session.status",
+      "session.idle",
+    ]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("does not reactivate hard terminals from status or streamed parts", async () => {
+    const { plugin, statusPath } = await createPlugin();
+
+    await plugin.event({
+      event: { type: "session.error", properties: { sessionID: "errored" } },
+    });
+    await plugin.event({
+      event: {
+        type: "session.status",
+        properties: { sessionID: "errored", status: "busy" },
+      },
+    });
+    await plugin.event({
+      event: {
+        type: "message.part.updated",
+        properties: { part: { sessionID: "errored", type: "text" } },
+      },
+    });
+    await plugin.event({
+      event: { type: "session.deleted", properties: { sessionID: "closed" } },
+    });
+    await plugin.event({
+      event: {
+        type: "session.status",
+        properties: { sessionID: "closed", status: "retry" },
+      },
+    });
+    await plugin.event({
+      event: {
+        type: "message.part.updated",
+        properties: { part: { sessionID: "closed", type: "text" } },
+      },
+    });
+
+    expect(
+      records(statusPath).map((record) => [record.session_id, record.event]),
+    ).toEqual([
+      ["errored", "session.error"],
+      ["closed", "session.deleted"],
+    ]);
+  });
+
+  test("writes an immediate start, waits 15 seconds, and shares heartbeats across concurrent calls", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-22T12:00:00.000Z"));
     const { plugin, statusPath } = await createPlugin();
@@ -705,20 +828,20 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
       "tool.execute.before",
     ]);
 
-    await vi.advanceTimersByTimeAsync(29_999);
+    await vi.advanceTimersByTimeAsync(14_999);
     expect(records(statusPath)).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(1);
     await plugin["tool.execute.after"]({
       sessionID: "tool-session",
       input: { callID: "call-a" },
     });
-    await vi.advanceTimersByTimeAsync(30_000);
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(15_000);
     await plugin["tool.execute.after"]({
       sessionID: "tool-session",
       input: { callID: "call-b" },
     });
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(15_000);
 
     expect(records(statusPath).map((record) => record.event)).toEqual([
       "tool.execute.before",
@@ -758,7 +881,7 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
       sessionID: "blocked-tool",
       input: { callID: "call-a" },
     });
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(15_000);
     await plugin.event({
       event: {
         type: "permission.asked",
@@ -778,14 +901,14 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
         properties: { sessionID: "blocked-tool", permissionID: "permission-a" },
       },
     });
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(15_000);
     await plugin.event({
       event: {
         type: "question.rejected",
         properties: { sessionID: "blocked-tool", requestID: "question-a" },
       },
     });
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(15_000);
 
     expect(records(statusPath).map((record) => record.event)).toEqual([
       "tool.execute.before",
@@ -832,7 +955,7 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
         properties: { sessionID, ...resolveProperties },
       },
     });
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(15_000);
 
     expect(
       records(statusPath)
@@ -873,7 +996,7 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
         properties: { sessionID: "exact-before-legacy", requestID: "keyed" },
       },
     });
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(15_000);
 
     expect(
       records(statusPath).filter(
@@ -889,7 +1012,7 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
         properties: { sessionID: "exact-before-legacy", requestID: "unknown" },
       },
     });
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(15_000);
 
     expect(
       records(statusPath).filter(
@@ -924,7 +1047,7 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
         },
       },
     });
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(15_000);
 
     expect(
       records(statusPath).filter(
@@ -943,7 +1066,7 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
         },
       },
     });
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(15_000);
 
     expect(
       records(statusPath).filter(
@@ -1024,7 +1147,7 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
         },
       },
     });
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(15_000);
 
     expect(
       records(statusPath).filter(
@@ -1066,7 +1189,7 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
       sessionID: "idle-session",
       input: { callID: "idle-call" },
     });
-    vi.advanceTimersByTime(30_000);
+    vi.advanceTimersByTime(15_000);
     await plugin.event({
       event: {
         type: "session.idle",
