@@ -1,10 +1,11 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import type { StatusEvent } from "../src/session-core.ts";
+import type { PluginHeartbeatEvent, StatusEvent } from "../src/session-core.ts";
 import {
   PERMISSION_RESOLVE_GAP_MS,
   parseStatusLines,
+  parseStatusLogRecords,
   readStatusLog,
   resolveState,
   STATUS_FILE_LEGACY,
@@ -73,6 +74,53 @@ describe("readStatusLog", () => {
     expect(
       parseStatusLines(`partial${JSON.stringify(complete)}\n`, true),
     ).toEqual([]);
+  });
+
+  test("AC1: parseStatusLogRecords keeps plugin.heartbeat records (T2)", () => {
+    const withActive = JSON.stringify({
+      event: "plugin.heartbeat",
+      state: "running",
+      timestamp: "2026-02-19T10:00:00.000Z",
+      active_sessions: 3,
+    });
+    const withoutActive = JSON.stringify({
+      event: "plugin.heartbeat",
+      state: "running",
+      timestamp: "2026-02-19T10:01:00.000Z",
+    });
+    const malformed = `{"event": "plugin.heartbeat"}`;
+    const event = makeEvent("PostToolUse", "running");
+
+    const records = parseStatusLogRecords(
+      `${withActive}\n${withoutActive}\n${malformed}\n${JSON.stringify(event)}\n`,
+    );
+    // Heartbeat with active_sessions, heartbeat without active_sessions, and
+    // the status event are kept; the malformed heartbeat is dropped.
+    expect(records).toHaveLength(3);
+    const heartbeats = records.filter(
+      (r): r is PluginHeartbeatEvent =>
+        "active_sessions" in r || r.event === "plugin.heartbeat",
+    );
+    expect(heartbeats).toHaveLength(2);
+    const first = records[0] as PluginHeartbeatEvent;
+    expect(first.event).toBe("plugin.heartbeat");
+    expect(first.active_sessions).toBe(3);
+    const second = records[1] as PluginHeartbeatEvent;
+    expect(second.active_sessions).toBeUndefined();
+  });
+
+  test("AC1b: parseStatusLines still excludes heartbeats (T2)", () => {
+    const heartbeat = JSON.stringify({
+      event: "plugin.heartbeat",
+      state: "running",
+      timestamp: "2026-02-19T10:00:00.000Z",
+      active_sessions: 1,
+    });
+    const event = makeEvent("Stop", "stopped");
+    // parseStatusLines filters out the heartbeat, keeping only StatusEvents.
+    expect(
+      parseStatusLines(`${heartbeat}\n${JSON.stringify(event)}\n`),
+    ).toEqual([event]);
   });
 
   test("missing file: returns empty array", async () => {

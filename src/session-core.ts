@@ -50,6 +50,16 @@ export interface StatusEvent {
   blocker_kind?: "question" | "permission";
 }
 
+/** Instance-level liveness record written by the OpenCode plugin (no session). */
+export interface PluginHeartbeatEvent {
+  event: "plugin.heartbeat";
+  state: "running";
+  timestamp: string; // ISO 8601
+  active_sessions?: number;
+}
+
+export type StatusLogRecord = StatusEvent | PluginHeartbeatEvent;
+
 type ResolutionContext = {
   events: StatusEvent[];
   jsonlMtimeMs: number | null;
@@ -85,6 +95,19 @@ export function isStatusEvent(v: unknown): v is StatusEvent {
   );
 }
 
+export function isPluginHeartbeat(v: unknown): v is PluginHeartbeatEvent {
+  if (typeof v !== "object" || v === null) return false;
+  const obj = v as Record<string, unknown>;
+  return (
+    obj.event === "plugin.heartbeat" &&
+    obj.state === "running" &&
+    typeof obj.timestamp === "string" &&
+    (obj.active_sessions === undefined ||
+      (typeof obj.active_sessions === "number" &&
+        Number.isFinite(obj.active_sessions)))
+  );
+}
+
 function isStatusFileLegacy(v: unknown): v is StatusFileLegacy {
   if (typeof v !== "object" || v === null) return false;
   const obj = v as Record<string, unknown>;
@@ -98,28 +121,42 @@ function isStatusFileLegacy(v: unknown): v is StatusFileLegacy {
 }
 
 /**
- * Parses NDJSON lines into StatusEvent[], skipping corrupt lines.
+ * Parses NDJSON lines into StatusLogRecord[], skipping corrupt lines.
+ * When slicedMidFile is true, a non-boundary first line is discarded.
+ */
+export function parseStatusLogRecords(
+  raw: string,
+  slicedMidFile = false,
+): StatusLogRecord[] {
+  const lines = raw.split("\n");
+  const startIdx = slicedMidFile && !raw.startsWith("\n") ? 1 : 0;
+  const records: StatusLogRecord[] = [];
+  for (let i = startIdx; i < lines.length; i++) {
+    if (lines[i].trim() === "") continue;
+    try {
+      const parsed = JSON.parse(lines[i]);
+      if (isStatusEvent(parsed) || isPluginHeartbeat(parsed)) {
+        records.push(parsed);
+      }
+    } catch {
+      // Skip corrupt lines.
+    }
+  }
+  return records;
+}
+
+/**
+ * Parses NDJSON lines into StatusEvent[], skipping corrupt lines and
+ * instance-level plugin heartbeat records.
  * When slicedMidFile is true, a non-boundary first line is discarded.
  */
 export function parseStatusLines(
   raw: string,
   slicedMidFile = false,
 ): StatusEvent[] {
-  const lines = raw.split("\n");
-  const startIdx = slicedMidFile && !raw.startsWith("\n") ? 1 : 0;
-  const events: StatusEvent[] = [];
-  for (let i = startIdx; i < lines.length; i++) {
-    if (lines[i].trim() === "") continue;
-    try {
-      const parsed = JSON.parse(lines[i]);
-      if (isStatusEvent(parsed)) {
-        events.push(parsed);
-      }
-    } catch {
-      // Skip corrupt lines.
-    }
-  }
-  return events;
+  return parseStatusLogRecords(raw, slicedMidFile).filter(
+    (record): record is StatusEvent => isStatusEvent(record),
+  );
 }
 
 export async function readStatusLog(

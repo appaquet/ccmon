@@ -19,6 +19,7 @@ describe("createBackends OpenCode validation", () => {
       maxInactivityHours: 1,
       host: "127.0.0.1",
       port: 0,
+      broadcastIntervalMs: 50_000,
       backends: [
         { type: "claude", enabled: true },
         { type: "opencode", enabled: true, databasePath },

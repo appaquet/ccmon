@@ -44,6 +44,40 @@ describe("loadConfig", () => {
     expect(DEFAULT_CONFIG.host).toBe("127.0.0.1");
   });
 
+  test("missing file: broadcastIntervalMs defaults to 50s", () => {
+    const config = loadConfig(join(tmpDir, "nonexistent.json"));
+    expect(config.broadcastIntervalMs).toBe(50_000);
+  });
+
+  test("valid file with broadcastIntervalMs: 0 loads as 0 (disabled)", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(configPath, JSON.stringify({ broadcastIntervalMs: 0 }));
+    const config = loadConfig(configPath);
+    expect(config.broadcastIntervalMs).toBe(0);
+  });
+
+  test("valid file with broadcastIntervalMs: 10000 loads as 10000", async () => {
+    const configPath = join(tmpDir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ broadcastIntervalMs: 10_000 }),
+    );
+    const config = loadConfig(configPath);
+    expect(config.broadcastIntervalMs).toBe(10_000);
+  });
+
+  test("invalid broadcastIntervalMs values fall back to 50s", async () => {
+    for (const value of [-5, "abc", true]) {
+      const configPath = join(tmpDir, `config-${JSON.stringify(value)}.json`);
+      await writeFile(
+        configPath,
+        JSON.stringify({ broadcastIntervalMs: value }),
+      );
+      const config = loadConfig(configPath);
+      expect(config.broadcastIntervalMs).toBe(50_000);
+    }
+  });
+
   test("valid file with maxInactivityHours: 6 returns correct value", async () => {
     const configPath = join(tmpDir, "config.json");
     await writeFile(

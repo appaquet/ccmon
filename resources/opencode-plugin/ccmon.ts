@@ -1,7 +1,4 @@
-import {
-  appendFile,
-  mkdir,
-} from "node:fs/promises";
+import { appendFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -86,15 +83,17 @@ type InFlightSession = {
 
 type StatusRecord = {
   event: string;
-  session_id: string;
-  working_dir: string;
+  session_id?: string;
+  working_dir?: string;
   state: SessionState;
   timestamp: string;
+  active_sessions?: number;
   request_id?: string;
   blocker_kind?: BlockerKind;
 };
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
+const PLUGIN_HEARTBEAT_INTERVAL_MS = 30_000;
 const SESSION_CACHE_LIMIT = 1_024;
 const TERMINAL_BARRIER_LIMIT = 1_024;
 const LEGACY_REQUEST_SLOT = "__ccmon_legacy_request__";
@@ -111,6 +110,7 @@ export async function ccmonPlugin(context: PluginContext) {
   const inFlightBySession = new Map<string, InFlightSession>();
   let writeQueue: Promise<void> = Promise.resolve();
   let pendingHeartbeatCount = 0;
+  let pluginHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
   let disposed = false;
 
   const stateHome =
@@ -119,6 +119,12 @@ export async function ccmonPlugin(context: PluginContext) {
   const logPath = join(logDir, "opencode-status.jsonl");
 
   await mkdir(logDir, { recursive: true }).catch(() => {});
+  queuePluginHeartbeat();
+  pluginHeartbeatTimer = setInterval(
+    () => queuePluginHeartbeat(),
+    PLUGIN_HEARTBEAT_INTERVAL_MS,
+  );
+  (pluginHeartbeatTimer as { unref?: () => void }).unref?.();
 
   function setBoundedSessionValue<T>(
     map: Map<string, T>,
@@ -202,7 +208,9 @@ export async function ccmonPlugin(context: PluginContext) {
     const requestId = extractRequestId(ctx);
     if (requestId) return requestId;
 
-    const properties = ctx.event.properties as Record<string, unknown> | undefined;
+    const properties = ctx.event.properties as
+      | Record<string, unknown>
+      | undefined;
     return typeof properties?.id === "string" && properties.id.length > 0
       ? properties.id
       : undefined;
@@ -365,10 +373,12 @@ export async function ccmonPlugin(context: PluginContext) {
     onSettled?: () => void,
     tracker?: InFlightSession,
   ): Promise<void> {
-    const isHeartbeat = record.event === "tool.execute.heartbeat";
+    const isHeartbeat =
+      record.event === "tool.execute.heartbeat" ||
+      record.event === "plugin.heartbeat";
     if (isHeartbeat && pendingHeartbeatCount >= MAX_PENDING_WRITES) {
       logBackpressure(
-        `heartbeat write queue is full; dropping ${record.event} for ${record.session_id}`,
+        `heartbeat write queue is full; dropping ${record.event}${record.session_id ? ` for ${record.session_id}` : ""}`,
       );
       onSettled?.();
       return Promise.resolve();
@@ -379,15 +389,21 @@ export async function ccmonPlugin(context: PluginContext) {
     writeQueue = writeQueue.then(async () => {
       try {
         if (!isCurrent()) return;
-        if (!force && lastWrittenState.get(record.session_id) === record.state) {
+        if (
+          !force &&
+          record.session_id !== undefined &&
+          lastWrittenState.get(record.session_id) === record.state
+        ) {
           return;
         }
         await appendRecord(record);
-        setBoundedSessionValue(
-          lastWrittenState,
-          record.session_id,
-          record.state,
-        );
+        if (record.session_id !== undefined) {
+          setBoundedSessionValue(
+            lastWrittenState,
+            record.session_id,
+            record.state,
+          );
+        }
       } catch (err) {
         client.app.log({
           level: "error",
@@ -400,6 +416,28 @@ export async function ccmonPlugin(context: PluginContext) {
       }
     });
     return writeQueue;
+  }
+
+  function countActiveSessions(): number {
+    let count = 0;
+    for (const tracker of inFlightBySession.values()) {
+      if (tracker.activeCallIds.size > 0) count += 1;
+    }
+    return count;
+  }
+
+  function queuePluginHeartbeat(): Promise<void> {
+    if (disposed) return Promise.resolve();
+    return enqueueRecord(
+      {
+        event: "plugin.heartbeat",
+        state: "running",
+        timestamp: new Date().toISOString(),
+        active_sessions: countActiveSessions(),
+      },
+      true,
+      () => !disposed,
+    );
   }
 
   function queueHeartbeat(sessionId: string): Promise<void> {
@@ -457,7 +495,15 @@ export async function ccmonPlugin(context: PluginContext) {
       return Promise.resolve();
     }
     setBoundedSessionValue(lastForcedLivenessBySession, sessionId, now);
-    return writeStatus(sessionId, "running", eventType, undefined, undefined, undefined, true);
+    return writeStatus(
+      sessionId,
+      "running",
+      eventType,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
   }
 
   function statusRecord(
@@ -511,7 +557,8 @@ export async function ccmonPlugin(context: PluginContext) {
 
     const tracker = trackerFor(sessionId);
     const lifecycle = getLifecycle(eventType, blockerKind, requestId);
-    const isTerminal = state === "stopped" || state === "closed" || state === "error";
+    const isTerminal =
+      state === "stopped" || state === "closed" || state === "error";
     if (eventType === "session.created") {
       resetSessionGeneration(sessionId);
     } else if (isReactivation) {
@@ -521,7 +568,10 @@ export async function ccmonPlugin(context: PluginContext) {
     }
 
     if (isTerminal) {
-      lifecycleModes.set(sessionId, state === "stopped" ? "idle" : "hard_terminal");
+      lifecycleModes.set(
+        sessionId,
+        state === "stopped" ? "idle" : "hard_terminal",
+      );
     } else if (lifecycle?.action === "ask") {
       if (!tracker.blockers.has(lifecycle.key)) tracker.generation += 1;
       tracker.blockers.add(lifecycle.key);
@@ -635,14 +685,35 @@ export async function ccmonPlugin(context: PluginContext) {
     if (info.parentID) {
       const parentCwd = sessionCwdMap.get(info.parentID) ?? directory;
       setBoundedSessionValue(sessionCwdMap, sessionId, parentCwd);
-      await writeStatus(sessionId, "running", "session.created", parentCwd, undefined, undefined, true);
-      await writeStatus(info.parentID, "running", "subagent.created", parentCwd);
+      await writeStatus(
+        sessionId,
+        "running",
+        "session.created",
+        parentCwd,
+        undefined,
+        undefined,
+        true,
+      );
+      await writeStatus(
+        info.parentID,
+        "running",
+        "subagent.created",
+        parentCwd,
+      );
       return;
     }
 
     let cwd = info.directory ?? directory;
     setBoundedSessionValue(sessionCwdMap, sessionId, cwd);
-    await writeStatus(sessionId, "running", "session.created", cwd, undefined, undefined, true);
+    await writeStatus(
+      sessionId,
+      "running",
+      "session.created",
+      cwd,
+      undefined,
+      undefined,
+      true,
+    );
     if (!info.directory) {
       try {
         const session = await client.session.get({ path: { id: sessionId } });
@@ -709,8 +780,18 @@ export async function ccmonPlugin(context: PluginContext) {
           case "question.asked": {
             const sessionId = extractSessionId(ctx);
             if (sessionId) {
-              const blockerKind = type.startsWith("question") ? "question" : "permission";
-              await writeStatus(sessionId, "waiting_for_permission", type, undefined, extractBlockerAskRequestId(ctx), blockerKind, true);
+              const blockerKind = type.startsWith("question")
+                ? "question"
+                : "permission";
+              await writeStatus(
+                sessionId,
+                "waiting_for_permission",
+                type,
+                undefined,
+                extractBlockerAskRequestId(ctx),
+                blockerKind,
+                true,
+              );
             }
             break;
           }
@@ -720,8 +801,18 @@ export async function ccmonPlugin(context: PluginContext) {
           case "permission.rejected": {
             const sessionId = extractSessionId(ctx);
             if (sessionId) {
-              const blockerKind = type.startsWith("question") ? "question" : "permission";
-              await writeStatus(sessionId, "running", type, undefined, extractRequestId(ctx), blockerKind, true);
+              const blockerKind = type.startsWith("question")
+                ? "question"
+                : "permission";
+              await writeStatus(
+                sessionId,
+                "running",
+                type,
+                undefined,
+                extractRequestId(ctx),
+                blockerKind,
+                true,
+              );
             }
             break;
           }
@@ -736,15 +827,22 @@ export async function ccmonPlugin(context: PluginContext) {
           }
         }
       } catch (err) {
-        client.app.log({ level: "error", message: `ccmon: event handler error: ${String(err)}` });
+        client.app.log({
+          level: "error",
+          message: `ccmon: event handler error: ${String(err)}`,
+        });
       }
     },
 
     "chat.message": async (input: { sessionID?: string }) => {
       try {
-        if (input?.sessionID) await writeStatus(input.sessionID, "running", "chat.message");
+        if (input?.sessionID)
+          await writeStatus(input.sessionID, "running", "chat.message");
       } catch (err) {
-        client.app.log({ level: "error", message: `ccmon: chat.message error: ${String(err)}` });
+        client.app.log({
+          level: "error",
+          message: `ccmon: chat.message error: ${String(err)}`,
+        });
       }
     },
 
@@ -754,7 +852,10 @@ export async function ccmonPlugin(context: PluginContext) {
         const callId = extractCallId(ctx);
         if (sessionId && callId) await beginTool(sessionId, callId);
       } catch (err) {
-        client.app.log({ level: "error", message: `ccmon: tool.execute.before error: ${String(err)}` });
+        client.app.log({
+          level: "error",
+          message: `ccmon: tool.execute.before error: ${String(err)}`,
+        });
       }
     },
 
@@ -763,7 +864,10 @@ export async function ccmonPlugin(context: PluginContext) {
         const sessionId = extractSessionId(ctx);
         if (sessionId) finishTool(sessionId, extractCallId(ctx));
       } catch (err) {
-        client.app.log({ level: "error", message: `ccmon: tool.execute.after error: ${String(err)}` });
+        client.app.log({
+          level: "error",
+          message: `ccmon: tool.execute.after error: ${String(err)}`,
+        });
       }
     },
 
@@ -771,15 +875,30 @@ export async function ccmonPlugin(context: PluginContext) {
       try {
         const sessionId = extractSessionId(ctx);
         if (sessionId) {
-          await writeStatus(sessionId, "waiting_for_permission", "permission.ask", undefined, extractRequestId(ctx), "permission", true);
+          await writeStatus(
+            sessionId,
+            "waiting_for_permission",
+            "permission.ask",
+            undefined,
+            extractRequestId(ctx),
+            "permission",
+            true,
+          );
         }
       } catch (err) {
-        client.app.log({ level: "error", message: `ccmon: permission.ask error: ${String(err)}` });
+        client.app.log({
+          level: "error",
+          message: `ccmon: permission.ask error: ${String(err)}`,
+        });
       }
     },
 
     dispose: async () => {
       disposed = true;
+      if (pluginHeartbeatTimer !== null) {
+        clearInterval(pluginHeartbeatTimer);
+        pluginHeartbeatTimer = null;
+      }
       for (const tracker of inFlightBySession.values()) {
         tracker.generation += 1;
         tracker.activeCallIds.clear();

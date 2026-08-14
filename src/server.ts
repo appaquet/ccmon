@@ -32,7 +32,10 @@ export interface ServerOptions {
   hostname?: string;
   backends: AnySessionBackend[];
   maxInactivityHours?: number;
-  /** Override the periodic broadcast interval in ms. Defaults to 30000. Used in tests only. */
+  /**
+   * Interval between periodic rescans + broadcasts, in ms. `0` disables the
+   * periodic rescan. Defaults to BROADCAST_INTERVAL_MS (50s).
+   */
   broadcastIntervalMs?: number;
 }
 
@@ -77,11 +80,24 @@ export function startServer(options: ServerOptions): {
     }
   }
 
+  // Backends whose rescan is already in flight. Inputs are append-only, so a
+  // dropped duplicate is covered by the in-flight run plus the watcher event
+  // for any mid-scan change; the narrow case (a change persisted just after
+  // the in-flight read, whose watcher event is coalesced) is at most delayed
+  // until the next change or the periodic rescan.
+  const inFlightBackends = new Set<AnySessionBackend>();
+
   async function buildStateForBackend(
     backend: AnySessionBackend,
   ): Promise<void> {
-    const newStates = await collectBackendStates([backend]);
-    backendStates.set(backend, newStates);
+    if (inFlightBackends.has(backend)) return;
+    inFlightBackends.add(backend);
+    try {
+      const newStates = await collectBackendStates([backend]);
+      backendStates.set(backend, newStates);
+    } finally {
+      inFlightBackends.delete(backend);
+    }
   }
 
   async function rescanAllBackends(): Promise<void> {
@@ -105,16 +121,20 @@ export function startServer(options: ServerOptions): {
   }
 
   // Periodic safety rescan + broadcast: re-scans from disk and pushes current
-  // state every 30 s so clients recover from watcher failures or missed events.
+  // state so clients recover from watcher failures or missed events. Disabled
+  // when broadcastMs is 0 (config opt-out).
   const broadcastMs = options.broadcastIntervalMs ?? BROADCAST_INTERVAL_MS;
-  const broadcastInterval = setInterval(() => {
-    rescanAllBackends()
-      .then(() => broadcastCurrent())
-      .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        log.error("periodic rescan error", new Error(msg));
-      });
-  }, broadcastMs);
+  let broadcastInterval: ReturnType<typeof setInterval> | null = null;
+  if (broadcastMs > 0) {
+    broadcastInterval = setInterval(() => {
+      rescanAllBackends()
+        .then(() => broadcastCurrent())
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.error("periodic rescan error", new Error(msg));
+        });
+    }, broadcastMs);
+  }
 
   // Start watchers for each backend
   const watcherStops: Array<{ stop: () => void }> = [];
@@ -207,7 +227,7 @@ export function startServer(options: ServerOptions): {
   function stop(): void {
     if (stopped) return;
     stopped = true;
-    clearInterval(broadcastInterval);
+    if (broadcastInterval !== null) clearInterval(broadcastInterval);
     for (const watcher of watcherStops) watcher.stop();
     wss.close();
     server.close(() => {});

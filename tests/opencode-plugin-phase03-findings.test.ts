@@ -35,7 +35,7 @@ const previousStateHome = process.env.XDG_STATE_HOME;
 
 type StatusRecord = {
   event: string;
-  session_id: string;
+  session_id?: string;
   state: string;
 };
 
@@ -212,17 +212,22 @@ describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
     releaseFirstWrite();
     await Promise.all([running, newerEvidence]);
 
+    // The plugin writes an init heartbeat first (no session_id), then the
+    // gated seed write, then the newer evidence. The stale running record is
+    // skipped because it was superseded.
     expect(records(statusPath).map((record) => record.event)).toEqual([
+      "plugin.heartbeat",
       "chat.message",
       evidenceType,
     ]);
     expect(records(statusPath).map((record) => record.session_id)).toEqual([
+      undefined,
       "write-seed",
       "stale-running",
     ]);
     await seed;
     if (evidenceType === "permission.asked") {
-      expect(records(statusPath)[1]).toMatchObject({
+      expect(records(statusPath)[2]).toMatchObject({
         state: "waiting_for_permission",
       });
     }
@@ -244,7 +249,8 @@ describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
         }),
       ),
     );
-    expect(vi.getTimerCount()).toBe(80);
+    // 80 session heartbeat timers plus the plugin liveness timer.
+    expect(vi.getTimerCount()).toBe(81);
 
     await plugin.event({
       event: {
@@ -307,7 +313,7 @@ describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
         },
       },
     });
-    expect(vi.getTimerCount()).toBe(80);
+    expect(vi.getTimerCount()).toBe(81);
     await vi.advanceTimersByTimeAsync(15_000);
 
     pressuredRecords = records(statusPath).filter(
@@ -397,16 +403,19 @@ describe("ccmon OpenCode plugin Phase 03 finding regressions", () => {
         entry.message.includes("heartbeat write queue is full"),
       ),
     ).toBe(true);
+    // The init plugin heartbeat occupies one of the 256 pending-write slots,
+    // so one fewer session heartbeat survives the cap.
     expect(
       records(statusPath).filter(
         (record) => record.event === "tool.execute.heartbeat",
       ),
-    ).toHaveLength(256);
+    ).toHaveLength(255);
+    // One extra drop because the init heartbeat holds a pending slot.
     expect(
       logs.filter((entry) =>
         entry.message.includes("heartbeat write queue is full"),
       ),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     await plugin.dispose();
   });
 });

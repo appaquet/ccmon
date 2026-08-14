@@ -14,7 +14,9 @@ import type { DatabaseSync } from "node:sqlite";
 import { log } from "../log.ts";
 import { parseMessageData, parsePartData } from "../parsers/opencode-db.ts";
 import {
-  parseStatusLines,
+  isPluginHeartbeat,
+  isStatusEvent,
+  parseStatusLogRecords,
   type SessionState,
   type StatusEvent,
 } from "../session-core.ts";
@@ -25,6 +27,7 @@ import {
   MAX_FIRST_READ,
   OPENCODE_ACTIVE_THRESHOLD_MS,
   PERMISSION_STALE_MS,
+  PLUGIN_HEALTH_THRESHOLD_MS,
   SUBAGENT_EXPIRY_MS,
   SUBAGENT_LIFECYCLE_TIMEOUT_MS,
 } from "../timing.ts";
@@ -129,6 +132,33 @@ function statSyncTerse(p: string): number | null {
   }
 }
 
+/** File identity + change basis used by the change-aware status poll. */
+interface FileBasis {
+  dev: number;
+  ino: number;
+  mtimeMs: number;
+  size: number;
+}
+
+/** Statically captured file basis; `null` when the file cannot be stat'ed. */
+function statFileBasis(path: string): FileBasis | null {
+  try {
+    const s = statSync(path);
+    return { dev: s.dev, ino: s.ino, mtimeMs: s.mtimeMs, size: s.size };
+  } catch {
+    return null;
+  }
+}
+
+function fileBasisChanged(a: FileBasis, b: FileBasis): boolean {
+  return (
+    a.dev !== b.dev ||
+    a.ino !== b.ino ||
+    a.mtimeMs !== b.mtimeMs ||
+    a.size !== b.size
+  );
+}
+
 function resolveDefaultStatusLogPath(): string {
   const stateHome =
     process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
@@ -143,6 +173,7 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
   private lastStatusLogSize: number | null = null;
   private statusLogEvents: StatusEvent[] | null = null;
   private statusEventIndex: StatusEventIndex | null = null;
+  private lastPluginHeartbeatMs: number | null = null;
   private messageTableAvailable: boolean | null = null;
   private messageTableSchemaVersion: number | null = null;
   private partTableAvailable: boolean | null = null;
@@ -273,6 +304,28 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
       }, interval);
     }
 
+    // Change-aware status poll: stat the log each tick and only fire
+    // onUpdate() when the file actually changed. The baseline is captured
+    // here (no update for it — the initial rescan covers startup). A stat
+    // failure (file deleted) falls back to the unconditional 5s poll,
+    // matching the watcher's deletion handling.
+    function startChangeAwarePolling(interval: number): void {
+      let baseline = statFileBasis(statusLogPath);
+      pollTimer = setInterval(() => {
+        if (stopped) return;
+        const current = statFileBasis(statusLogPath);
+        if (current === null) {
+          if (pollTimer) clearInterval(pollTimer);
+          startPolling(pollIntervalMs);
+          return;
+        }
+        if (baseline === null || fileBasisChanged(baseline, current)) {
+          baseline = current;
+          onUpdate();
+        }
+      }, interval);
+    }
+
     function startStatusWatcher(): void {
       if (stopped) return;
       const statusDir = dirname(statusLogPath);
@@ -328,7 +381,7 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
     const fileExists = existsSync(statusLogPath);
     if (fileExists) {
       startStatusWatcher();
-      startPolling(statusPollIntervalMs);
+      startChangeAwarePolling(statusPollIntervalMs);
     } else {
       startPolling(pollIntervalMs);
     }
@@ -490,8 +543,25 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
         } else {
           raw = readFileSync(this.statusLogPath, "utf-8");
         }
-        this.statusLogEvents = parseStatusLines(raw, slicedMidFile);
+        const records = parseStatusLogRecords(raw, slicedMidFile);
+        const events: StatusEvent[] = [];
+        let heartbeatMs: number | null = null;
+        for (const record of records) {
+          if (isStatusEvent(record)) {
+            events.push(record);
+          } else if (isPluginHeartbeat(record)) {
+            const ts = Date.parse(record.timestamp);
+            if (
+              !Number.isNaN(ts) &&
+              (heartbeatMs === null || ts >= heartbeatMs)
+            ) {
+              heartbeatMs = ts;
+            }
+          }
+        }
+        this.statusLogEvents = events;
         this.statusEventIndex = null;
+        this.lastPluginHeartbeatMs = heartbeatMs;
         this.lastStatusLogDev = s.dev;
         this.lastStatusLogIno = s.ino;
         this.lastStatusLogMtime = s.mtimeMs;
@@ -504,10 +574,18 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
       this.lastStatusLogSize = null;
       this.statusLogEvents = null;
       this.statusEventIndex = null;
+      this.lastPluginHeartbeatMs = null;
       return null;
     }
 
     return this.statusLogEvents ?? [];
+  }
+
+  private isPluginHealthy(now: number): boolean {
+    return (
+      this.lastPluginHeartbeatMs !== null &&
+      now - this.lastPluginHeartbeatMs < PLUGIN_HEALTH_THRESHOLD_MS
+    );
   }
 
   private getStatusEventIndex(): StatusEventIndex {
@@ -700,42 +778,26 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
 
   /** Captures visible roots and their descendants in one cycle-safe query. */
   private loadForestSnapshot(): ForestSnapshot {
+    const now = Date.now();
+    const cutoff = now - OPENCODE_ACTIVE_THRESHOLD_MS;
+    // Read the status log before gating so the plugin heartbeat timestamp is
+    // populated; the gate below relies on it.
+    this.loadStatusLogEvents();
+
+    // Gate the heavy JSON CTEs on plugin liveness. When the plugin is
+    // unhealthy every session needs inference, so run the full query
+    // (forest + CTEs) directly. When healthy, run a cheap forest-only query
+    // first and only pay for the CTEs if some session lacks fresh evidence.
     let rows: Array<ForestSession & { root_id: string }>;
-    const includePersistedUserMessages = this.shouldLoadPersistedUserMessages();
-    const includePartActivity =
-      includePersistedUserMessages && this.shouldLoadPartActivity();
-    try {
-      rows = this.loadForestRows(
-        includePersistedUserMessages,
-        includePartActivity,
-      );
-      if (includePersistedUserMessages) {
-        this.messageTableAvailable = true;
-        this.messageTableSchemaVersion = null;
-      }
-    } catch (error) {
-      if (isMissingPartTable(error) && includePersistedUserMessages) {
-        const partTable = this.readPartTableSnapshot();
-        rows = this.loadForestRows(true, partTable.exists);
-        this.messageTableAvailable = true;
-        this.messageTableSchemaVersion = null;
-        this.partTableAvailable = partTable.exists;
-        this.partTableSchemaVersion = partTable.exists
-          ? null
-          : partTable.schemaVersion;
-      } else {
-        if (!isMissingMessageTable(error)) throw error;
-        const schemaVersion = this.readSchemaVersion();
-        if (this.messageTableExists()) {
-          rows = this.loadForestRows(true, this.shouldLoadPartActivity());
-          this.messageTableAvailable = true;
-          this.messageTableSchemaVersion = null;
-        } else {
-          this.messageTableAvailable = false;
-          this.messageTableSchemaVersion = schemaVersion;
-          rows = this.loadForestRows(false, false);
-        }
-      }
+    if (!this.isPluginHealthy(now)) {
+      rows = this.loadForestRowsWithInference(cutoff, null);
+    } else {
+      const baseRows = this.loadForestRows(false, false, cutoff, null);
+      const inferenceSessions = this.resolveInferenceSessionIds(now, baseRows);
+      rows =
+        inferenceSessions.size === 0
+          ? baseRows
+          : this.loadForestRowsWithInference(cutoff, [...inferenceSessions]);
     }
 
     const rootsById = new Map<string, ForestSession>();
@@ -770,7 +832,103 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
         directChildrenByRoot.set(root.id, directChildren);
       }
     }
+
     return { rootsById, descendantsByRoot, directChildrenByRoot };
+  }
+
+  /**
+   * Runs the forest query with the JSON inference CTEs, narrowing to
+   * `sessionFilter` when provided. Falls back gracefully when the message or
+   * part table is absent.
+   */
+  private loadForestRowsWithInference(
+    cutoff: number,
+    sessionFilter: string[] | null,
+  ): Array<ForestSession & { root_id: string }> {
+    const includePersistedUserMessages = this.shouldLoadPersistedUserMessages();
+    const includePartActivity =
+      includePersistedUserMessages && this.shouldLoadPartActivity();
+    try {
+      const rows = this.loadForestRows(
+        includePersistedUserMessages,
+        includePartActivity,
+        cutoff,
+        sessionFilter,
+      );
+      if (includePersistedUserMessages) {
+        this.messageTableAvailable = true;
+        this.messageTableSchemaVersion = null;
+      }
+      return rows;
+    } catch (error) {
+      if (isMissingPartTable(error) && includePersistedUserMessages) {
+        const partTable = this.readPartTableSnapshot();
+        const rows = this.loadForestRows(
+          true,
+          partTable.exists,
+          cutoff,
+          sessionFilter,
+        );
+        this.messageTableAvailable = true;
+        this.messageTableSchemaVersion = null;
+        this.partTableAvailable = partTable.exists;
+        this.partTableSchemaVersion = partTable.exists
+          ? null
+          : partTable.schemaVersion;
+        return rows;
+      }
+      if (isMissingMessageTable(error)) {
+        const schemaVersion = this.readSchemaVersion();
+        if (this.messageTableExists()) {
+          const rows = this.loadForestRows(
+            true,
+            this.shouldLoadPartActivity(),
+            cutoff,
+            sessionFilter,
+          );
+          this.messageTableAvailable = true;
+          this.messageTableSchemaVersion = null;
+          return rows;
+        }
+        this.messageTableAvailable = false;
+        this.messageTableSchemaVersion = schemaVersion;
+        return this.loadForestRows(false, false, cutoff, null);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Sessions that need the JSON inference CTEs: those lacking fresh plugin
+   * evidence (no events, or last event ≥ 30s old), plus any session with a
+   * hard-terminal event in its history — recovering from a StopFailure /
+   * SessionEnd depends on the persisted user-message evidence that only the
+   * CTEs supply, even when the latest event is fresh.
+   */
+  private resolveInferenceSessionIds(
+    now: number,
+    rows: Array<ForestSession & { root_id: string }>,
+  ): Set<string> {
+    const index = this.getStatusEventIndex();
+    const result = new Set<string>();
+    for (const row of rows) {
+      const events = index.eventsBySession.get(row.id);
+      if (!events || events.length === 0) {
+        result.add(row.id);
+        continue;
+      }
+      const latest = events[events.length - 1];
+      const ts = new Date(latest.timestamp).getTime();
+      const lacksFreshEvidence =
+        !Number.isFinite(ts) || now - ts >= OPENCODE_ACTIVE_THRESHOLD_MS;
+      const hasHardTerminal = events.some((event) =>
+        isHardTerminalEvidence(event),
+      );
+      if (lacksFreshEvidence || hasHardTerminal) {
+        result.add(row.id);
+      }
+    }
+    return result;
   }
 
   private shouldLoadPersistedUserMessages(): boolean {
@@ -831,15 +989,24 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
   private loadForestRows(
     includePersistedUserMessages: boolean,
     includePartActivity: boolean,
+    cutoff: number,
+    sessionFilter: string[] | null,
   ): Array<ForestSession & { root_id: string }> {
+    const filterClause =
+      sessionFilter !== null && sessionFilter.length > 0
+        ? `AND forest.session_id IN (${sessionFilter.map(() => "?").join(", ")})`
+        : "";
     const userMessageCte = includePersistedUserMessages
       ? `, root_user_messages(session_id, latestUserMessageMs) AS (
             SELECT m.session_id, MAX(m.time_created)
             FROM message m
             JOIN forest ON forest.session_id = m.session_id
-            WHERE CASE WHEN json_valid(m.data)
-              THEN json_extract(m.data, '$.role')
-            END = 'user'
+            WHERE 1 = 1
+              ${filterClause}
+              AND m.time_created > ?
+              AND CASE WHEN json_valid(m.data)
+                THEN json_extract(m.data, '$.role')
+              END = 'user'
             GROUP BY m.session_id
           )`
       : "";
@@ -851,33 +1018,37 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
       : "";
     const partActivityRows = includePartActivity
       ? `UNION ALL
-              SELECT p.session_id, p.time_updated, p.data, 'part' AS kind
-              FROM part p
-              JOIN forest ON forest.session_id = p.session_id`
+               SELECT p.session_id, p.time_updated, p.data, 'part' AS kind
+               FROM part p
+               JOIN forest ON forest.session_id = p.session_id
+               WHERE p.time_updated > ?
+                 ${filterClause}`
       : "";
     const sqliteActivityCte = includePersistedUserMessages
       ? `, sqlite_activity(session_id, latestSqliteActivityMs, latestActiveToolMs) AS (
             SELECT activity.session_id,
                    MAX(activity.time_updated),
                    MAX(CASE
-                     WHEN activity.kind = 'part'
-                       AND CASE WHEN json_valid(activity.data)
-                         THEN json_extract(activity.data, '$.type')
-                       END = 'tool'
-                       AND COALESCE(
-                         CASE WHEN json_valid(activity.data)
-                           THEN json_extract(activity.data, '$.state')
-                         END,
-                         CASE WHEN json_valid(activity.data)
-                           THEN json_extract(activity.data, '$.status')
-                         END
-                       ) IN ('pending', 'running')
-                     THEN activity.time_updated
-                   END)
+                      WHEN activity.kind = 'part'
+                        AND CASE WHEN json_valid(activity.data)
+                          THEN json_extract(activity.data, '$.type')
+                        END = 'tool'
+                        AND COALESCE(
+                          CASE WHEN json_valid(activity.data)
+                            THEN json_extract(activity.data, '$.state')
+                          END,
+                          CASE WHEN json_valid(activity.data)
+                            THEN json_extract(activity.data, '$.status')
+                          END
+                        ) IN ('pending', 'running')
+                      THEN activity.time_updated
+                    END)
             FROM (
               SELECT m.session_id, m.time_updated, NULL AS data, 'message' AS kind
               FROM message m
               JOIN forest ON forest.session_id = m.session_id
+              WHERE m.time_updated > ?
+                ${filterClause}
               ${partActivityRows}
             ) activity
             GROUP BY activity.session_id
@@ -890,6 +1061,27 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
       ? "LEFT JOIN sqlite_activity ON sqlite_activity.session_id = s.id"
       : "";
 
+    // Params follow the SQL placeholder order: root_user_messages (filter,
+    // cutoff), then the sqlite_activity message branch (cutoff, filter), then
+    // the part branch (cutoff, filter) when parts are included.
+    const params: (string | number)[] = [];
+    if (includePersistedUserMessages) {
+      if (sessionFilter !== null && sessionFilter.length > 0) {
+        params.push(...sessionFilter);
+      }
+      params.push(cutoff);
+      params.push(cutoff);
+      if (sessionFilter !== null && sessionFilter.length > 0) {
+        params.push(...sessionFilter);
+      }
+      if (includePartActivity) {
+        params.push(cutoff);
+        if (sessionFilter !== null && sessionFilter.length > 0) {
+          params.push(...sessionFilter);
+        }
+      }
+    }
+
     return this.db
       .prepare(
         `WITH RECURSIVE forest(root_id, session_id) AS (
@@ -899,18 +1091,18 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
              SELECT forest.root_id, child.id
              FROM forest
              JOIN session child ON child.parent_id = forest.session_id
-          )${userMessageCte}${sqliteActivityCte}
-           SELECT forest.root_id, s.id, s.parent_id, s.title, s.directory,
-                  p.name AS projectName, s.time_created, s.time_updated, s.time_archived,
-                  ${latestUserMessageColumn} AS latestUserMessageMs,
-                  ${sqliteActivityColumns}
-           FROM forest
-           JOIN session s ON s.id = forest.session_id
-           JOIN project p ON p.id = s.project_id
-           ${userMessageJoin}
-           ${sqliteActivityJoin}`,
+           )${userMessageCte}${sqliteActivityCte}
+            SELECT forest.root_id, s.id, s.parent_id, s.title, s.directory,
+                   p.name AS projectName, s.time_created, s.time_updated, s.time_archived,
+                   ${latestUserMessageColumn} AS latestUserMessageMs,
+                   ${sqliteActivityColumns}
+            FROM forest
+            JOIN session s ON s.id = forest.session_id
+            JOIN project p ON p.id = s.project_id
+            ${userMessageJoin}
+            ${sqliteActivityJoin}`,
       )
-      .all() as Array<ForestSession & { root_id: string }>;
+      .all(...params) as Array<ForestSession & { root_id: string }>;
   }
 
   private assertParentIdIndex(): void {

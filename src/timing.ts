@@ -23,7 +23,10 @@ export const JSONL_ACTIVE_THRESHOLD_MS = 60_000;
 export const OPENCODE_ACTIVE_THRESHOLD_MS = 30_000;
 
 /** Interval at which the server rescans backends and broadcasts state to WebSocket clients. */
-export const BROADCAST_INTERVAL_MS = 30_000;
+export const BROADCAST_INTERVAL_MS = 50_000;
+
+/** Plugin heartbeat older than this marks the plugin unhealthy (3× the 30s cadence). */
+export const PLUGIN_HEALTH_THRESHOLD_MS = 90_000;
 
 /** Time to keep a closed project in the filtered state view before removal. */
 export const CLOSED_PROJECT_TTL_MS = 60_000;
@@ -50,7 +53,7 @@ export const BACKOFF_MAX_MS = 30_000;
 export const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
 /** Default polling interval for status log changes. */
-export const DEFAULT_STATUS_POLL_INTERVAL_MS = 30_000;
+export const DEFAULT_STATUS_POLL_INTERVAL_MS = 50_000;
 
 /** Number of milliseconds in one hour. */
 export const MS_PER_HOUR = 3_600_000;

@@ -153,7 +153,8 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(lines).toMatchObject([
+    const sessionLines = lines.filter((line) => line.session_id !== undefined);
+    expect(sessionLines).toMatchObject([
       {
         event: "question.asked",
         state: "waiting_for_permission",
@@ -208,7 +209,7 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
         blocker_kind: "question",
       },
     ]);
-    expect(lines[8].request_id).toBeUndefined();
+    expect(sessionLines[8].request_id).toBeUndefined();
   });
 
   test("serializes concurrent lifecycle writes and suppresses late running evidence", async () => {
@@ -289,11 +290,11 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(lines.map((line) => line.event)).toEqual([
-      "permission.asked",
-      "permission.replied",
-      "session.error",
-    ]);
+    expect(
+      lines
+        .filter((line) => line.session_id !== undefined)
+        .map((line) => line.event),
+    ).toEqual(["permission.asked", "permission.replied", "session.error"]);
   });
 
   test("serializes empty lifecycle IDs as the shared legacy representation", async () => {
@@ -330,7 +331,8 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(lines.map((line) => line.event)).toEqual([
+    const sessionLines = lines.filter((line) => line.session_id !== undefined);
+    expect(sessionLines.map((line) => line.event)).toEqual([
       "permission.asked",
       "permission.replied",
     ]);
@@ -380,7 +382,9 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
     )
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line).event);
+      .map((line) => JSON.parse(line))
+      .filter((record) => record.session_id !== undefined)
+      .map((record) => record.event);
 
     expect(events).toEqual([
       "session.idle",
@@ -427,7 +431,11 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(records.map((record) => [record.session_id, record.event])).toEqual([
+    expect(
+      records
+        .filter((record) => record.session_id !== undefined)
+        .map((record) => [record.session_id, record.event]),
+    ).toEqual([
       ["child", "session.idle"],
       ["child", "session.created"],
       ["parent", "subagent.created"],
@@ -475,7 +483,9 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
     )
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line).event);
+      .map((line) => JSON.parse(line))
+      .filter((record) => record.session_id !== undefined)
+      .map((record) => record.event);
 
     expect(events).toEqual(["session.created", "permission.asked"]);
   });
@@ -512,7 +522,9 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
     )
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line).event);
+      .map((line) => JSON.parse(line))
+      .filter((record) => record.session_id !== undefined)
+      .map((record) => record.event);
 
     expect(events).toEqual(["session.idle", "session.error"]);
   });
@@ -559,12 +571,15 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(records.map((record) => record.event)).toEqual([
+    const sessionRecords = records.filter(
+      (record) => record.session_id !== undefined,
+    );
+    expect(sessionRecords.map((record) => record.event)).toEqual([
       "session.error",
       "chat.message",
       "question.asked",
     ]);
-    expect(records[2]).toMatchObject({
+    expect(sessionRecords[2]).toMatchObject({
       state: "waiting_for_permission",
       request_id: "fresh",
       blocker_kind: "question",
@@ -602,11 +617,14 @@ describe("ccmon OpenCode plugin blocker lifecycle records", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(records.map((record) => record.event)).toEqual([
+    const sessionRecords = records.filter(
+      (record) => record.session_id !== undefined,
+    );
+    expect(sessionRecords.map((record) => record.event)).toEqual([
       "session.error",
       "UserPromptSubmit",
     ]);
-    expect(records[1].state).toBe("running");
+    expect(sessionRecords[1].state).toBe("running");
   });
 });
 
@@ -737,31 +755,34 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
       },
     });
 
-    expect(records(statusPath).map((record) => record.event)).toEqual([
+    const sessionRecords = () =>
+      records(statusPath).filter((record) => record.session_id !== undefined);
+
+    expect(sessionRecords().map((record) => record.event)).toEqual([
       "session.idle",
       "session.status",
       "message.part.updated",
       "session.status",
     ]);
-    expect(records(statusPath).map((record) => record.state)).toEqual([
+    expect(sessionRecords().map((record) => record.state)).toEqual([
       "stopped",
       "running",
       "running",
       "running",
     ]);
-    expect(vi.getTimerCount()).toBe(0);
+    expect(vi.getTimerCount()).toBe(1);
 
     await plugin.event({
       event: { type: "session.idle", properties: { sessionID: "streaming" } },
     });
-    expect(records(statusPath).map((record) => record.event)).toEqual([
+    expect(sessionRecords().map((record) => record.event)).toEqual([
       "session.idle",
       "session.status",
       "message.part.updated",
       "session.status",
       "session.idle",
     ]);
-    expect(vi.getTimerCount()).toBe(0);
+    expect(vi.getTimerCount()).toBe(1);
   });
 
   test("does not reactivate hard terminals from status or streamed parts", async () => {
@@ -799,7 +820,9 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
     });
 
     expect(
-      records(statusPath).map((record) => [record.session_id, record.event]),
+      records(statusPath)
+        .filter((record) => record.session_id !== undefined)
+        .map((record) => [record.session_id, record.event]),
     ).toEqual([
       ["errored", "session.error"],
       ["closed", "session.deleted"],
@@ -823,13 +846,18 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
       sessionID: "tool-session",
       input: { tool: "write", callID: "call-b" },
     });
-    expect(records(statusPath).map((record) => record.event)).toEqual([
+    const sessionEvents = () =>
+      records(statusPath)
+        .filter((record) => record.session_id !== undefined)
+        .map((record) => record.event);
+
+    expect(sessionEvents()).toEqual([
       "tool.execute.before",
       "tool.execute.before",
     ]);
 
     await vi.advanceTimersByTimeAsync(14_999);
-    expect(records(statusPath)).toHaveLength(2);
+    expect(sessionEvents()).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(1);
     await plugin["tool.execute.after"]({
       sessionID: "tool-session",
@@ -843,7 +871,7 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
     });
     await vi.advanceTimersByTimeAsync(15_000);
 
-    expect(records(statusPath).map((record) => record.event)).toEqual([
+    expect(sessionEvents()).toEqual([
       "tool.execute.before",
       "tool.execute.before",
       "tool.execute.heartbeat",
@@ -866,11 +894,11 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
       input: { callID: "call-b" },
     });
 
-    expect(records(statusPath).map((record) => record.event)).toEqual([
-      "chat.message",
-      "tool.execute.before",
-      "tool.execute.before",
-    ]);
+    expect(
+      records(statusPath)
+        .filter((record) => record.session_id !== undefined)
+        .map((record) => record.event),
+    ).toEqual(["chat.message", "tool.execute.before", "tool.execute.before"]);
   });
 
   test("pauses active tools for blockers, resumes after the final matching resolution, and rejects stale heartbeats", async () => {
@@ -910,7 +938,11 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
     });
     await vi.advanceTimersByTimeAsync(15_000);
 
-    expect(records(statusPath).map((record) => record.event)).toEqual([
+    expect(
+      records(statusPath)
+        .filter((record) => record.session_id !== undefined)
+        .map((record) => record.event),
+    ).toEqual([
       "tool.execute.before",
       "tool.execute.heartbeat",
       "permission.asked",
@@ -1096,7 +1128,9 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
       },
     });
 
-    expect(records(statusPath)).toMatchObject([
+    expect(
+      records(statusPath).filter((record) => record.session_id !== undefined),
+    ).toMatchObject([
       {
         event: "question.asked",
         state: "waiting_for_permission",
@@ -1225,10 +1259,9 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
     await plugin.dispose();
     await vi.advanceTimersByTimeAsync(90_000);
 
-    const events = records(statusPath).map((record) => [
-      record.session_id,
-      record.event,
-    ]);
+    const events = records(statusPath)
+      .filter((record) => record.session_id !== undefined)
+      .map((record) => [record.session_id, record.event]);
     expect(events).toContainEqual(["part-session", "tool.execute.before"]);
     expect(events).toContainEqual(["idle-session", "session.idle"]);
     expect(events).toContainEqual(["error-session", "session.error"]);
@@ -1265,6 +1298,130 @@ describe("ccmon OpenCode plugin tool heartbeats", () => {
         .filter((record) => record.session_id === "terminal-1499")
         .map((record) => record.event),
     ).toEqual(["tool.execute.before", "session.error", "session.deleted"]);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  test("emits plugin.heartbeat immediately and every 30 seconds with the active session count", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-31T12:00:00.000Z"));
+    const { plugin, statusPath } = await createPlugin();
+
+    const heartbeats = () =>
+      records(statusPath).filter(
+        (record) => record.event === "plugin.heartbeat",
+      );
+
+    expect(heartbeats()).toHaveLength(1);
+    expect(heartbeats()[0]).toMatchObject({
+      event: "plugin.heartbeat",
+      state: "running",
+      active_sessions: 0,
+    });
+    expect(heartbeats()[0].session_id).toBeUndefined();
+
+    await plugin["tool.execute.before"]({
+      sessionID: "hb-a",
+      input: { tool: "write", callID: "call-a" },
+    });
+    await plugin["tool.execute.before"]({
+      sessionID: "hb-b",
+      input: { tool: "write", callID: "call-b" },
+    });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(heartbeats()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(heartbeats()).toHaveLength(2);
+    expect(heartbeats()[1].active_sessions).toBe(2);
+
+    await plugin["tool.execute.after"]({
+      sessionID: "hb-a",
+      input: { callID: "call-a" },
+    });
+    await plugin["tool.execute.after"]({
+      sessionID: "hb-b",
+      input: { callID: "call-b" },
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(heartbeats()).toHaveLength(3);
+    expect(heartbeats()[2].active_sessions).toBe(0);
+  });
+
+  test("stops emitting plugin.heartbeat after dispose", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-31T12:00:00.000Z"));
+    const { plugin, statusPath } = await createPlugin();
+
+    await plugin.dispose();
     expect(vi.getTimerCount()).toBe(0);
+    const countAfterDispose = records(statusPath).filter(
+      (record) => record.event === "plugin.heartbeat",
+    ).length;
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(
+      records(statusPath).filter(
+        (record) => record.event === "plugin.heartbeat",
+      ),
+    ).toHaveLength(countAfterDispose);
+  });
+
+  test("drops queued plugin heartbeats under backpressure while lifecycle writes go through", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-31T12:00:00.000Z"));
+    const { plugin, statusPath } = await createPlugin();
+
+    const heartbeats = () =>
+      records(statusPath).filter(
+        (record) => record.event === "plugin.heartbeat",
+      );
+    const toolStarts = () =>
+      records(statusPath).filter(
+        (record) => record.event === "tool.execute.before",
+      );
+    expect(heartbeats()).toHaveLength(1);
+    expect(toolStarts()).toHaveLength(0);
+
+    for (let index = 0; index < 256; index += 1) {
+      void plugin["tool.execute.before"]({
+        sessionID: `bp-${index}`,
+        input: { tool: "write", callID: `call-${index}` },
+      });
+    }
+    // Drain the serialized write queue so every accepted write is flushed.
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(toolStarts()).toHaveLength(256);
+    // The init heartbeat was dropped (queue full), so only the first tick wrote.
+    expect(heartbeats()).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(heartbeats()).toHaveLength(2);
+
+    // Saturate the pending-heartbeat counter so tick heartbeats are dropped.
+    for (let index = 0; index < 256; index += 1) {
+      void plugin["tool.execute.before"]({
+        sessionID: `sat-${index}`,
+        input: { tool: "write", callID: `sat-call-${index}` },
+      });
+    }
+    await vi.advanceTimersByTimeAsync(1_000);
+    const saturatedCount = heartbeats().length;
+    expect(saturatedCount).toBeLessThan(2 + 4);
+
+    // The per-session liveness timers keep emitting until they drain, which
+    // keeps the queue busy and drops the tick heartbeats in between.
+    await vi.advanceTimersByTimeAsync(30_000 * 4);
+    expect(heartbeats().length).toBeGreaterThanOrEqual(saturatedCount);
+    expect(heartbeats().length).toBeLessThan(saturatedCount + 5);
+
+    // Lifecycle writes bypass the heartbeat cap and still go through.
+    await plugin["tool.execute.before"]({
+      sessionID: "bp-after-saturation",
+      input: { tool: "write", callID: "call-lifecycle" },
+    });
+    expect(
+      toolStarts().some(
+        (record) => record.session_id === "bp-after-saturation",
+      ),
+    ).toBe(true);
   });
 });

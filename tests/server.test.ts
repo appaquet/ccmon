@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createConnection } from "node:net";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { WebSocket as NodeWebSocket } from "ws";
 import { ClaudeBackend } from "../src/backends/claude.ts";
 import type { SessionBackend } from "../src/backends/types.ts";
@@ -864,6 +864,27 @@ describe("periodic safety broadcast (R61)", () => {
     // Periodic rescan should have picked up the Stop event → "stopped"
     expect(updatedEntry?.state).toBe("stopped");
   }, 5000);
+
+  test("R61: broadcastIntervalMs: 0 disables the periodic rescan", async () => {
+    const backend = new NoWatchBackend(new ClaudeBackend(tmpDir));
+    const scanSpy = vi.spyOn(backend, "scanProjects");
+    const srv = startServer({
+      port: 0,
+      backends: [backend],
+      maxInactivityHours: Infinity,
+      broadcastIntervalMs: 0,
+    });
+    stop = srv.stop;
+    await srv.ready;
+
+    // The initial scan runs once; with broadcastIntervalMs: 0 no periodic
+    // rescans fire (watcher is a no-op), so the call count stays at the
+    // initial-scan count over the wait window.
+    const initialCount = scanSpy.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 300));
+    expect(scanSpy.mock.calls.length).toBe(initialCount);
+    scanSpy.mockRestore();
+  }, 5000);
 });
 
 // ─── Broadcast guard: CLOSING client can't starve others ─────────────────────
@@ -1102,4 +1123,91 @@ describe("state propagation (R34)", () => {
 
     ws.close();
   });
+});
+
+describe("in-flight rescan coalescing (T6)", () => {
+  // A backend whose scanProjects awaits a controllable gate, so two triggers
+  // can be made to overlap. Counts the number of scanProjects calls.
+  class DeferredSlowBackend implements SessionBackend<OpencodeProjectInfo> {
+    readonly source = "opencode" as const;
+    scanCount = 0;
+    private updateCallback: (() => void) | null = null;
+    private gatePromise: Promise<void>;
+    private gateResolve!: () => void;
+
+    constructor() {
+      this.gatePromise = new Promise<void>((r) => (this.gateResolve = r));
+    }
+
+    releaseGate(): void {
+      this.gateResolve();
+      this.gatePromise = new Promise<void>((r) => (this.gateResolve = r));
+    }
+
+    triggerUpdate(): void {
+      this.updateCallback?.();
+    }
+
+    async scanProjects(): Promise<OpencodeProjectInfo[]> {
+      this.scanCount++;
+      await this.gatePromise;
+      return [];
+    }
+
+    watchForChanges(onUpdate: () => void): { stop: () => void } {
+      this.updateCallback = onUpdate;
+      return { stop: () => (this.updateCallback = null) };
+    }
+
+    async resolveState(): Promise<SessionState> {
+      return "running";
+    }
+
+    async computeLastUpdated(): Promise<string | null> {
+      return null;
+    }
+
+    async enrichProject(): Promise<SessionEnrichment> {
+      return {};
+    }
+
+    async getSubagents(): Promise<SubagentInfo[]> {
+      return [];
+    }
+
+    projectKey(project: OpencodeProjectInfo): string {
+      return `${project.source}::${project.sessionId}`;
+    }
+  }
+
+  test("AC1/AC2: overlapping triggers coalesce; next trigger scans again", async () => {
+    const backend = new DeferredSlowBackend();
+    const srv = startServer({ port: 0, backends: [backend] });
+
+    // Let the initial rescan start → the backend is now in flight.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(backend.scanCount).toBe(1);
+
+    // Trigger a second rescan while the first is in flight → coalesced
+    // (scanProjects is not called again).
+    backend.triggerUpdate();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(backend.scanCount).toBe(1);
+
+    // Release the first scan so it completes and the backend leaves the
+    // in-flight set.
+    backend.releaseGate();
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Trigger a third rescan → the backend is no longer in flight, so
+    // scanProjects runs again.
+    backend.triggerUpdate();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(backend.scanCount).toBe(2);
+
+    // Clean up: release the second scan and stop the server.
+    backend.releaseGate();
+    await new Promise((r) => setTimeout(r, 20));
+    srv.stop();
+  }, 5000);
 });

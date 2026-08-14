@@ -650,8 +650,21 @@ describe("OpencodeBackend — SQLite activity fallback", () => {
         JSON.stringify({ type: "tool", tool: "apply_patch", state: "pending" }),
       ],
     );
+    // A fresh heartbeat marks the plugin healthy; the session's last plugin
+    // event is stale, so it still gets windowed SQLite inference.
     const backend = backendForStatus(
-      statusRecord("captured", "question.replied", "running", now - 5 * 60_000),
+      `${JSON.stringify({
+        event: "plugin.heartbeat",
+        state: "running",
+        timestamp: new Date(now - 5_000).toISOString(),
+        active_sessions: 0,
+      })}\n` +
+        statusRecord(
+          "captured",
+          "question.replied",
+          "running",
+          now - 5 * 60_000,
+        ),
     );
     const project = (await backend.scanProjects())[0];
 
@@ -675,6 +688,8 @@ describe("OpencodeBackend — SQLite activity fallback", () => {
         JSON.stringify({ role: "assistant" }),
       ],
     );
+    // No plugin events at all, so the plugin is unhealthy and every visible
+    // session gets windowed SQLite inference.
     const backend = backendForStatus();
     const project = (await backend.scanProjects())[0];
 
@@ -698,7 +713,16 @@ describe("OpencodeBackend — SQLite activity fallback", () => {
       ],
     );
     run(db, "DROP TABLE part");
-    const backend = backendForStatus();
+    // A fresh heartbeat keeps inference enabled for sessions lacking plugin
+    // evidence; without it the CTEs would be skipped entirely.
+    const backend = backendForStatus(
+      `${JSON.stringify({
+        event: "plugin.heartbeat",
+        state: "running",
+        timestamp: new Date(now - 5_000).toISOString(),
+        active_sessions: 0,
+      })}\n`,
+    );
     const originalPrepare = db.prepare.bind(db);
     let createdPartTable = false;
     const prepareSpy = vi.spyOn(db, "prepare").mockImplementation((sql) => {
@@ -767,7 +791,15 @@ describe("OpencodeBackend — SQLite activity fallback", () => {
       type: "text",
       text: "from the future",
     });
-    const backend = backendForStatus();
+    // A fresh heartbeat keeps inference enabled for these sessions.
+    const backend = backendForStatus(
+      `${JSON.stringify({
+        event: "plugin.heartbeat",
+        state: "running",
+        timestamp: new Date(now - 5_000).toISOString(),
+        active_sessions: 0,
+      })}\n`,
+    );
     const projects = await backend.scanProjects();
     const fresh = projects.find((project) => project.sessionId === "fresh");
     const threshold = projects.find(
@@ -819,8 +851,15 @@ describe("OpencodeBackend — SQLite activity fallback", () => {
       now,
       "archived",
     ]);
+    // A fresh heartbeat keeps inference enabled so the stale parts are visible.
     const backend = backendForStatus(
-      statusRecord("idle", "session.idle", "stopped", now - 2_000) +
+      `${JSON.stringify({
+        event: "plugin.heartbeat",
+        state: "running",
+        timestamp: new Date(now - 5_000).toISOString(),
+        active_sessions: 0,
+      })}\n` +
+        statusRecord("idle", "session.idle", "stopped", now - 2_000) +
         statusRecord("errored", "session.error", "error", now - 2_000) +
         statusRecord("closed", "session.deleted", "closed", now - 2_000),
     );
@@ -3067,7 +3106,7 @@ describe("OpencodeBackend — watchForChanges dual-mode (status log exists)", ()
     expect(postWrite).toBeLessThanOrEqual(2);
   }, 5000);
 
-  test("background polling fires alongside fs.watch at statusPollIntervalMs", async () => {
+  test("change-aware poll stays silent on an unchanged file, fires on change", async () => {
     const backend = new OpencodeBackend(db, 5000, statusPath, 50);
 
     const calls: number[] = [];
@@ -3075,12 +3114,21 @@ describe("OpencodeBackend — watchForChanges dual-mode (status log exists)", ()
       calls.push(Date.now());
     });
 
-    // Wait for multiple polling cycles at 50ms
+    // Multiple poll cycles at 50ms with no file change → no callbacks
+    // (the baseline is captured at start without triggering an update).
+    await new Promise((r) => setTimeout(r, 250));
+    expect(calls.length).toBe(0);
+
+    // Changing the file is picked up by the change-aware poll (and/or the
+    // fs.watch), firing onUpdate.
+    writeFileSync(
+      statusPath,
+      makeStatusEvent("ses_change", "running", new Date().toISOString()),
+    );
     await new Promise((r) => setTimeout(r, 250));
     stop();
 
-    // Background polling fires every ~50ms → should get several callbacks
-    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls.length).toBeGreaterThan(0);
   }, 5000);
 
   test("falls back to polling-only when status file is deleted", async () => {
@@ -4655,22 +4703,54 @@ describe("OpencodeBackend — recursive blocker aggregation", () => {
   test("a stale recovered root excludes direct-child liveness from before recovery", async () => {
     addSession("root", null, false, now - 10 * 60_000);
     addSession("child", "root", false, now - 10 * 60_000);
-    const errorAt = now - OPENCODE_ACTIVE_THRESHOLD_MS - 40_000;
-    const userMessageAt = now - OPENCODE_ACTIVE_THRESHOLD_MS - 30_000;
+    const errorAt = now - 70_000;
+    // A fresh (<=30s) user message recovers the stale root; a >30s one no
+    // longer does (the approved Q4 windowing behavior change).
+    const userMessageAt = now - 25_000;
     addMessage("root", "root-user", "user", userMessageAt);
+    // The child's running liveness predates the recovery, so it is excluded.
+    // The root then goes idle after the recovery, ending "stopped".
     const backend = backendForStatus(
-      status("root", "session.error", "error", errorAt) +
-        status(
-          "child",
-          "UserPromptSubmit",
-          "running",
-          now - OPENCODE_ACTIVE_THRESHOLD_MS - 35_000,
-        ),
+      `${JSON.stringify({
+        event: "plugin.heartbeat",
+        state: "running",
+        timestamp: new Date(now - 5_000).toISOString(),
+        active_sessions: 0,
+      })}\n` +
+        status("root", "session.error", "error", errorAt) +
+        status("child", "UserPromptSubmit", "running", now - 35_000) +
+        status("root", "session.idle", "stopped", now - 5_000),
     );
 
     await expect(backend.resolveState(await projectFor(backend))).resolves.toBe(
       "stopped",
     );
+  });
+
+  test("a stale (>30s) persisted user message no longer re-activates a hard-terminal session (R1.1)", async () => {
+    addSession("root-a");
+    addSession("root-b");
+    const errorAt = now - 70_000;
+    // root-a: user message >30s old (stale) → excluded by the
+    // root_user_messages windowing → latestUserMessageMs is null → the
+    // hard-terminal session stays "error" (not re-activated).
+    addMessage("root-a", "root-a-user", "user", now - 40_000);
+    // root-b (contrast): user message <30s old (fresh) → included → the
+    // hard-terminal session is re-activated to "running". Pinning both sides
+    // of the 30s boundary makes this test sensitive to the windowing cutoff.
+    addMessage("root-b", "root-b-user", "user", now - 25_000);
+    // No heartbeat → plugin unhealthy → the windowed CTEs actually run.
+    const backend = backendForStatus(
+      status("root-a", "session.error", "error", errorAt) +
+        status("root-b", "session.error", "error", errorAt),
+    );
+
+    await expect(
+      backend.resolveState(await projectFor(backend, "root-a")),
+    ).resolves.toBe("error");
+    await expect(
+      backend.resolveState(await projectFor(backend, "root-b")),
+    ).resolves.toBe("running");
   });
 
   test("a root without recovered terminal state retains descendant blocker state", async () => {
@@ -5014,7 +5094,17 @@ describe("OpencodeBackend — recursive blocker aggregation", () => {
       addSession(sessionId, index === 0 ? "root" : `deep-child-${index - 1}`);
       addMessage(sessionId, `deep-child-user-${index}`, "user", now - 1_000);
     }
-    const backend = backendForStatus("");
+    // No heartbeat, so the plugin is unhealthy and the JSON CTEs are always
+    // needed: the forest and persisted user evidence are collected in a single
+    // query.
+    const backend = backendForStatus(
+      status("root", "chat.message", "running", now - 2_000) +
+        status("child-a", "chat.message", "running", now - 2_000) +
+        status("child-b", "chat.message", "running", now - 2_000) +
+        status("child-c", "chat.message", "running", now - 2_000) +
+        status("other-root", "chat.message", "running", now - 2_000) +
+        status("other-child", "chat.message", "running", now - 2_000),
+    );
     const prepareSpy = vi.spyOn(db, "prepare");
 
     const projects = await backend.scanProjects();
@@ -5050,4 +5140,304 @@ describe("OpencodeBackend — recursive blocker aggregation", () => {
       "requires an index on parent_id",
     );
   });
+});
+
+describe("OpencodeBackend — inference gate (T3)", () => {
+  const now = Date.UTC(2026, 6, 21, 12, 0, 0);
+  let db: DB;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    db = new DatabaseSync(":memory:");
+    createSchema(db);
+    tmpDir = mkdtempSync(join(tmpdir(), "ccmon-inference-gate-"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function addSession(
+    id: string,
+    parentId: string | null = null,
+    archived = false,
+    updated = now - 10 * 60_000,
+  ): void {
+    run(db, "INSERT OR IGNORE INTO project (id, name, root) VALUES (?, ?, ?)", [
+      "proj-gate",
+      "gate",
+      "/home/user/gate",
+    ]);
+    run(
+      db,
+      "INSERT INTO session (id, title, directory, time_created, time_updated, time_archived, parent_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        id,
+        id,
+        "/home/user/gate",
+        updated - 1_000,
+        updated,
+        archived ? updated : null,
+        parentId,
+        "proj-gate",
+      ],
+    );
+  }
+
+  function addMessage(
+    sessionId: string,
+    id: string,
+    role: "assistant" | "user",
+    createdAt: number,
+    updatedAt = createdAt,
+  ): void {
+    run(
+      db,
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+      [id, sessionId, createdAt, updatedAt, JSON.stringify({ role })],
+    );
+  }
+
+  function addPart(
+    sessionId: string,
+    messageId: string,
+    id: string,
+    updatedAt: number,
+    data: Record<string, unknown>,
+  ): void {
+    run(
+      db,
+      "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        id,
+        messageId,
+        sessionId,
+        updatedAt - 1_000,
+        updatedAt,
+        JSON.stringify(data),
+      ],
+    );
+  }
+
+  function status(
+    sessionId: string,
+    event: string,
+    state: SessionState,
+    timestamp = now - 1_000,
+  ): string {
+    return `${JSON.stringify({
+      event,
+      state,
+      timestamp: new Date(timestamp).toISOString(),
+      session_id: sessionId,
+      working_dir: "/home/user/gate",
+    })}\n`;
+  }
+
+  function heartbeatLine(timestamp: number, activeSessions = 0): string {
+    return `${JSON.stringify({
+      event: "plugin.heartbeat",
+      state: "running",
+      timestamp: new Date(timestamp).toISOString(),
+      active_sessions: activeSessions,
+    })}\n`;
+  }
+
+  function backendForStatus(contents: string): OpencodeBackend {
+    const statusPath = join(tmpDir, "opencode-status.jsonl");
+    writeFileSync(statusPath, contents);
+    return new OpencodeBackend(db, 5_000, statusPath);
+  }
+
+  async function projectFor(backend: OpencodeBackend, sessionId: string) {
+    const project = (await backend.scanProjects()).find(
+      (candidate) => candidate.sessionId === sessionId,
+    );
+    if (!project) throw new Error(`missing visible root ${sessionId}`);
+    return project;
+  }
+
+  function executedForestQueries(prepareSpy: {
+    mock: { calls: unknown[][] };
+  }): string[] {
+    return prepareSpy.mock.calls
+      .map((call: unknown[]) => call[0] as string)
+      .filter((sql: string) => sql.includes("WITH RECURSIVE forest"));
+  }
+
+  test("AC1: fresh heartbeat + all-fresh sessions → no json_extract in the forest SQL", async () => {
+    const prepareSpy = vi.spyOn(db, "prepare");
+    addSession("root");
+    addSession("child", "root");
+    addMessage("root", "root-user", "user", now - 1_000);
+    const backend = backendForStatus(
+      heartbeatLine(now - 5_000) +
+        status("root", "chat.message", "running", now - 2_000) +
+        status("child", "chat.message", "running", now - 2_000),
+    );
+    await backend.resolveState(await projectFor(backend, "root"));
+
+    const forestQueries = executedForestQueries(prepareSpy);
+    expect(forestQueries.length).toBeGreaterThan(0);
+    for (const sql of forestQueries) {
+      expect(sql).not.toContain("json_extract");
+    }
+  });
+
+  test("AC2: no heartbeat → both windowed CTEs run; only fresh (<30s) activity reported", async () => {
+    const prepareSpy = vi.spyOn(db, "prepare");
+    addSession("root");
+    addMessage("root", "root-user", "user", now - 1_000);
+    addPart("root", "msg-fresh", "part-fresh", now - 10_000, {
+      type: "tool",
+      state: "pending",
+    });
+    addPart("root", "msg-stale", "part-stale", now - 60_000, {
+      type: "tool",
+      state: "pending",
+    });
+    const backend = backendForStatus(""); // no heartbeat → plugin unhealthy
+    const state = await backend.resolveState(await projectFor(backend, "root"));
+
+    const withCtes = executedForestQueries(prepareSpy).find((sql) =>
+      sql.includes("json_extract"),
+    );
+    expect(withCtes).toBeDefined();
+    expect(withCtes).toContain("root_user_messages");
+    expect(withCtes).toContain("sqlite_activity");
+    // Both sqlite_activity branches are windowed to the 30s cutoff, so the
+    // stale part (now-60s) and any stale message row are excluded at the SQL
+    // level (not just the JS-side isFreshSqliteActivity gate).
+    expect(withCtes).toContain("p.time_updated > ?");
+    expect(withCtes).toContain("m.time_updated > ?");
+    // The fresh part (now-10s) drives running; the stale part (now-60s) is
+    // windowed out, so it does not affect the outcome.
+    expect(state).toBe("running");
+  });
+
+  test("AC3: plugin healthy → CTEs session-filtered; A inferred running, B authoritative stopped", async () => {
+    const prepareSpy = vi.spyOn(db, "prepare");
+    addSession("root-a");
+    addSession("root-b");
+    // Session A: no plugin events but a fresh pending part → inference needed.
+    addPart("root-a", "msg-a", "part-a", now - 10_000, {
+      type: "tool",
+      state: "pending",
+    });
+    const backend = backendForStatus(
+      heartbeatLine(now - 5_000) +
+        status("root-b", "Stop", "stopped", now - 10_000),
+    );
+    const stateA = await backend.resolveState(
+      await projectFor(backend, "root-a"),
+    );
+    const stateB = await backend.resolveState(
+      await projectFor(backend, "root-b"),
+    );
+
+    expect(stateA).toBe("running");
+    expect(stateB).toBe("stopped");
+    // The CTEs run only for session A (B has fresh plugin evidence), so the
+    // IN clause carries exactly one placeholder (A's id) rather than a
+    // full-table or multi-session CTE.
+    const cteSql = executedForestQueries(prepareSpy).find((sql) =>
+      sql.includes("json_extract"),
+    );
+    expect(cteSql).toBeDefined();
+    const inClause = cteSql?.match(/forest\.session_id IN \(([^)]*)\)/);
+    expect(inClause).not.toBeNull();
+    expect(inClause?.[1].split(",").length).toBe(1);
+  });
+
+  test("T2 AC3: heartbeat ≥ 90s old → plugin unhealthy, CTEs present", async () => {
+    const prepareSpy = vi.spyOn(db, "prepare");
+    addSession("root");
+    addPart("root", "msg-x", "part-x", now - 10_000, {
+      type: "tool",
+      state: "pending",
+    });
+    // A heartbeat 100s old is beyond the 90s PLUGIN_HEALTH_THRESHOLD_MS, so
+    // the plugin is treated as unhealthy and the JSON CTEs run.
+    const backend = backendForStatus(heartbeatLine(now - 100_000, 1));
+    await backend.resolveState(await projectFor(backend, "root"));
+
+    const withCtes = executedForestQueries(prepareSpy).find((sql) =>
+      sql.includes("json_extract"),
+    );
+    expect(withCtes).toBeDefined();
+    expect(withCtes).toContain("root_user_messages");
+    expect(withCtes).toContain("sqlite_activity");
+  });
+});
+
+describe("OpencodeBackend — change-aware status poll (T4)", () => {
+  let db: DB;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    db = new DatabaseSync(":memory:");
+    createSchema(db);
+    tmpDir = mkdtempSync(join(tmpdir(), "ccmon-change-aware-"));
+  });
+
+  function makeBackend(
+    statusPollIntervalMs = 50,
+    pollIntervalMs = 50,
+  ): OpencodeBackend {
+    return new OpencodeBackend(
+      db,
+      pollIntervalMs,
+      join(tmpDir, "status.jsonl"),
+      statusPollIntervalMs,
+    );
+  }
+
+  test("AC1: unchanged file → 0 onUpdate calls across ≥2 poll intervals", async () => {
+    const statusPath = join(tmpDir, "status.jsonl");
+    writeFileSync(statusPath, "");
+    const backend = makeBackend(50, 50);
+    let calls = 0;
+    const { stop } = backend.watchForChanges(() => {
+      calls += 1;
+    });
+    // Wait across ≥2 poll intervals (2 × 50ms) with no file changes.
+    await new Promise((r) => setTimeout(r, 180));
+    stop();
+    expect(calls).toBe(0);
+  }, 3000);
+
+  test("AC2: appending 1 byte → onUpdate fires within one poll interval", async () => {
+    const statusPath = join(tmpDir, "status.jsonl");
+    writeFileSync(statusPath, "x");
+    const backend = makeBackend(50, 50);
+    let calls = 0;
+    const { stop } = backend.watchForChanges(() => {
+      calls += 1;
+    });
+    // Append a byte after the baseline is captured.
+    await new Promise((r) => setTimeout(r, 30));
+    const existing = readFileSync(statusPath, "utf-8");
+    writeFileSync(statusPath, `${existing}y`);
+    await new Promise((r) => setTimeout(r, 80));
+    stop();
+    expect(calls).toBeGreaterThanOrEqual(1);
+  }, 3000);
+
+  test("AC3: deleting the file → poll falls back to unconditional cadence", async () => {
+    const statusPath = join(tmpDir, "status.jsonl");
+    writeFileSync(statusPath, "x");
+    const backend = makeBackend(50, 50);
+    let calls = 0;
+    const { stop } = backend.watchForChanges(() => {
+      calls += 1;
+    });
+    // Delete the file; the change-aware poll should fall back to the
+    // unconditional poll (50ms here), which fires onUpdate every tick.
+    unlinkSync(statusPath);
+    await new Promise((r) => setTimeout(r, 180));
+    stop();
+    expect(calls).toBeGreaterThanOrEqual(2);
+  }, 3000);
 });

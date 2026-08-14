@@ -3,11 +3,17 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { BACKEND_TYPES, type BackendConfigEntry } from "./backends/types.ts";
 import { log } from "./log.ts";
+import { BROADCAST_INTERVAL_MS } from "./timing.ts";
 
 export interface CcmonConfig {
   maxInactivityHours: number;
   host: string;
   port: number;
+  /**
+   * Interval between periodic rescans + broadcasts to clients, in ms.
+   * `0` disables the periodic rescan entirely.
+   */
+  broadcastIntervalMs: number;
   backends: BackendConfigEntry[];
 }
 
@@ -15,6 +21,7 @@ export const DEFAULT_CONFIG: CcmonConfig = {
   maxInactivityHours: 1,
   host: "127.0.0.1",
   port: 8080,
+  broadcastIntervalMs: BROADCAST_INTERVAL_MS,
   backends: [
     { type: "claude", enabled: true },
     { type: "opencode", enabled: true },
@@ -68,6 +75,8 @@ export function mergeCliOverrides(
       overrides.maxInactivityHours ?? config.maxInactivityHours,
     host: overrides.host ?? config.host,
     port: overrides.port ?? config.port,
+    broadcastIntervalMs:
+      overrides.broadcastIntervalMs ?? config.broadcastIntervalMs,
     backends: overrides.backends ?? config.backends,
   };
 }
@@ -130,10 +139,19 @@ function mergeWithDefaults(partial: Record<string, unknown>): CcmonConfig {
       ? rawHours
       : DEFAULT_CONFIG.maxInactivityHours;
 
+  const rawBroadcast = partial.broadcastIntervalMs;
+  const broadcastIntervalMs =
+    typeof rawBroadcast === "number" &&
+    Number.isFinite(rawBroadcast) &&
+    rawBroadcast >= 0
+      ? rawBroadcast
+      : DEFAULT_CONFIG.broadcastIntervalMs;
+
   return {
     maxInactivityHours,
     host: typeof partial.host === "string" ? partial.host : DEFAULT_CONFIG.host,
     port,
+    broadcastIntervalMs,
     backends: mergeBackends(partial.backends),
   };
 }

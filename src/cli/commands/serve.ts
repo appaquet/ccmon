@@ -17,6 +17,7 @@ export function runServe(
     port: serveConfig.port,
     hostname: serveConfig.host,
     maxInactivityHours: serveConfig.maxInactivityHours,
+    broadcastIntervalMs: serveConfig.broadcastIntervalMs,
     backends,
   });
   return server.ready

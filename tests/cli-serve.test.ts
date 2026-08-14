@@ -53,4 +53,20 @@ describe("runServe", () => {
       exit.mockRestore();
     }
   });
+
+  test("forwards broadcastIntervalMs into startServer options", async () => {
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    try {
+      await runServe(DEFAULT_CONFIG, undefined, null);
+      expect(startServer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          broadcastIntervalMs: DEFAULT_CONFIG.broadcastIntervalMs,
+        }),
+      );
+    } finally {
+      stdout.mockRestore();
+    }
+  });
 });
