@@ -80,6 +80,7 @@ export function startServer(options: ServerOptions): {
     }
   }
 
+  // REVIEW: architecture-reviewer - Dropped updates have no pending/dirty follow-up: when a watcher-triggered rescan is coalesced into an in-flight run, the update is simply lost until "the next change or the periodic rescan" (per the comment below). This same change introduces broadcastIntervalMs: 0, which disables the periodic rescan entirely, so with that config a coalesced update can leave a backend stale indefinitely (until the *next* file change, which may never come for a session that just went idle). The safety net the coalescing rationale depends on is now optional. Suggestion: track a dirty flag per backend — if an update arrives while in flight, re-run buildStateForBackend once after the in-flight run completes — which makes coalescing lossless and decouples correctness from the rescan interval (confidence: high). Also nit: the "Inputs are append-only" justification does not hold for the Claude ccmon-status.jsonl, which status-writer rewrites via atomic temp-file rename when trimming (confidence: high).
   // Backends whose rescan is already in flight. Inputs are append-only, so a
   // dropped duplicate is covered by the in-flight run plus the watcher event
   // for any mid-scan change; the narrow case (a change persisted just after

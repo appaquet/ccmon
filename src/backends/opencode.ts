@@ -132,6 +132,7 @@ function statSyncTerse(p: string): number | null {
   }
 }
 
+// REVIEW: architecture-reviewer - File-identity comparison is now implemented twice in this file: FileBasis/statFileBasis/fileBasisChanged (change-aware poll) and the lastStatusLogDev/Ino/Mtime/Size instance fields with inline comparison in loadStatusLogEvents (read cache); claude.ts's SessionTailCache does the same stat-compare pattern a third way. Suggestion: store a single FileBasis for the read cache and share statFileBasis/fileBasisChanged with the poll baseline, so one helper encodes "did the file change" (confidence: high; minor dedup).
 /** File identity + change basis used by the change-aware status poll. */
 interface FileBasis {
   dev: number;
@@ -165,6 +166,7 @@ function resolveDefaultStatusLogPath(): string {
   return join(stateHome, "ccmon", "opencode-status.jsonl");
 }
 
+// REVIEW: architecture-reviewer - File cohesion: this file grew 1352 → 1544 lines and now carries four subsystems in one module (SQLite forest/CTE SQL building, watcher + change-aware polling, status-log parsing/caching, and the new plugin-liveness inference gate plus the evidence-timeline state machine). It has far exceeded the ~500-line cohesion guideline and this branch makes it harder to follow. Suggestion: extract the SQL/CTE assembly (loadForestRows + CTE strings + param building, ~200 lines) and the module-level evidence functions (buildSessionEvidence, buildGenerationTimeline, normalizers, ~250 lines) into sibling modules, e.g. backends/opencode-sql.ts and backends/opencode-evidence.ts (confidence: high; pre-existing debt, aggravated by this change).
 export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
   readonly source = "opencode" as const;
   private lastStatusLogDev: number | null = null;
@@ -784,6 +786,7 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
     // populated; the gate below relies on it.
     this.loadStatusLogEvents();
 
+    // REVIEW: architecture-reviewer - Healthy path runs the recursive forest query twice per scan whenever the inference set is non-empty (baseRows query + filtered CTE query). In the common dashboard state (mix of active and recently-stopped sessions), any session whose last plugin event is ≥30s old is in the inference set, so the two-query path — not the cheap single baseRows query — is the steady state: the "cheap gate" only saves work while ALL visible sessions have <30s-fresh plugin evidence. Two sequential recursive-CTE queries per 50s rescan is acceptable, but the perf framing ("bounded rescan work") overstates the win for idle sessions; consider a single query fed by inference ids computed from a cheap `SELECT id FROM session WHERE time_archived IS NULL` + the status event index, which avoids the duplicate forest walk (confidence: medium; performance trade-off, not a correctness issue). Also note the resolution policy (which sessions need inference) now lives in the scan/query layer rather than the evidence builder — defensible since the query needs the ids first, but see the duplication comment on resolveInferenceSessionIds.
     // Gate the heavy JSON CTEs on plugin liveness. When the plugin is
     // unhealthy every session needs inference, so run the full query
     // (forest + CTEs) directly. When healthy, run a cheap forest-only query
@@ -898,6 +901,7 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
     }
   }
 
+  // REVIEW: architecture-reviewer - This method re-implements the "fresh evidence / terminal" policy that buildSessionEvidence already encodes (same 30s OPENCODE_ACTIVE_THRESHOLD_MS, same isHardTerminalEvidence), with subtly different semantics: here `hasHardTerminal` is `events.some(...)` over the WHOLE history in the log, while the evidence builder only treats a hard-terminal as current when the replayed timeline ends in one. Consequences: (1) the two policies must be kept in sync manually — a threshold or terminal-set change must be made in both places; (2) any session that ever errored within the (untruncated, up to 10MB) read window permanently pays the CTE query cost even after it reactivates and is fresh, because the historical StopFailure/SessionEnd keeps it in the inference set; (3) `events.some(...)` is O(events) per session per scan. Suggestion: derive the inference set from the same evidence machinery (e.g. build status-only evidence per session and flag sessions whose state is null or hard-terminal), or at minimum extract a shared needsInference(events, now) helper and precompute the hard-terminal flag during statusEventIndex construction (confidence: high on duplication/conservative-superset; the over-inclusion is safe, only wasteful).
   /**
    * Sessions that need the JSON inference CTEs: those lacking fresh plugin
    * evidence (no events, or last event ≥ 30s old), plus any session with a
@@ -996,6 +1000,7 @@ export class OpencodeBackend implements SessionBackend<OpencodeProjectInfo> {
       sessionFilter !== null && sessionFilter.length > 0
         ? `AND forest.session_id IN (${sessionFilter.map(() => "?").join(", ")})`
         : "";
+    // REVIEW: architecture-reviewer - Behavioral (not just performance) change: windowing root_user_messages to `> now - 30s` means a persisted user message older than 30s can no longer reactivate a hard-terminal (error/closed) session; before this change latestUserMessageMs was the max over ALL user messages and drove timeline reactivation regardless of age. This applies on every scan, including the plugin-unhealthy/absent path where SQLite inference is the only recovery evidence source (e.g. plugin missed a UserPromptSubmit hook: the session now stays "error" once the SQLite user message ages past 30s, where it previously recovered to "running"). The test suite pins this as "approved Q4 windowing" but the commit message and CLAUDE.md present the change purely as perf bounding. Suggestion: make this semantics decision explicit in the commit/phase docs and CLAUDE.md, or keep the window for sqlite_activity (where it is purely equivalent to the existing JS isFreshSqliteActivity gate) while retaining full-history root_user_messages for hard-terminal recovery (confidence: high that the behavior changed; medium on how often the narrow case matters).
     const userMessageCte = includePersistedUserMessages
       ? `, root_user_messages(session_id, latestUserMessageMs) AS (
             SELECT m.session_id, MAX(m.time_created)

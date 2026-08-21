@@ -13,6 +13,7 @@ export interface CcmonConfig {
    * Interval between periodic rescans + broadcasts to clients, in ms.
    * `0` disables the periodic rescan entirely.
    */
+  // REVIEW: architecture-reviewer - Naming/concept: this knob controls the *rescan* cadence (rescanAllBackends runs even when there are zero WebSocket clients; broadcastCurrent is a no-op then), so the "broadcast" name overstates the client-facing behavior and the doc comment should say explicitly that 0 disables the *safety-net rescan* that compensates for missed watcher events (server.ts coalescing relies on it). Suggestion: rename to rescanIntervalMs, or document the 0-opt-out trade-off at the config and ServerOptions sites (confidence: medium; nit-level).
   broadcastIntervalMs: number;
   backends: BackendConfigEntry[];
 }

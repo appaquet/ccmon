@@ -1,7 +1,7 @@
 # Claude Code & OpenCode Monitor (ccmon)
 
 > [!WARNING]
-> This project is vibe-coded. Don't expect anything stable.
+> This project is vibe-coded, and also, not really maintained anymore as I switched to herdr
 
 Real-time dashboard for your Claude Code & OpenCode sessions.
 
